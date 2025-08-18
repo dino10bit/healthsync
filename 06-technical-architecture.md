@@ -45,8 +45,8 @@ graph TD
     end
 
     subgraph External Systems
-        D[Third-Party Health Platforms (Cloud APIs)]
-        D2[On-Device Health Platforms (HealthKit)]
+        D["Third-Party Health Platforms (Cloud APIs)"]
+        D2["On-Device Health Platforms (HealthKit)"]
         E[Platform App Stores]
         F[Platform Notification Services]
     end
