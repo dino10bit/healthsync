@@ -193,3 +193,13 @@ As part of a research spike, we evaluated several tools to enhance the project's
 *   **Recommendation:**
     *   We recommend **LangGraph** for implementing the `Interactive AI Troubleshooter` feature, as specified in `06-technical-architecture.md` and `24-user-support.md`.
     *   **Rationale:** LangGraph's ability to model conversational flows as a graph is a perfect fit for a troubleshooting agent that needs to ask clarifying questions, remember context, and guide a user through a decision tree. This provides a more robust and powerful user experience than a simple, single-call LLM.
+
+## 10. Recommendations for Open-Source Adoption
+
+To further enhance the reliability and observability of the data sync engine, the following open-source tools are recommended. These align with the solutions proposed in the main technical architecture document.
+
+| Category | Recommended Tool | Strategic Benefit & Rationale for Data Sync |
+| :--- | :--- | :--- |
+| **Workflow Orchestration** | **Temporal.io** | **To Replace Manual Orchestration for Historical Syncs.** The current "cold path" design for historical syncs relies on a Lambda function to break down and enqueue jobs. This can be complex to manage and monitor. Temporal is purpose-built for such long-running, stateful workflows. Adopting it would make the historical sync process significantly more robust, automatically handle retries and failures of individual chunks, and provide deep visibility into the workflow's state. |
+| **MLOps** | **MLflow** | **To Improve the AI Conflict Resolution Workflow.** The `AI-Powered Merge` feature relies on a model in the AI Insights Service. MLflow would provide a structured way to manage the lifecycle of this model. It allows for tracking experiments with different merge strategies, versioning models to ensure reproducibility, and streamlining the process of deploying updated models, thereby improving the quality and reliability of the AI-powered sync features. |
+| **Observability** | **OpenTelemetry & Jaeger** | **For Deep Visibility into Sync Job Execution.** While CloudWatch provides essential logs and metrics, a combination of OpenTelemetry for instrumentation and Jaeger for distributed tracing would offer much deeper, vendor-neutral insights. It would allow engineers to trace a single sync job from the initial API request, through SQS, to the final worker execution, including its calls to third-party APIs and the AI service. This is invaluable for pinpointing performance bottlenecks and debugging complex failures in the sync pipeline. |
