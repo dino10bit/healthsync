@@ -1527,3 +1527,25 @@ This is a potential sprint plan for the **Must-Have** user stories to build the 
 *   **[Diagram] User Story Map:** A complete story map showing the user's journey through all epics and stories.
 *   **[Diagram] Sprint Backlog:** A visual representation of the MVP sprint plan (e.g., a Kanban or Scrum board).
 *   **[Diagram] Burndown Chart:** A chart showing the planned vs. actual progress through the MVP sprints.
+
+---
+
+## Proposed Future User Stories
+
+This section contains a backlog of proposed user stories for future consideration, post-MVP. They are grouped by epic and are in a concise format for review and prioritization.
+
+### Epic 6: Advanced Sync Control & Automation
+*   **US-19 (Prioritize Syncs):** As a power user (Alex), I want to set a priority order for my sync configurations so that more important syncs (like my daily run) are executed before less important ones.
+*   **US-20 (Global Pause):** As a user (Sarah), I want to be able to pause all syncing temporarily with a single tap so I can conserve battery or data when traveling.
+*   **US-21 (Cloud Backup):** As a user (Alex), I want to create a "backup" sync that only runs once a week to archive my data to a cloud storage provider (e.g., Google Drive, Dropbox) so I have a personal, long-term record.
+
+### Epic 7: Data Insights & Visualization
+*   **US-22 (Source Comparison Chart):** As a user (Sarah), I want to see a simple chart comparing my step count from two different sources over the last week so I can see how well they correlate.
+*   **US-23 (Data Completeness Score):** As a user (Alex), I want to see a "data completeness" score for each day so I can easily identify if key data points (like sleep or workouts) are missing from my records.
+*   **US-24 (Weekly Summary Notification):** As a user (Sarah), I want to receive a weekly summary notification with my key stats (e.g., total steps, average sleep) so I can see my progress at a glance.
+
+### Epic 8: Expanded Platform & Data Support
+*   **US-25 (Smart Scale Integration):** As a user (Alex), I want to connect my smart scale (e.g., Withings) as a data source so that my weight is automatically synced.
+*   **US-26 (Mindfulness App Integration):** As a user (Sarah), I want to connect my mindfulness app (e.g., Calm, Headspace) so that my meditation sessions are synced to Apple Health / Google Fit.
+*   **US-27 (Nutrition Data Integration):** As a user (Alex), I want the app to sync nutrition data (calories, macros) from MyFitnessPal so I have a complete picture of my health inputs.
+*   **US-28 (CSV Export):** As a user (Alex), I want to be able to export a specific sync's history as a CSV file so I can do my own analysis in a spreadsheet.
