@@ -40,6 +40,26 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **Onboarding Funnel Conversion:** >95% of users who see the first screen of the carousel proceed to tap the "Begin Setup" button.
     *   **Time on Screen:** Average time spent on the carousel is < 15 seconds, indicating the messaging is clear, concise, and requires minimal cognitive load.
 
+*   **Dependencies:**
+    *   None. This is the entry point for a new user.
+
+*   **Strategic Alignment:**
+    *   **Achieve Product-Market Fit:** By clearly articulating the value proposition, this story directly contributes to user activation and helps new users understand if the product meets their needs.
+    *   **Establish a Loyal User Base:** A clear and honest first impression is the first step toward building trust with the user.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify that a user launching the app for the very first time is shown the three-screen carousel.
+        *   Verify that the user can swipe left and right to navigate between all three screens.
+        *   Verify that the page indicators (dots) update correctly upon swiping.
+        *   Verify that tapping the "Begin Setup" button on the third screen dismisses the carousel and proceeds to the next step.
+        *   Verify that after completing the carousel, closing and reopening the app does *not* show the carousel again.
+    *   **Negative:**
+        *   Verify that tapping the Privacy Policy link opens the policy in an in-app browser and that the user can successfully close it and return to the carousel.
+    *   **Edge Cases:**
+        *   Verify that rotating the device on any carousel screen does not crash the app or reset the view.
+        *   Verify that the app gracefully handles being sent to the background and then foregrounded while the carousel is visible.
+
 *   **Acceptance Criteria (AC):**
     *   **Given** I am a new user launching the app for the very first time.
     *   **When** the app opens, I am presented with a welcome carousel.
@@ -87,6 +107,28 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **Connection Success Rate:** >90% of users who select a source app successfully authenticate and connect it.
     *   **Funnel Completion Rate:** >85% of users who start this flow successfully connect both a source and a destination app.
     *   **Time to Connect:** Median time from seeing the "Choose Source App" screen to having two apps connected is < 90 seconds.
+
+*   **Dependencies:**
+    *   **US-01:** User must have completed the welcome carousel.
+    *   **US-03:** The permission priming flow must be available to be triggered.
+
+*   **Strategic Alignment:**
+    *   **Achieve Product-Market Fit:** This story delivers the core "magic moment" of the app. Its successful and frictionless completion is the primary driver of a user's decision to adopt the product.
+    *   **Deliver Best-in-Class Reliability:** The connection flow must be robust and handle errors gracefully to establish trust from the very first interaction.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify that after the carousel, the user is taken to the "Choose Source App" screen.
+        *   Verify that selecting a source app initiates the correct OAuth flow.
+        *   Verify that after a successful source auth, the user is taken to the "Choose Destination App" screen.
+        *   Verify that after selecting a destination app and granting permissions, both apps are shown as "Connected".
+    *   **Negative:**
+        *   Verify that if the user cancels the OAuth flow, they are returned to the "Choose Source App" screen with a "Authorization failed" message.
+        *   Verify that if the user enters incorrect credentials, the same failure flow occurs.
+        *   Verify that selecting the same app as a source and destination is prevented or handled gracefully.
+    *   **Edge Cases:**
+        *   Verify that if the user has a network error during OAuth, a user-friendly error message is displayed.
+        *   Test the flow with an app that has already been authorized with SyncWell and ensure it doesn't require a re-login if the token is still valid.
 
 *   **Acceptance Criteria (AC):**
     *   **Given** I have completed the welcome carousel (US-01).
@@ -145,6 +187,25 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **Permission Grant Rate:** The percentage of users who grant the native OS permission after seeing the pre-permission dialog should be > 80%.
     *   **Priming Dialog Interaction:** >95% of users should interact with the positive action on the priming dialog ("Yes, Notify Me").
 
+*   **Dependencies:**
+    *   None. This is a self-contained, reusable component.
+
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Transparency around data access is the most critical component of building user trust, which is a prerequisite for loyalty.
+    *   **Deliver Best-in-Class Reliability:** A high permission grant rate is essential for the app to function reliably. This story directly supports that goal.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify that triggering an action requiring permissions first shows the in-app "priming" dialog.
+        *   Verify that the priming dialog correctly explains what permission is needed and why.
+        *   Verify that tapping the positive action ("Yes, Notify Me") on the primer immediately triggers the native OS permission dialog.
+        *   Verify that tapping the negative action ("Not Now") dismisses the primer and does *not* show the OS dialog.
+    *   **Negative:**
+        *   Verify that if a user denies the OS permission, the app handles it gracefully and shows an appropriate state.
+    *   **Edge Cases:**
+        *   Verify the flow for a user who has previously denied the permission permanently ("Don't Ask Again"). The app should guide them to the system settings.
+        *   Test with different permission types (Notifications, HealthKit, etc.) to ensure the component is reusable.
+
 *   **Acceptance Criteria (AC):**
     *   **Given** I am about to be shown a system-level permission dialog (e.g., Notifications, HealthKit/Google Fit).
     *   **When** the action that requires the permission is triggered.
@@ -196,6 +257,28 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **Task Success Rate:** >98% of users who start the "Add Sync" flow successfully save a new configuration.
     *   **Adoption of Multiple Data Types:** >40% of sync configurations include more than one data type, indicating users understand and use the feature's flexibility.
     *   **Error Rate:** <1% of attempts to save a sync result in a validation error.
+
+*   **Dependencies:**
+    *   **US-02:** At least two apps must be connected.
+    *   **US-16:** The dashboard must exist to display the newly created Sync Card.
+
+*   **Strategic Alignment:**
+    *   **Achieve Product-Market Fit:** This is the primary interface for the app's core functionality. A clear and intuitive configuration flow is essential for users to find value in the product.
+    *   **Establish a Loyal User Base:** Empowering users with control over their data (the Alex persona's key desire) builds a strong sense of ownership and loyalty.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify that tapping the "+" FAB on the dashboard opens the "Sync Configuration" screen.
+        *   Verify that the user can select one or more data types.
+        *   Verify that the user can select a valid source and destination app from their connected apps.
+        *   Verify that the "Review" screen accurately summarizes the user's choices.
+        *   Verify that tapping "Save Sync" creates a new Sync Card on the dashboard and saves the configuration to the database.
+    *   **Negative:**
+        *   Verify that the destination list is disabled or filtered to prevent a user from selecting the same app as the source.
+        *   Verify that the user cannot proceed through the flow without making a selection at each step.
+    *   **Edge Cases:**
+        *   Verify that platform limitations are handled (e.g., Garmin is shown as read-only and cannot be selected as a destination).
+        *   Test creating a sync configuration with all available data types selected.
 
 *   **Acceptance Criteria (AC):**
     *   **Given** I am on the Main Dashboard and have at least one source and one destination app connected.
@@ -250,6 +333,27 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **Data Freshness:** The median time between data appearing in a source app and it being written to a destination app is < 1 hour.
     *   **Zero-Touch Syncs:** >90% of active users should have at least one successful background sync per day without opening the app.
 
+*   **Dependencies:**
+    *   **US-04:** A sync configuration must exist to be executed.
+    *   **US-14:** The core data mapping and transformation logic must be implemented.
+
+*   **Strategic Alignment:**
+    *   **Deliver Best-in-Class Reliability:** This is the single most important story for fulfilling the product's core promise of reliability. Its success is paramount to the product's success.
+    *   **Establish a Loyal User Base:** For the "Sarah" persona, a "set it and forget it" experience is the primary driver of trust and long-term value.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify that after creating a sync and new data appears in the source app, a background sync is successfully completed within the OS-defined time window.
+        *   Verify that the "Last Synced" timestamp on the dashboard updates after a successful background sync.
+        *   Verify that data is correctly fetched, transformed, and written to the destination app.
+    *   **Negative:**
+        *   Verify that if a sync fails due to a network error, it is automatically retried with exponential backoff.
+        *   Verify that if a sync fails due to a permanent error (e.g., revoked authentication), the sync is paused and the user is notified (see US-07).
+    *   **Edge Cases:**
+        *   Test the sync logic on various OS versions and devices with different battery optimization settings.
+        *   Verify that the sync logic is idempotent by manually running the same sync job twice and ensuring no duplicate data is created.
+        *   Test behavior when the device has no network connectivity for an extended period and then reconnects.
+
 *   **Acceptance Criteria (AC):**
     *   **Given** I have at least one active sync configuration.
     *   **When** new data is generated in the source application.
@@ -299,6 +403,26 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **Latency:** The time from pull-to-refresh to the UI showing "Synced just now" is < 10 seconds for a typical delta sync.
     *   **Feature Usage:** >50% of monthly active users use the manual sync feature at least once.
 
+*   **Dependencies:**
+    *   **US-05:** It reuses the same core sync logic.
+    *   **US-07:** The UI must be able to reflect the "Syncing..." and final success/fail status.
+
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** This feature directly serves the "Alex" persona's need for control and immediate feedback, building trust and engagement.
+    *   **Deliver Best-in-Class Reliability:** Providing a manual override gives users confidence that the system is working and responsive to their needs.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify that performing a pull-to-refresh gesture on the main dashboard triggers a sync for all active configurations.
+        *   Verify that a refresh indicator appears and the status on all cards changes to "Syncing...".
+        *   Verify that upon completion, the statuses and "Last Synced" times are updated correctly.
+    *   **Negative:**
+        *   Verify that if a manual sync fails, the card shows a relevant error state.
+        *   Verify that triggering a manual sync while one is already in progress is handled gracefully (e.g., the new request is ignored).
+    *   **Edge Cases:**
+        *   Trigger a manual sync with no active network connection and verify a "No connection" error is shown.
+        *   Trigger a manual sync with a very large amount of data and verify the UI remains responsive.
+
 *   **Acceptance Criteria (AC):**
     *   **Given** I am on the Main Dashboard with an active Sync Card.
     *   **When** I perform a "pull-to-refresh" gesture on the list of syncs.
@@ -340,6 +464,25 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Success Metrics (KPIs):**
     *   **Error Interaction Rate:** >80% of users who see a "Needs attention" error state tap on the card to resolve it within 24 hours.
     *   **Support Ticket Reduction:** A <5% rate of support tickets related to "Is my sync working?".
+
+*   **Dependencies:**
+    *   **US-16:** This story defines the content *within* the dashboard's Sync Cards.
+
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** For the "Sarah" persona, transparent, at-a-glance status is the primary mechanism for building trust and reinforcing the "set it and forget it" value proposition.
+    *   **Deliver Best-in-Class Reliability:** Clearly communicating status, especially error states, is part of a reliable system.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify a successfully completed sync displays a relative time (e.g., "Synced 5 minutes ago").
+        *   Verify an in-progress sync shows "Syncing..." and an animated indicator.
+    *   **Negative:**
+        *   Verify a sync that failed due to expired authentication shows a "Needs attention" state in a distinct color (e.g., red/orange).
+        *   Verify a sync that failed due to a temporary network issue shows a "Will retry" state.
+        *   Verify that tapping on a card in an error state navigates the user to a screen with a clear path to resolution.
+    *   **Edge Cases:**
+        *   Verify that the relative timestamp updates correctly over time (e.g., "just now" -> "5 minutes ago" -> "1 hour ago").
+        *   Ensure all status text is accessible and not reliant on color alone to convey meaning.
 
 *   **Acceptance Criteria (AC):**
     *   **Given** I am on the Main Dashboard.
@@ -385,6 +528,23 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Success Metrics (KPIs):**
     *   **Task Completion Rate:** >99% of users who initiate a deletion successfully complete it.
     *   **Accidental Deletion Rate:** <0.1% of deletions result in a support ticket asking for recovery, validating the effectiveness of the confirmation dialog.
+
+*   **Dependencies:**
+    *   **US-04:** A sync configuration must exist to be deleted.
+
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Providing easy-to-use control and management features caters to the "Alex" persona and builds trust by letting users easily undo a configuration.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify that tapping the context menu on a Sync Card reveals a "Delete" option.
+        *   Verify that tapping "Delete" shows a confirmation dialog.
+        *   Verify that confirming the deletion removes the Sync Card from the UI and the configuration from the database.
+    *   **Negative:**
+        *   Verify that tapping "Cancel" on the confirmation dialog dismisses it and makes no changes.
+    *   **Edge Cases:**
+        *   Attempt to delete a sync configuration while it is actively syncing and verify it is handled gracefully.
+        *   Verify that any pending background jobs associated with the deleted sync are also cancelled.
 
 *   **Acceptance Criteria (AC):**
     *   **Given** I am on the Main Dashboard with an existing Sync Card.
@@ -433,6 +593,26 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **Trial-to-Paid Conversion Rate:** >10% of users who see the paywall at the end of their trial make a purchase.
     *   **Purchase Funnel Completion:** >95% of users who tap "Unlock Pro" successfully complete the purchase flow.
     *   **Payment Error Rate:** <2% of purchase attempts fail due to technical errors.
+
+*   **Dependencies:**
+    *   **US-11:** The "Restore Purchases" flow must be available from the paywall.
+
+*   **Strategic Alignment:**
+    *   **Build a Sustainable Business:** This story is the core of the monetization strategy and is the primary driver of revenue for the product.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify that a user whose trial has expired is shown a blocking paywall.
+        *   Verify the paywall clearly states the price and Pro benefits.
+        *   Verify that tapping "Unlock Pro" initiates the native IAP flow.
+        *   Verify that a successful purchase dismisses the paywall and unlocks all app functionality.
+    *   **Negative:**
+        *   Verify that if a purchase fails (e.g., payment declined), the user is returned to the paywall with an error message.
+        *   Verify that if the user cancels the purchase flow, they are returned to the paywall.
+    *   **Edge Cases:**
+        *   Test the purchase flow with a sandbox account.
+        *   Test the handling of pending transactions (e.g., purchases that require parental approval).
+        *   Verify the app correctly unlocks after a successful purchase, even if the app is restarted during the process.
 
 *   **Acceptance Criteria (AC):**
     *   **Given** my 7-day free trial has expired.
@@ -486,6 +666,31 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **Job Completion Rate:** >95% of initiated historical syncs run to completion (either success or user cancellation).
     *   **Paywall Conversion:** The contextual paywall for this feature has a conversion rate of >5%.
 
+*   **Dependencies:**
+    *   **US-09:** User must have a Pro license to access this feature.
+    *   **US-17:** A contextual paywall must be implemented to upsell this feature to free users.
+    *   **US-05:** Reuses the core sync and data mapping logic.
+
+*   **Strategic Alignment:**
+    *   **Build a Sustainable Business:** As a key differentiator and Pro feature, this directly drives trial-to-paid conversion and justifies the product's price point.
+    *   **Establish a Loyal User Base:** This feature provides immense value to the "Alex" persona, solving a major pain point and making the app a critical part of their data management workflow.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify a Pro user can access the "Historical Sync" screen.
+        *   Verify the user can select a start and end date.
+        *   Verify that initiating the sync shows a warning dialog about time/battery usage.
+        *   Verify that a long-running foreground service is started with a persistent progress notification.
+        *   Verify that data for the selected date range is correctly synced.
+    *   **Negative:**
+        *   Verify a free user attempting to access the feature is shown a contextual paywall (US-17).
+        *   Verify the sync process can be paused and resumed by the user.
+        *   Verify the process gracefully handles network errors, pausing and resuming when connectivity is restored.
+    *   **Edge Cases:**
+        *   Test with a very large date range (e.g., 5 years) to check for memory and performance issues.
+        *   Verify the handling of API rate limits from service providers during a large sync.
+        *   Test the "run only while charging" setting.
+
 *   **Acceptance Criteria (AC):**
     *   **Given** I am a premium user.
     *   **When** I navigate to the "Historical Sync" feature from the settings screen.
@@ -537,6 +742,23 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Success Metrics (KPIs):**
     *   **Restore Success Rate:** >99% of users with a valid purchase who tap "Restore" successfully unlock the app.
     *   **Support Ticket Reduction:** A <1% rate of support tickets related to "I can't restore my purchase on my new phone."
+
+*   **Dependencies:**
+    *   **US-09:** Depends on the same In-App Purchase integration.
+
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** A smooth restore experience is essential for retaining customers when they switch devices. Failing here is a major source of user frustration and churn.
+    *   **Build a Sustainable Business:** By reducing support tickets, this feature lowers operational costs.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify that a user with a previous purchase can tap "Restore Purchases" on a new device and have their Pro status unlocked.
+        *   Verify the "Restore Purchases" button is available in both the Settings menu and on the paywall.
+    *   **Negative:**
+        *   Verify that a user with no previous purchase who taps "Restore" is shown a "No purchase found" message.
+    *   **Edge Cases:**
+        *   Test with a user logged into a different App Store / Play Store account than the one used for the original purchase.
+        *   Test the restore process on a fresh install of the app.
 
 *   **Acceptance Criteria (AC):**
     *   **Given** I have previously purchased the lifetime license.
@@ -590,6 +812,25 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **FAQ Usefulness:** >70% of FAQ articles viewed are not immediately followed by a "Contact Support" tap, indicating the answer was likely sufficient.
     *   **Self-Service Rate:** The ratio of Help Center views to created support tickets should be at least 20:1.
 
+*   **Dependencies:**
+    *   None. This is a self-contained feature.
+
+*   **Strategic Alignment:**
+    *   **Build a Sustainable Business:** Directly reduces operational costs by deflecting support tickets.
+    *   **Establish a Loyal User Base:** Empowering users to solve their own problems quickly improves satisfaction and trust.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify the "Help Center" can be accessed from the Settings screen.
+        *   Verify the user is presented with a list of expandable FAQs.
+        *   Verify that tapping an FAQ expands it to show the answer.
+        *   Verify the "Contact Support" button opens a pre-filled email draft.
+        *   Verify the "Feature Request" link opens the Canny.io portal in an in-app browser.
+    *   **Negative:**
+        *   Verify the screen functions correctly if the remote FAQ content fails to load (e.g., shows a "Could not load content" message).
+    *   **Edge Cases:**
+        *   Verify that the remote FAQ content can be updated and the app displays the new content on the next launch without requiring an app update.
+
 *   **Acceptance Criteria (AC):**
     *   **Given** I am in the app.
     *   **When** I navigate to the "Settings" screen and tap "Help Center."
@@ -635,6 +876,26 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **Task Success Rate:** >99.9% of de-authorization attempts complete successfully.
     *   **Orphaned Tokens:** 0 orphaned tokens should be left on the device after de-authorization.
     *   **Security Incidents:** Zero security incidents related to improper credential handling.
+
+*   **Dependencies:**
+    *   **US-02:** An app must be connected to be disconnected.
+    *   **US-08:** Disconnecting an app must also trigger the deletion of any sync configurations that depend on it.
+
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Giving users full, transparent control over their data and privacy is fundamental to building trust. This is a cornerstone of the product's "user-first" promise.
+    *   **Deliver Best-in-Class Reliability:** Securely and reliably handling user credentials throughout their lifecycle is a key component of a trustworthy system.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify the user can navigate to "Connected Apps" and see a list of their apps.
+        *   Verify tapping "Disconnect" shows a confirmation warning.
+        *   Verify that confirming the disconnect revokes the OAuth token, deletes local credentials, and removes the app from the list.
+        *   Verify that all sync configurations using the disconnected app are also deleted.
+    *   **Negative:**
+        *   Verify that tapping "Cancel" on the confirmation dialog makes no changes.
+    *   **Edge Cases:**
+        *   Verify that the token revocation call is actually made to the service provider's API.
+        *   Test disconnecting an app whose token has already expired or been revoked externally. The app should handle this gracefully.
 
 *   **Acceptance Criteria (AC):**
     *   **Given** I have at least one app connected.
@@ -690,6 +951,25 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **Feature Adoption:** >60% of all sync configurations involve either Apple Health or Google Fit.
     *   **App Store Keyword Ranking:** Achieve top-5 ranking for keywords like "sync Apple Health to Google Fit".
 
+*   **Dependencies:**
+    *   This is a foundational story that implements the core data mapping logic used by **US-05** and **US-06**.
+
+*   **Strategic Alignment:**
+    *   **Achieve Product-Market Fit:** This feature is the product's primary unique selling proposition and the solution to a major market pain point.
+    *   **Deliver Best-in-Class Reliability:** The accuracy and fidelity of the data mapping between these two platforms are critical for establishing the product's reputation for quality.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify that steps data from Apple Health is accurately written to Google Fit.
+        *   Verify that weight data from Google Fit is accurately written to Apple Health.
+        *   Test with a variety of data types (Sleep, Workouts, Heart Rate) and ensure correct mapping.
+    *   **Negative:**
+        *   Verify that any data types that are not supported for cross-platform sync are clearly indicated in the UI.
+    *   **Edge Cases:**
+        *   Verify that unit conversions (lbs/kg, mi/km) are handled flawlessly.
+        *   Test with historical data containing different metadata and ensure it is preserved where possible.
+        *   Ensure the mapping logic is extensible to new data types without requiring a major refactor.
+
 *   **Acceptance Criteria (AC):**
     *   **Given** I have connected Apple Health as a source on my iPhone.
     *   **And** I have connected Google Fit as a destination on the same phone.
@@ -731,6 +1011,29 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **Detection Accuracy:** >95% of overlapping activities are correctly identified as conflicts.
     *   **User Choice:** The "Merge" option is chosen in >50% of conflict resolutions, indicating it provides real value.
     *   **Time to Resolution:** The median time a user spends on the conflict resolution screen is < 30 seconds.
+
+*   **Dependencies:**
+    *   **US-09:** This is a Pro feature and requires an active license.
+    *   **US-05:** The detection runs as part of the background sync process.
+    *   **US-17:** A contextual paywall is needed to upsell this feature.
+
+*   **Strategic Alignment:**
+    *   **Achieve Product-Market Fit:** This feature is a major market differentiator that solves a significant pain point for multi-device athletes, solidifying product-market fit with the "Alex" persona.
+    *   **Build a Sustainable Business:** As a headline Pro feature, it is a primary driver of monetization.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify that two activities from different sources with overlapping timestamps are flagged as a conflict.
+        *   Verify the user is navigated to a clear side-by-side comparison screen for the conflicting activities.
+        *   Verify the user can choose to "Keep Source A", "Keep Source B", or "Merge".
+        *   Verify that the "Merge" option intelligently combines data (e.g., GPS from one, heart rate from another) into a single activity in the destination.
+    *   **Negative:**
+        *   Verify that two non-overlapping activities are not flagged as a conflict.
+        *   Verify a free user who has a conflict detected is shown the contextual paywall instead of the resolution screen.
+    *   **Edge Cases:**
+        *   Test with activities that only partially overlap.
+        *   Test the merge logic for various combinations of data types and sources.
+        *   Allow the user to set a default resolution strategy (e.g., "Always prefer Garmin").
 
 *   **Acceptance Criteria (AC):**
     *   **Given** I am a Pro user.
@@ -780,6 +1083,25 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **User Engagement:** >80% of app sessions are confined to the dashboard screen, indicating it provides all necessary information without requiring deep navigation.
     *   **"Healthy" Dashboard Rate:** >95% of monthly active users have a dashboard with all syncs in a "green" or successful state.
 
+*   **Dependencies:**
+    *   This is an "Epic-like" story that serves as the container for **US-04**, **US-07**, and **US-08**.
+
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** The dashboard is the face of the product for most users. A clean, clear, and trustworthy dashboard is the key to retaining the "Sarah" persona.
+    *   **Deliver Best-in-Class Reliability:** The dashboard is the primary vehicle for communicating the system's reliability (or lack thereof) to the user.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify the dashboard correctly displays a list of all configured syncs.
+        *   Verify that adding a new sync (US-04) correctly adds a new card to the dashboard.
+        *   Verify that deleting a sync (US-08) correctly removes the card.
+        *   Verify that the status of each card updates correctly (US-07).
+    *   **Negative:**
+        *   Verify the dashboard displays a welcoming empty state when no syncs have been configured yet.
+    *   **Edge Cases:**
+        *   Test the dashboard's performance with a large number of sync cards (e.g., 20+).
+        *   Verify the dashboard UI adapts correctly to different screen sizes and accessibility font sizes.
+
 *   **Acceptance Criteria (AC):**
     *   This story is a high-level "Epic-like" story whose requirements are fulfilled by the implementation of other, more granular stories. Its acceptance is demonstrated by the successful implementation of:
         *   **US-07 (View Sync Status):** Each card shows its individual status.
@@ -819,6 +1141,24 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Success Metrics (KPIs):**
     *   **Contextual Paywall Conversion Rate:** >5% of users who see a contextual paywall for a specific feature proceed to purchase.
     *   **Click-Through Rate:** >20% of users who see the upsell bottom sheet tap the "Unlock Pro" button.
+
+*   **Dependencies:**
+    *   **US-09:** The purchase flow must be available to be initiated from the paywall.
+    *   This story is a prerequisite for gating access to **US-10** and **US-15**.
+
+*   **Strategic Alignment:**
+    *   **Build a Sustainable Business:** This story is a critical component of the sales funnel, converting engaged free users into paying customers by demonstrating value at the point of need.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify that a free user attempting to access "Historical Sync" is shown a contextual paywall.
+        *   Verify the paywall clearly explains the specific feature the user was trying to access.
+        *   Verify that tapping "Unlock Pro" initiates the purchase flow.
+    *   **Negative:**
+        *   Verify there is a clear "Dismiss" or "Not Now" option that closes the paywall.
+        *   Verify a Pro user does *not* see the contextual paywall when accessing the same features.
+    *   **Edge Cases:**
+        *   Ensure the upsell content can be configured remotely to allow for A/B testing of messaging without an app update.
 
 *   **Acceptance Criteria (AC):**
     *   **Given** I am a free user.
@@ -863,6 +1203,25 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **Attach Rate:** >5% of new paying customers choose the Family Plan over the individual license.
     *   **Invite Acceptance Rate:** >80% of sent family invitations are accepted.
     *   **Subscription Churn Rate:** Monthly churn for the Family Plan is < 3%.
+
+*   **Dependencies:**
+    *   This story represents a major architectural shift. It requires a backend server and a user account system, which are not part of the MVP. It depends on the successful delivery and validation of the entire MVP first.
+
+*   **Strategic Alignment:**
+    *   **Build a Sustainable Business:** Introduces a recurring revenue model (subscriptions), which is key to long-term financial sustainability and predictable growth.
+
+*   **Test Scenarios:**
+    *   **Positive:**
+        *   Verify a user can purchase a Family Plan subscription.
+        *   Verify the plan owner can generate an invite code/link.
+        *   Verify a second user can use the invite code to unlock Pro features on their device.
+        *   Verify the plan owner can see who has joined their plan.
+    *   **Negative:**
+        *   Verify an invite code cannot be used more than the allowed number of times.
+        *   Verify that if the owner's subscription lapses, the family members' Pro access is also revoked.
+    *   **Edge Cases:**
+        *   Test the process of a user leaving a family plan.
+        *   Test the process of an owner removing a user from the plan.
 
 *   **Acceptance Criteria (AC):**
     *   **Given** I am a user on the paywall screen.
