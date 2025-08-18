@@ -33,7 +33,7 @@ The data synchronization engine is a server-side, event-driven system built on A
 *   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration (Fitbit, Garmin, etc.) must implement.
 *   **`Smart Conflict Resolution Engine`:** A core component within the worker lambda that analyzes data from the source and destination to intelligently resolve conflicts before writing. This engine can now leverage the **AI Insights Service**.
 *   **`AI Insights Service`:** As detailed in the technical architecture, this service provides ML and LLM-powered intelligence, including advanced conflict resolution models.
-*   **`DynamoDB`:** Used to store essential state required for the sync process, such as `lastSyncTime` for each connection and user-defined conflict resolution rules.
+*   **`DynamoDB`:** The **`SyncWellMetadata`** table is used to store all essential, non-ephemeral state for the sync process. This includes user configurations, connection status, and sync metadata. Its single-table design is detailed in `06-technical-architecture.md`.
 *   **`S3 for Dead-Letter Queues`**: Messages that fail processing repeatedly are sent to a Dead-Letter Queue (DLQ) and stored in an S3 bucket for analysis and manual reprocessing.
 
 ## 3. The Synchronization Algorithm (Server-Side Delta Sync)
@@ -41,12 +41,15 @@ The data synchronization engine is a server-side, event-driven system built on A
 The `Worker Lambda` will follow this algorithm for each job pulled from the SQS queue:
 
 1.  **Job Dequeue:** The worker receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
-2.  **Get State from DynamoDB:** The worker retrieves the `lastSyncTime` and the user's chosen `conflictResolutionStrategy` for this connection from DynamoDB.
+2.  **Get State from DynamoDB:** The worker performs a `GetItem` call on the `SyncWellMetadata` table to retrieve the `SyncConfig` item.
+    *   **PK:** `USER#{userId}`
+    *   **SK:** `SYNCCONFIG#{sourceId}#to##{destId}##{dataType}`
+    *   This single read provides the `lastSyncTime` and the user's chosen `conflictResolutionStrategy`.
 3.  **Fetch New Data:** It calls the `fetchData(since: lastSyncTime)` method on the source `DataProvider` (e.g., `FitbitProvider`).
 4.  **Fetch Destination Data:** To enable conflict resolution, it also fetches potentially overlapping data from the destination `DataProvider` for the same time period.
 5.  **Smart Conflict Resolution:** The `Smart Conflict Resolution Engine` is invoked. It compares the source and destination data and applies the user's chosen strategy. If the strategy is `AI-Powered Merge`, it calls the **AI Insights Service**. It outputs a final, clean list of data points to be written.
 6.  **Write Data:** The worker calls the `writeData()` method on the destination provider with the conflict-free data.
-7.  **Update State in DynamoDB:** Upon successful completion, the worker updates the `lastSyncTime` for this connection in DynamoDB.
+7.  **Update State in DynamoDB:** Upon successful completion, the worker performs an `UpdateItem` call on the `SyncConfig` item in `SyncWellMetadata` to set the new `lastSyncTime` for the connection.
 8.  **Delete Job Message:** The worker deletes the job message from the SQS queue to mark it as complete.
 
 ## 4. Smart Conflict Resolution Engine
@@ -72,7 +75,7 @@ This engine is a core feature of SyncWell, designed to eliminate data duplicatio
 Handling a user's request to sync several years of historical data (User Story **US-10**) presents a significant challenge. A single, long-running job is brittle and prone to failure. To address this, we will implement a robust "cold path" process.
 
 1.  **Job Orchestration:** When a user requests a historical sync for a date range (e.g., Jan 1, 2020 to Dec 31, 2023), the `Request Lambda` does not create a single job. Instead, it acts as an orchestrator:
-    *   It creates a parent "Orchestration Record" in DynamoDB that tracks the overall progress of the historical sync.
+    *   It creates a parent "Historical Sync Job" item in the `SyncWellMetadata` table. This item, defined in `06-technical-architecture.md`, tracks the overall progress of the historical sync.
     *   It breaks the total date range into smaller, logical **chunks** (e.g., one-month intervals).
     *   It then enqueues one message in the `cold-queue` for each chunk (e.g., "Sync Jan 2020", "Sync Feb 2020", etc.).
 
