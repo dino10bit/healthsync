@@ -142,4 +142,14 @@ sequenceDiagram
     end
     Worker->>ExtProvider: 7. Make API call with valid token
     deactivate Worker
+
+## 8. Recommendations for Open-Source Adoption
+
+To improve the security, flexibility, and testability of the third-party API integration framework, the following open-source tools from the main architectural recommendations are particularly relevant.
+
+| Category | Recommended Tool | Strategic Benefit & Rationale for API Integration |
+| :--- | :--- | :--- |
+| **API Gateway** | **Kong** | **For Advanced Control and Flexibility.** As the number of integrations grows, an open-source API gateway like Kong can provide more granular control than the default AWS API Gateway. It offers a rich ecosystem of plugins for custom authentication schemes, advanced rate limiting, and request/response transformations. This would allow the team to build a more sophisticated and adaptable integration platform, reducing dependency on a single cloud provider's feature set. |
+| **Security Scanning** | **Trivy** | **To Secure the Integration Pipeline.** The `DataProvider` SDK and each individual provider implementation are critical pieces of the infrastructure. Integrating Trivy into the CI/CD pipeline to scan the container images and dependencies of our worker Lambdas adds a crucial layer of security. It can automatically detect known vulnerabilities in the libraries used to connect to third-party APIs, preventing security issues before they reach production. |
+| **Local Development** | **LocalStack** | **To Accelerate `DataProvider` Development.** Developing and testing a new `DataProvider` can be slow and cumbersome if it requires deploying to a live AWS environment. LocalStack allows engineers to run a full simulation of the AWS backend (API Gateway, Lambda, SQS, Secrets Manager) on their local machine. This means a developer can write and test the entire authentication and data sync flow for a new provider without leaving their IDE, leading to a massive improvement in development speed and quality. |
 ```
