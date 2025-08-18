@@ -41,6 +41,18 @@ This matrix serves as our formal, internal database of all known limitations.
 | **L-05** | Huawei | **Limited Write Access:** API only allows writing a small subset of data types (e.g., weight). | Confirmed | 2023-10-08 | The `HuaweiProvider.writeData()` method must check the `dataType` and throw a `NotSupportedError` for unsupported types like activities. |
 | **L-06** | Google Fit| **Native Tracking Conflicts:** If Google Fit's own tracking is enabled, it can lead to duplicated data. | Confirmed | 2023-09-15 | The app will use the Google Fit API to check if `com.google.android.gms` is a data source for steps. If so, a persistent warning will be shown on the dashboard. |
 
+### 3a. API Rate Limits
+
+As our user base scales to 1M DAU, we will make millions of API calls per day. Proactively managing third-party rate limits is a core architectural requirement. The **distributed rate-limiting engine**, defined in `07-apis-integration.md`, relies on the limits documented here as its configuration.
+
+**This table is a critical input for the rate-limiting engine.** The values here will be used to configure the token bucket algorithm in ElastiCache for each provider.
+
+| ID | Platform | Limit Type | Limit | Window | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **RL-01**| Fitbit | User-Specific | 150 calls | 1 hour | This is a well-documented, per-user limit. Our engine must track usage for each user individually. |
+| **RL-02**| Strava | Application-Wide| 600 calls | 15 minutes | This is a global limit for our entire application. The rate-limiting engine must enforce this across all worker Lambdas. |
+| **RL-03**| Strava | Application-Wide| 30,000 calls | 1 day | A secondary, daily limit that also needs to be managed globally. |
+
 ## 4. User Communication Matrix
 
 This matrix defines where and how we communicate these limitations to the user.

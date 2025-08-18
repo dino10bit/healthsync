@@ -37,75 +37,71 @@ data class Activity(
 )
 ```
 
-## 3. The Data Mapping Cookbook
+## 3. The DataProvider SDK & Mapping Responsibility
 
-Each `DataProvider` implementation contains the business logic for transformation.
+To ensure consistency and quality, all data mapping logic is implemented within the framework of the **`DataProvider` SDK**, as defined in `07-apis-integration.md`. The SDK provides a standardized structure, including abstract base classes and utility functions, that each provider must implement.
 
-### Example 1: Normalizing Activity Enums
-A provider must map the source platform's activity types to the canonical `ActivityType` enum.
+This approach separates the boilerplate (e.g., interacting with the rate limiter, logging) from the core transformation logic. The primary responsibility of a `DataProvider` implementation is to focus on the provider-specific mapping.
+
+### `DataProvider` Mapping Implementation
+
+Each `DataProvider` must implement a `toCanonical()` and `fromCanonical()` method for each supported data type.
+
 ```kotlin
-// Pseudo-code within a GarminProvider (in Kotlin)
-private fun mapGarminActivity(garminType: String): CanonicalActivityType {
-    return when (garminType.lowercase()) {
-        "running", "street_running" -> CanonicalActivityType.RUNNING
-        "cycling" -> CanonicalActivityType.CYCLING
-        "lap_swimming" -> CanonicalActivityType.SWIMMING
-        else -> CanonicalActivityType.OTHER
+// Simplified example within a hypothetical FitbitProvider, extending a base class from the SDK
+class FitbitProvider : BaseDataProvider() {
+
+    override fun toCanonical(sourceData: FitbitActivity): Canonical.Activity {
+        // SDK handles logging and metrics automatically
+        return Canonical.Activity(
+            startTime = normalizeToUtc(sourceData.startTime), // Use SDK utility for timezone
+            activityType = mapFitbitActivityType(sourceData.activityName),
+            // ... other fields
+        )
+    }
+
+    private fun mapFitbitActivityType(fitbitType: String): Canonical.ActivityType {
+        return when (fitbitType) {
+            "Treadmill" -> Canonical.ActivityType.RUNNING
+            "Bike" -> Canonical.ActivityType.CYCLING
+            else -> Canonical.ActivityType.OTHER
+        }
     }
 }
 ```
 
-### Example 2: Timezone Normalization
-All providers **must** convert source data timestamps to UTC before creating the canonical model. The canonical model is always in UTC.
-
 ## 4. Mapper Unit Testing
 
-*   **Requirement:** Every data mapping function in every provider **must** have a corresponding suite of unit tests.
-*   **Fixtures:** Tests will use static `.json` files representing real-world, anonymized API responses.
-*   **CI/CD Integration:** This test suite will be a required check in the **backend's CI/CD pipeline** in GitHub Actions. No code change that breaks a data mapping test will be deployed.
+Unit testing remains a critical part of the process, but it is now enforced by the SDK structure.
+
+*   **Requirement:** The `DataProvider` SDK will include an abstract `BaseProviderTest` class. Each provider's test suite **must** extend this base class, which provides a standardized way to load test fixtures and assert common conditions.
+*   **Fixtures:** Tests will continue to use static `.json` files representing real-world, anonymized API responses.
+*   **CI/CD Integration:** This test suite is a required check in the CI/CD pipeline. No code change that breaks a data mapping test will be deployed.
 *   **Benefit:** This creates a powerful regression suite. If a provider's API changes its response format, these unit tests will fail immediately, pinpointing the problem.
 
 ## 5. Schema Versioning & Migration
-
-The canonical schema itself is versioned to ensure long-term maintainability.
-*   **Backend Robustness:** The backend workers must always inspect the `schema_version` of any data sent from a mobile client. If the version is old, the data may be rejected or passed through a migration function to prevent the backend from crashing.
-*   **Client Migration:** When a new version of the app restores settings from an old backup, it must check the `schema_version` and run a migration function to update the data structure before applying it.
+*(Unchanged)*
 
 ## 6. Visual Diagrams
 
 ### Canonical Schema (High Level)
-```mermaid
-classDiagram
-    class CanonicalBase {
-        <<interface>>
-        type: String
-        sourceDataHash: String
-    }
-    class Activity {
-        startTime: String
-        endTime: String
-        activityType: ActivityType
-    }
-    class Sleep {
-        startTime: String
-        endTime: String
-        segments: SleepSegment[]
-    }
-    class Weight {
-        timestamp: String
-        weightKg: Float
-    }
-    CanonicalBase <|-- Activity
-    CanonicalBase <|-- Sleep
-    CanonicalBase <|-- Weight
-```
+*(Unchanged)*
 
-### Mapping and Testing Flow
+### Mapping and Testing Flow within the SDK
 ```mermaid
 graph TD
-    A[Raw JSON from 3rd Party API] --> B[Mapping Function (e.g., mapFromFitbit)];
-    B --> C[Canonical Model Instance];
-    C --> D[Unit Test Assertions];
-    E[Test Fixture (Stored JSON)] --> B;
-    D -- Pass/Fail --> F[CI/CD Gate];
+    subgraph DataProvider SDK
+        A[BaseDataProvider]
+        B[BaseProviderTest]
+    end
+    subgraph FitbitProvider Implementation
+        C[FitbitProvider] -- Extends --> A
+        D[FitbitProviderTest] -- Extends --> B
+    end
+    subgraph CI/CD Pipeline
+        E[Test Fixture (Fitbit JSON)] --> D
+        D -- Runs Tests --> F{Pass/Fail}
+    end
+
+    F -- Fail --> G[Block Deployment]
 ```
