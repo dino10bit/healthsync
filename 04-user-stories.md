@@ -94,6 +94,29 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Associated Risks:**
     *   **R-22:** "The onboarding flow is confusing or too long, causing a high drop-off rate." - Mitigation: The flow is intentionally brief and focused on value. Analytics will track the funnel conversion rate.
 
+*   **Security & Privacy:**
+    *   The privacy policy link must open a secure in-app browser (`SFSafariViewController`/Chrome Custom Tabs) to prevent session hijacking or content injection.
+    *   No user-identifiable information is collected or transmitted during this step. The `onboarding_started` event should use a device-level anonymous ID, not a user account ID.
+    *   Refer to: `19-security-privacy.md` for general principles.
+*   **Accessibility (A11y):**
+    *   All text must meet WCAG 2.1 AA contrast ratios.
+    *   The carousel must be navigable via screen readers (e.g., VoiceOver, TalkBack). Swiping actions should be announced.
+    *   The "Begin Setup" button and privacy policy link must have accessible labels and be easily tappable.
+    *   Refer to: `28-accessibility.md` for detailed guidelines.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   All text strings ("All Your Health Data, in Sync.", "Begin Setup", etc.) must be stored in localizable string files (e.g., `strings.xml`, `Localizable.strings`).
+    *   The layout must be tested with longer strings from languages like German to ensure it doesn't break.
+    *   The Privacy Policy link should ideally point to a localized version of the policy if available.
+    *   Refer to: `26-internationalization.md`, `27-localization.md`.
+*   **Data Governance & Compliance:**
+    *   This initial screen does not handle any personal health information (PHI).
+    *   The act of a user proceeding past this screen implies consent to the presented privacy policy. This interaction (timestamp, device ID) should be logged for compliance auditing.
+    *   Refer to: `20-compliance-regulatory.md`.
+*   **Release Strategy:**
+    *   The copy and imagery of the carousel will be controlled via Firebase Remote Config to allow for A/B testing of value propositions without a full app release.
+    *   The feature will be enabled for 100% of new users on launch.
+    *   Refer to: `25-release-management.md`.
+
 ---
 
 #### **US-02:** Be guided through connecting the first two health apps.
@@ -174,6 +197,30 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **R-22:** High drop-off rate. Mitigation: Analytics will pinpoint the failing step.
     *   **R-104:** Implementation deviates from the flow. Mitigation: The clickable prototype is the source of truth.
 
+*   **Security & Privacy:**
+    *   OAuth 2.0 `state` parameter must be used to prevent CSRF attacks.
+    *   The redirect URI must be strictly validated against a whitelist.
+    *   Access and refresh tokens must be stored encrypted at rest in the platform's most secure storage (`Keystore`/`Keychain`).
+    *   The in-app browser for OAuth must prevent JavaScript injection and credential snooping.
+    *   Refer to: `19-security-privacy.md`, Section 4.1 "OAuth2 Security".
+*   **Accessibility (A11y):**
+    *   The grid of app logos must be navigable with a screen reader. Each logo should have a clear, audible name (e.g., "Fitbit").
+    *   Loading indicators must have an accessible label announcing that content is loading.
+    *   Error messages (e.g., "Authorization failed") must be announced to the user via `aria-live` regions or similar platform-specific mechanisms.
+    *   Refer to: `28-accessibility.md`.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   Error messages and status updates (e.g., "Connecting...") must be localized.
+    *   The list of apps should be sorted alphabetically based on the current locale.
+    *   Refer to: `26-internationalization.md`.
+*   **Data Governance & Compliance:**
+    *   The scopes requested during the OAuth flow must be the minimum necessary to perform the syncs. These scopes must be documented for each integration.
+    *   User consent for data access is granted via the third-party OAuth screen. The app should log the grant event (timestamp, scopes granted) for auditing purposes.
+    *   Refer to: `20-compliance-regulatory.md`.
+*   **Release Strategy:**
+    *   The list of supported source/destination apps will be controlled by Firebase Remote Config. This allows adding new apps or temporarily disabling a problematic integration without an app release.
+    *   The feature is core and will be enabled for 100% of users.
+    *   Refer to: `25-release-management.md`.
+
 ---
 
 #### **US-03:** Be clearly informed about permission requests.
@@ -239,6 +286,19 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 
 *   **Associated Risks:**
     *   Users may still deny permissions. Mitigation: The priming dialog is the best practice for increasing the grant rate. The app must function gracefully (with reduced capability) if permissions are denied.
+
+*   **Security & Privacy:**
+    *   The priming screen itself does not handle sensitive data, but it is a gatekeeper for data access. Its design must not be deceptive or coercive, adhering to platform guidelines (e.g., Apple's App Store Review Guideline 5.1.1).
+*   **Accessibility (A11y):**
+    *   The dialog must be fully accessible. All text should be readable by screen readers, and the buttons must be clearly labeled and focusable.
+    *   Refer to: `28-accessibility.md`.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   The explanation text and button titles must be localized. The copy must be reviewed by native speakers to ensure it is clear and culturally appropriate.
+*   **Data Governance & Compliance:**
+    *   This flow is a key part of demonstrating explicit user consent for data access under GDPR and other regulations. The user's choice (positive or negative) should be logged for auditing purposes.
+*   **Release Strategy:**
+    *   The copy on the permission primers will be managed via Remote Config to allow for A/B testing of different messaging to optimize the permission grant rate.
+    *   Refer to: `25-release-management.md`.
 
 ---
 
@@ -319,6 +379,18 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Associated Risks:**
     *   **R-26:** "Users misunderstand the configuration options." - Mitigation: The step-by-step flow and visual cues (grayed-out options) are designed to prevent user error.
 
+*   **Security & Privacy:**
+    *   No new credentials or sensitive data are handled here, but the configuration itself represents the user's intent to move data. This configuration must be stored securely on the device.
+*   **Accessibility (A11y):**
+    *   The multi-step progress indicator must be accessible.
+    *   Multi-select and single-select lists must support screen readers and keyboard/switch controls. Grayed-out (disabled) options must be announced as such.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   Data type names ("Steps", "Sleep") and all UI text must be localized.
+*   **Data Governance & Compliance:**
+    *   The saved configuration represents a user's explicit instruction to process their data in a specific way. This configuration is critical for data processing audits under GDPR's "purpose limitation" principle.
+*   **Release Strategy:**
+    *   The available data types for sync may be controlled by Remote Config to allow for staged rollouts of new data types.
+
 ---
 
 #### **US-05:** Have data sync automatically in the background.
@@ -389,6 +461,21 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Associated Risks:**
     *   Platform-specific restrictions on background tasks can make syncing unreliable. Mitigation: Thoroughly test on various OS versions and devices. Clearly communicate limitations to the user.
 
+*   **Security & Privacy:**
+    *   All API calls made during the background sync must use HTTPS.
+    *   The sync process must not log any Personal Health Information (PHI) to the console or analytics. Error logs should only contain non-identifiable information (e.g., error codes, sync job ID).
+    *   Refer to: `19-security-privacy.md`.
+*   **Accessibility (A11y):**
+    *   This is a background process with no direct UI. However, its results (success, failure) are surfaced in the UI (US-07), which must be accessible. Any notifications sent (e.g., for failures) must be accessible.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   Any user-facing errors or notifications generated by the sync process must be localized.
+*   **Data Governance & Compliance:**
+    *   This is the core data processing engine. It must adhere strictly to the user's configuration (US-04).
+    *   The logic must be auditable to prove that data is only moved between the user-specified source and destination. No data should be sent to any other location.
+    *   The app must respect the data retention policies of the source/destination platforms.
+*   **Release Strategy:**
+    *   The frequency and batch size of background syncs may be controlled by Remote Config to manage server load on third-party APIs or to respond to platform-wide issues.
+
 ---
 
 #### **US-06:** Manually trigger a sync from the main dashboard.
@@ -451,6 +538,18 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 
 *   **Associated Risks:**
     *   N/A - This is a straightforward feature with low risk.
+
+*   **Security & Privacy:**
+    *   Same as US-05. All data transmission must be secure. No logging of PHI.
+*   **Accessibility (A11y):**
+    *   The pull-to-refresh gesture is a standard control but should be accompanied by an alternative for users who cannot perform it (e.g., a "Sync Now" button in a context menu).
+    *   The "Syncing..." status text and indicator must be announced by screen readers.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   Status messages ("Syncing...", "Synced just now") must be localized, including handling of relative time formats.
+*   **Data Governance & Compliance:**
+    *   Same as US-05. The process is user-initiated but must follow the same data handling rules.
+*   **Release Strategy:**
+    *   The feature is core and will be enabled for 100% of users.
 
 ---
 
@@ -516,6 +615,19 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Associated Risks:**
     *   **R-27:** "The app fails to properly save or reflect the user's configuration changes." - Mitigation: Use a robust reactive state management library to ensure the UI is always a direct reflection of the database state.
 
+*   **Security & Privacy:**
+    *   Error messages must not leak sensitive information (e.g., do not display raw API error responses containing tokens or user IDs).
+*   **Accessibility (A11y):**
+    *   Color must not be the only means of conveying status. The text itself must be descriptive (e.g., "Success", "Needs attention"). Icons should be used in addition to color and text.
+    *   All status text and icons must have accessible labels that are announced by screen readers.
+    *   Refer to: `28-accessibility.md`.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   All status messages (e.g., "Synced {minutes} ago", "Needs attention") must be localized.
+*   **Data Governance & Compliance:**
+    *   This feature provides transparency to the user about data processing activities, which is a requirement of GDPR.
+*   **Release Strategy:**
+    *   N/A. This is a core UI component.
+
 ---
 
 #### **US-08:** Delete a sync configuration that is no longer needed.
@@ -575,6 +687,17 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 
 *   **Associated Risks:**
     *   Accidental deletion. Mitigation: The confirmation dialog is the standard and effective mitigation for this.
+
+*   **Security & Privacy:**
+    *   The deletion of the configuration must be complete and irreversible from the device's storage.
+*   **Accessibility (A11y):**
+    *   The confirmation dialog must be fully accessible, with clear labels for the "Delete" and "Cancel" actions.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   The text in the confirmation dialog must be localized.
+*   **Data Governance & Compliance:**
+    *   This fulfills the user's right to withdraw consent for a specific data processing activity. The deletion event should be logged for auditing.
+*   **Release Strategy:**
+    *   N/A. This is a core data management feature.
 
 ---
 
@@ -651,6 +774,19 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 
 *   **Associated Risks:**
     *   **R-24:** "The value proposition of the Pro tier is not clearly communicated." - Mitigation: The paywall must list the key benefits (e.g., "Unlimited Syncs", "Historical Sync", "Conflict Resolution").
+
+*   **Security & Privacy:**
+    *   The app must not handle or store any credit card information. All payment processing is delegated to the native StoreKit/Google Play Billing APIs.
+    *   If server-side receipt validation is used, the receipt data must be transmitted securely and the server must be protected against replay attacks.
+*   **Accessibility (A11y):**
+    *   The paywall screen must be fully accessible. Benefits of Pro should be in a list that can be read by screen readers. The purchase button must be clearly labeled.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   The price must be displayed in the user's local currency, using the formatting provided by the store APIs.
+    *   All text on the paywall (benefits, button titles, legal disclaimers) must be localized.
+*   **Data Governance & Compliance:**
+    *   The purchase history is considered personal data and must be handled according to the privacy policy. The link between a purchase and a user should be managed securely.
+*   **Release Strategy:**
+    *   The price and listed Pro benefits on the paywall will be controlled by Remote Config to allow for price testing and messaging updates.
 
 ---
 
@@ -730,6 +866,20 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Associated Risks:**
     *   High battery and data consumption. Mitigation: The warning dialog is essential. The process should also be configured to run only when the device is charging, if possible.
 
+*   **Security & Privacy:**
+    *   Same as US-05. The large volume of data being transferred increases the importance of secure transmission and handling. The process must be robust against leaving orphaned data if it fails mid-way.
+*   **Accessibility (A11y):**
+    *   The date selection UI must be accessible.
+    *   The progress indicator (e.g., "Syncing 3 of 90 days...") must be accessible and provide real-time updates to screen readers.
+    *   The persistent progress notification must be accessible.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   The warning dialog, progress messages, and completion notification must all be localized. Date formats must respect the user's locale.
+*   **Data Governance & Compliance:**
+    *   This is a bulk data processing operation. It must be logged and auditable. The app must handle API rate limits gracefully and respect the terms of service of the source/destination platforms, which may have rules against bulk data export.
+*   **Release Strategy:**
+    *   This is a Pro feature, gated by the purchase status (US-09).
+    *   The maximum date range allowed for a single historical sync job might be controlled by Remote Config to manage system load.
+
 ---
 
 #### **US-11:** Restore a previous purchase on a new device.
@@ -793,6 +943,18 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 
 *   **Associated Risks:**
     *   Users being unable to restore their purchase is a major point of frustration. Mitigation: This is a standard, well-documented flow. Thorough testing is key.
+
+*   **Security & Privacy:**
+    *   Relies on the security of the native store APIs. The app is only requesting the user's entitlement status.
+*   **Accessibility (A11y):**
+    *   The "Restore Purchases" button must be clearly labeled and accessible.
+    *   The success ("Purchase restored") or failure ("No purchase found") messages must be announced to the user.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   All button titles and status messages must be localized.
+*   **Data Governance & Compliance:**
+    *   This links a new device/install to a previous purchase record, re-establishing the user's data subject identity with respect to their payment history.
+*   **Release Strategy:**
+    *   N/A. This is a mandatory feature for apps with non-consumable IAPs as per App Store / Play Store guidelines.
 
 ---
 
@@ -862,6 +1024,20 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 
 *   **Associated Risks:**
     *   **R-28:** "The volume of feedback becomes too high." - Mitigation: The Help Center and FAQ serve as the first line of defense, deflecting common queries from becoming support tickets.
+
+*   **Security & Privacy:**
+    *   If the Help Center loads content from a remote URL in a `WebView`, it must ensure the source is trusted and uses HTTPS to prevent content injection.
+    *   The pre-filled support email should not contain any sensitive user data by default.
+*   **Accessibility (A11y):**
+    *   The expandable list of FAQs must be navigable and usable with screen readers. The expanded/collapsed state should be announced.
+    *   Any search functionality must be accessible.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   The FAQ content should be fetched from a locale-specific endpoint (e.g., `.../faq/en-US.json`).
+    *   The pre-filled support email should have a localized subject line.
+*   **Data Governance & Compliance:**
+    *   N/A, unless the feature request portal has its own privacy policy that needs to be considered and linked.
+*   **Release Strategy:**
+    *   The FAQ content will be fetched from a remote JSON file, allowing the Support team to update it at any time without an app release.
 
 ---
 
@@ -933,6 +1109,19 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Associated Risks:**
     *   Failing to properly revoke the token on the server-side could leave a security hole. Mitigation: Ensure the API calls are implemented correctly and test that the token is actually invalidated.
 
+*   **Security & Privacy:**
+    *   This is a critical security feature. It must ensure that the OAuth token revocation API call is made successfully.
+    *   It must perform a secure wipe of the credentials from the `Keystore`/`Keychain`. A simple deletion may not be sufficient; an overwrite or a specific API call might be needed to ensure it's unrecoverable.
+    *   Refer to: `19-security-privacy.md`, Section 5 "Credential Lifecycle Management".
+*   **Accessibility (A11y):**
+    *   The confirmation dialog and "Disconnect" button must be fully accessible.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   The confirmation dialog text must be localized.
+*   **Data Governance & Compliance:**
+    *   This feature is a direct implementation of the user's "right to be forgotten" and the right to withdraw consent under GDPR. The successful revocation and deletion must be logged for compliance audits.
+*   **Release Strategy:**
+    *   N/A. This is a core privacy feature.
+
 ---
 
 ### Epic 5: Strategic Differentiators & Pro Features
@@ -997,6 +1186,17 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 
 *   **Associated Risks:**
     *   Complexity of mapping data between the two ecosystems. Mitigation: Start with a limited set of the most common data types (Steps, Weight, Heart Rate) and expand from there.
+
+*   **Security & Privacy:**
+    *   The data mapping layer is a sensitive component. It must be protected from any form of injection or manipulation. All transformations should happen in memory on the device.
+*   **Accessibility (A11y):**
+    *   Any UI that explains the mapping or limitations (e.g., which data types are not supported) must be clear and accessible.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   Data types and descriptions of them must be localized.
+*   **Data Governance & Compliance:**
+    *   This is the most sensitive data processing in the app. The mapping logic must be thoroughly documented and auditable to prove that it does not alter data in unintended ways. It must correctly handle different data privacy settings on each platform (e.g., if a user has granted permission for Steps but not Heart Rate).
+*   **Release Strategy:**
+    *   New data type mappings could be rolled out incrementally, controlled by a feature flag or Remote Config, to allow for careful testing and validation.
 
 ---
 
@@ -1069,6 +1269,18 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Associated Risks:**
     *   The merging logic could be flawed, leading to incorrect data. Mitigation: Extensive testing with real-world data is required. Allow the user to "undo" a merge for a short period.
 
+*   **Security & Privacy:**
+    *   The conflict data is sensitive health data. The side-by-side comparison must not log or leak this information.
+*   **Accessibility (A11y):**
+    *   The side-by-side comparison screen is complex and must be designed for accessibility from the start. A screen reader user should be able to easily compare the conflicting data points and make a choice.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   All text on the resolution screen ("Keep Source A", "Merge", etc.) must be localized.
+*   **Data Governance & Compliance:**
+    *   The merge feature is a form of data modification. The user's explicit choice must be logged. The merge algorithm itself must be documented and auditable to show that it is deterministic and respects user intent.
+*   **Release Strategy:**
+    *   This is a Pro feature, gated by the purchase status (US-09).
+    *   The conflict detection algorithm's sensitivity (e.g., the time window for considering activities as duplicates) could be controlled by Remote Config.
+
 ---
 
 #### **US-16:** See a single dashboard with the status of all connections.
@@ -1128,6 +1340,17 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 
 *   **Associated Risks:**
     *   **R-25:** "The configuration UI is too complex." - Mitigation: The dashboard itself is simple. The complexity is in the configuration screens it leads to, which is mitigated by the step-by-step flow.
+
+*   **Security & Privacy:**
+    *   The dashboard displays a summary of data processing. It must not display sensitive data points directly.
+*   **Accessibility (A11y):**
+    *   The entire dashboard must be accessible. This includes the list of sync cards, their content, and the empty state. The layout should adapt to larger font sizes.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   The empty state text must be localized.
+*   **Data Governance & Compliance:**
+    *   The dashboard provides the transparency required by regulations like GDPR.
+*   **Release Strategy:**
+    *   N/A. This is the main screen of the app.
 
 ---
 
@@ -1189,6 +1412,17 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 
 *   **Associated Risks:**
     *   **R-24:** Poorly communicated value. Mitigation: A/B testing different messaging for the upsell prompts is key to maximizing conversion.
+
+*   **Security & Privacy:**
+    *   N/A. This feature does not handle sensitive data.
+*   **Accessibility (A11y):**
+    *   The bottom sheet or paywall must be fully accessible and should not trap focus from screen readers. It must be dismissible with an escape gesture.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   The upsell messaging must be localized and tested for different screen sizes and languages.
+*   **Data Governance & Compliance:**
+    *   N/A.
+*   **Release Strategy:**
+    *   The content and appearance of the upsell prompts are prime candidates for A/B testing via Remote Config to optimize the conversion rate.
 
 ---
 
@@ -1255,6 +1489,17 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Associated Risks:**
     *   The introduction of user accounts and a backend significantly increases the security and privacy surface area of the app. This is a major architectural decision and is out of scope for the MVP.
 
+*   **Security & Privacy:**
+    *   This introduces user accounts and a backend, massively increasing the security surface area. It requires authentication, authorization, protection against data leakage between family members, and a secure invitation system. This requires a full backend security review.
+    *   Refer to: `19-security-privacy.md`, Section 6 "Backend and API Security".
+*   **Accessibility (A11y):**
+    *   The UI for managing family members (inviting, removing) must be accessible.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   All new UI, emails, and notifications related to family plan management must be localized.
+*   **Data Governance & Compliance:**
+    *   This introduces multi-user accounts. The privacy policy must be updated significantly. It must be clear who the data controller is for the family plan data. Compliance with regulations like COPPA might be necessary if children could be invited.
+*   **Release Strategy:**
+    *   This is a major new feature. It would be launched as a new subscription tier, possibly to a small percentage of users at first (a beta) before a general rollout.
 
 ## 4. MVP Sprint Plan
 

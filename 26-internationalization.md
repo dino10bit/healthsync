@@ -99,3 +99,22 @@ To proactively find UI layout bugs, a pseudo-localized language will be created 
 *   **[Screenshot] Pseudo-localization:** A screenshot of a UI screen running in the `en-pseudo` locale, showing the expanded, accented text and brackets.
 *   **[Screenshot] CI/CD Check:** A screenshot of a failing GitHub pull request check due to a "missing translation key" error from the automated script.
 *   **[Code Snippet] `useTranslation` Hook:** A sample of the custom `useTranslation` hook that wraps the library.
+
+## 8. Scope of Internationalization
+
+The i18n architecture must support the localization of all user-facing strings and locale-sensitive formats. The following is a non-exhaustive list of content types that must be handled by the i18n framework, based on the requirements in `04-user-stories.md`:
+
+*   **Core UI Text:** All buttons, labels, titles, and descriptive text.
+    *   *Example from **US-01**: The welcome carousel text ("All Your Health Data, in Sync.") and button text ("Begin Setup").*
+*   **Status & Error Messages:** All dynamic messages shown to the user.
+    *   *Example from **US-07**: Statuses like "Synced 5 minutes ago" and "Needs attention".*
+    *   *Example from **US-02**: Error messages like "Authorization failed. Please try again."*
+*   **Permission Primers:** The explanatory text in pre-permission dialogs.
+    *   *Example from **US-03**: The rationale for requesting Notification or HealthKit access.*
+*   **Monetization & Paywalls:** All text related to in-app purchases, including feature lists and calls to action.
+    *   *Example from **US-09** & **US-17**: The list of Pro benefits and the "Unlock Pro" button text.*
+*   **Confirmation Dialogs:** All text in dialogs that ask the user to confirm an action.
+    *   *Example from **US-08**: The "Delete Sync?" confirmation dialog.*
+*   **Formatted Data:** Any displayed data that is locale-sensitive.
+    *   **Dates & Times:** Must be formatted according to the user's locale (e.g., MM/DD/YYYY vs DD/MM/YYYY).
+    *   **Numbers:** Must use the correct decimal and thousands separators.

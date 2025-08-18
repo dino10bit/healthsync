@@ -29,12 +29,12 @@ We do not view compliance as a burden, but as a core feature of our product. In 
 
 This scorecard is a living document that will be reviewed quarterly to ensure ongoing compliance.
 
-| Regulation / Policy | Key Requirement | Implementation Status | Last Reviewed |
+| Regulation / Policy | Key Requirement | Implementation Status & Evidence | Last Reviewed |
 | :--- | :--- | :--- | :--- |
-| **GDPR** | Clear Privacy Policy | Implemented | - |
-| **GDPR** | User consent for analytics | Implemented (Opt-out) | - |
-| **GDPR** | Right to data deletion | Implemented (De-authorize feature) | - |
-| **CCPA** | "Do Not Sell" Info | Addressed in Privacy Policy | - |
+| **GDPR** | Lawful Basis for Processing (Consent) | Implemented. Consent is explicitly given when the user agrees to the privacy policy (**US-01**) and authorizes each third-party app (**US-02**). | - |
+| **GDPR** | Data Minimization | Implemented. The app only requests the minimum necessary scopes for OAuth and only handles data in-memory. | - |
+| **GDPR** | Right to Erasure | Implemented. The "De-authorize" feature (**US-13**) and "Delete Sync" feature (**US-08**) allow the user to delete their credentials and configurations. | - |
+| **CCPA** | "Do Not Sell" Info | Addressed in Privacy Policy. We do not sell user data. | - |
 | **Apple App Store** | Guideline 5.1 (Privacy) | Implemented | - |
 | **Apple App Store** | Guideline 3.1 (Payments) | Implemented | - |
 | **Google Play Store**| User Data Policy | Implemented | - |
@@ -55,11 +55,11 @@ Adherence to the terms of service for each integrated API is critical to prevent
 
 ### 5.1. User Consent Flow
 
-Consent will be obtained at multiple, specific points in the user journey:
-1.  **Onboarding:** Before completing the welcome carousel, the user must check a box: "I have read and agree to the Privacy Policy and Terms of Service."
-2.  **Permission Priming:** For each OS-level permission (Notifications, HealthKit, etc.), a pre-permission dialog will explain why access is needed before the OS prompt is shown.
-3.  **Analytics Consent:** For users in the EU, analytics tracking will be disabled by default. It will only be enabled if the user explicitly opts-in via the toggle in the Privacy & Security settings.
-4.  **Third-Party OAuth:** The consent screen presented by each third-party service (e.g., Fitbit's login page) serves as the user's explicit consent to share data from that platform with SyncWell.
+Consent will be obtained and logged at multiple, specific points in the user journey:
+1.  **Acceptance of Policies:** Consent to the Privacy Policy and Terms of Service is demonstrated by the user's affirmative action of tapping the "Begin Setup" button in the onboarding flow (**US-01**). This action will be logged with a timestamp for auditing.
+2.  **Platform Permissions:** For each OS-level permission (Notifications, HealthKit, etc.), the user is shown a pre-permission "priming" dialog explaining why access is needed (**US-03**). The user's choice to proceed or decline is logged.
+3.  **Analytics Consent:** For users in regions covered by GDPR, analytics tracking will be disabled by default. It will only be enabled if the user explicitly opts-in via a toggle in the Privacy & Security settings.
+4.  **Third-Party Data Access:** The consent screen presented by each third-party service (e.g., Fitbit's login page) serves as the user's explicit consent to share data from that platform with SyncWell (**US-02**). The grant of this access is logged.
 
 ### 5.2. Data Processing Agreements (DPAs)
 
