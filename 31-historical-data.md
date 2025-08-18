@@ -1,13 +1,13 @@
 ## Dependencies
 
 ### Core Dependencies
-- `05-data-sync.md` - Data Sync & Conflict Resolution
+- `05-data-sync.md` - Data Synchronization & Reliability
+- `06-technical-architecture.md` - Technical Architecture
 - `12-trial-subscription.md` - Trial, Subscription & Paywall
-- `30-sync-mapping.md` - Source-Destination Sync Mapping
-- `32-platform-limitations.md` - Platform-Specific Limitations
 
 ### Strategic / Indirect Dependencies
 - `09-ux-configuration.md` - UX, Configuration & Settings
+- `16-performance-optimization.md` - Performance & Scalability
 - `17-error-handling.md` - Error Handling, Logging & Monitoring
 
 ---
@@ -18,94 +18,89 @@
 
 This document provides the detailed technical specification for the **Historical Data Sync** feature, a core premium offering. This feature allows paying users to backfill their health data, providing a powerful incentive to upgrade.
 
-Given its complexity and potential for high API usage, this feature is built using a robust, isolated backend architecture. This specification details the **dual-queue, "hot/cold" architecture**, the job state management in DynamoDB, and the "circuit breaker" safety pattern required to deliver this feature reliably.
+A naive implementation of this feature (a single, long-running job) is brittle and prone to failure. To ensure maximum reliability and a transparent user experience, we will implement a robust **job chunking and orchestration** strategy. This specification, derived from `05-data-sync.md`, details this architecture, the data model for progress tracking, and the user experience for monitoring a large sync.
 
-## 2. Historical Sync Architecture (Backend)
+## 2. Historical Sync Architecture: Job Chunking & Orchestration
 
-The historical sync feature uses a separate, dedicated "cold path" on the backend to ensure these long-running, low-priority jobs do not interfere with normal, real-time syncs.
+The historical sync feature uses the dedicated "cold path" on the backend, but instead of a single, long-running job, it uses an orchestration model to create dozens or hundreds of small, independent jobs.
 
-*   **Dual SQS Queues:**
-    1.  **`hot-queue`:** For normal, real-time syncs. Processed immediately.
-    2.  **`cold-queue`:** A separate queue for historical backfill jobs.
-*   **Dual Lambda Worker Fleets:**
-    *   **`hot-workers`:** A fleet of Lambdas with short timeouts, high concurrency, and auto-scaling, dedicated to draining the `hot-queue` as fast as possible.
-    *   **`cold-workers`:** A separate fleet of Lambdas configured with **long timeouts** (e.g., up to 15 minutes). These workers process the `cold-queue` and are designed to handle long-running API calls for historical data.
-*   **DynamoDB Job State Table:** A dedicated DynamoDB table tracks the state of every historical sync job. This table is the "source of truth" for the job's progress.
-    ```json
-    // Item in the HistoricalJobs DynamoDB Table
-    {
-      "jobId": "uuid-123", // Partition Key
-      "userId": "user-abc",
-      "source": "fitbit",
-      "destination": "strava",
-      "startDate": "2021-01-01",
-      "endDate": "2023-01-01",
-      "cursorDate": "2022-10-27", // The day currently being processed
-      "status": "PAUSED",
-      "errorCount": 6,
-      "lastAttempt": "2023-10-27T14:30:00Z"
-    }
-    ```
+1.  **Orchestration at the Start:** When a user requests a historical sync for a large date range (e.g., Jan 1, 2020 to Dec 31, 2023), the `Request Lambda` initiates the orchestration process.
+2.  **Parent Record Creation:** It first creates a single "Orchestration Record" in a new DynamoDB table. This record represents the entire historical sync operation and will be used to track its overall progress.
+3.  **Job Chunking:** The orchestrator then breaks the total date range into smaller, logical **chunks** (e.g., one-month intervals).
+4.  **Queueing Independent Jobs:** It then enqueues one message in the `cold-queue` for each chunk. For example, a 3-year sync would generate 36 individual messages in SQS (e.g., "Sync Jan 2020", "Sync Feb 2020", etc.).
 
-## 3. Job State Machine & "Circuit Breaker"
+### Data Model
 
-The `cold-worker` Lambdas orchestrate the job as a state machine, with the state being persisted in DynamoDB.
+**`Orchestration Record` (DynamoDB)**
+This record tracks the overall job.
 
-1.  A `cold-worker` picks up a message from the `cold-queue`. The message contains the `jobId`.
-2.  The worker reads the full job details from the DynamoDB table using the `jobId`.
-3.  It fetches data for the `cursorDate`.
-4.  On success, it **updates the `cursorDate` in DynamoDB** (e.g., decrements by one day). If the job is not yet complete, it **places a new message for the same `jobId` back into the `cold-queue`** to process the next day.
-5.  If a recoverable error occurs, the worker increments the `errorCount` in DynamoDB.
-6.  **Circuit Breaker:** If the `errorCount` exceeds a threshold (e.g., 5 failures in 1 hour), the worker sets the job `status` to **`PAUSED`** in DynamoDB and does **not** re-queue the job. A separate scheduled task will periodically scan for `PAUSED` jobs and re-activate them after a cool-down period.
-7.  If a non-recoverable error occurs (e.g., 401 invalid credentials), the worker sets the `status` to **`FAILED`**.
+```json
+{
+  "orchestrationId": "orch-uuid-123", // Partition Key
+  "userId": "user-abc",
+  "source": "fitbit",
+  "destination": "strava",
+  "startDate": "2020-01-01",
+  "endDate": "2023-12-31",
+  "status": "IN_PROGRESS", // PENDING, IN_PROGRESS, COMPLETED, FAILED
+  "totalChunks": 36,
+  "completedChunks": 15,
+  "failedChunks": 1
+}
+```
 
-## 4. Dynamic UI & User Experience
+**`Chunk Job` (SQS Message)**
+This is the small, independent job processed by a worker.
 
-The UI is decoupled from the processing logic and gets its information by polling the backend.
+```json
+{
+  "orchestrationId": "orch-uuid-123",
+  "userId": "user-abc",
+  "source": "fitbit",
+  "destination": "strava",
+  "chunkStartDate": "2021-03-01",
+  "chunkEndDate": "2021-03-31"
+}
+```
 
-*   **Status Polling:** While the historical sync progress screen is open, the mobile app will poll a new API Gateway endpoint every 5-10 seconds. This endpoint reads the job's status directly from the DynamoDB job state table and returns it to the client.
-*   **Progress Visualization:** The UI uses the polled data to provide rich, real-time feedback:
-    *   A progress bar calculated from the `startDate`, `endDate`, and `cursorDate`.
-    *   Text status: "Syncing data for {{cursorDate}}..."
-    *   If `status` is `PAUSED`: "Syncing is temporarily paused because the {{sourceProvider}} servers are busy. We will automatically resume in a few hours."
-*   **User Controls:** For jobs in a `PAUSED` or `FAILED` state, the user can tap "Retry Now". This calls an endpoint that immediately changes the job's status back to `PENDING` and places it in the `cold-queue`.
+## 3. Benefits of the Chunking Strategy
+
+This architecture is fundamentally more resilient and scalable than a single-job model.
+
+*   **Resilience & Fault Isolation:** The `Cold-Path Worker Lambdas` process one small chunk at a time. If the job for "March 2021" fails due to a temporary API error or a single corrupt data point, it has **zero impact** on the processing of "April 2021". The failed chunk job can be retried independently via the Dead-Letter Queue (DLQ) without halting the entire historical sync.
+*   **Parallelism & Performance:** SQS and Lambda are massively parallel. By creating many small jobs, we can have dozens or hundreds of `Cold-Path Worker Lambdas` running in parallel, processing multiple months of data simultaneously. This dramatically reduces the total time required to complete a large backfill.
+*   **Resumability:** The state is tracked in the `Orchestration Record`. The process can be paused and resumed at any time. If the entire system were to shut down, the orchestration could be restarted, identify which chunks were not yet complete, and re-enqueue only the missing jobs.
+*   **Meaningful Progress Tracking:** The UI can provide a much more accurate and encouraging progress report to the user by querying the `Orchestration Record`.
+
+## 4. Execution Flow
+
+1.  A `Cold-Path Worker` receives a `Chunk Job` message from the `cold-queue`.
+2.  It executes the sync for the small date range specified in the message (e.g., one month).
+3.  Upon successful completion, the worker performs an **atomic increment** on the `completedChunks` attribute of the parent `Orchestration Record` in DynamoDB.
+4.  If all chunks are complete (`completedChunks` + `failedChunks` == `totalChunks`), the worker sets the `Orchestration Record` status to `COMPLETED`.
+5.  If the job fails and is moved to the DLQ, a separate process will increment the `failedChunks` count on the parent record.
 
 ## 5. Visual Diagrams
 
-### Dual Queue Backend Architecture
+### Job Chunking & Orchestration Flow
 ```mermaid
 graph TD
-    subgraph Mobile App
-        A[Initiate Historical Sync]
+    subgraph User
+        A[Requests 2-Year Sync]
     end
     subgraph AWS Backend
-        B[API Gateway]
-        C[SQS Hot Queue]
+        B[Request Lambda (Orchestrator)]
+        C[DynamoDB Orchestration Table]
         D[SQS Cold Queue]
-        E[Hot Workers]
-        F[Cold Workers]
-        G[DynamoDB State Table]
+        E[Cold-Path Workers]
     end
-    A --> B
-    B -- Places job details --> G
-    B -- Places job message --> D
-    E --> C
-    F -- Polls --> D
-    F -- Reads/Writes Job State --> G
-    F -- Re-queues job for next chunk --> D
-```
 
-### Historical Job State Machine
-```mermaid
-graph TD
-    A[Pending] --> B{Running};
-    B -- Chunk Success, More to Do --> A;
-    B -- Chunk Success, All Done --> C[Completed];
-    B -- Recoverable Error --> D{Retry};
-    D -- Retries < 5 --> B;
-    D -- Retries > 5 --> E[Paused (Circuit Breaker)];
-    E -- After Cooldown --> A;
-    B -- Unrecoverable Error --> F[Failed];
+    A --> B
+    B -- 1. Create Record --> C
+    B -- 2. Generate 24 Chunk Jobs --> D
+    E -- 3. Polls for chunk job --> D
+    E -- 4. Process 1-month sync --> E
+    E -- 5. Update Progress --> C
 ```
 
 ### UI Status Polling
@@ -114,14 +109,13 @@ sequenceDiagram
     participant User
     participant MobileApp as Mobile App
     participant Backend as SyncWell Backend
-    participant DB as DynamoDB State Table
+    participant DB as DynamoDB Orchestration Table
 
     User->>MobileApp: Views Progress Screen
     loop Every 10 seconds
-        MobileApp->>Backend: GET /jobs/{jobId}/status
-        Backend->>DB: Read item for jobId
-        DB-->>Backend: Return job state
-        Backend-->>MobileApp: Return job state (JSON)
-        MobileApp->>User: Update Progress Bar & Status Text
+        MobileApp->>Backend: GET /orchestrations/{orchId}/status
+        Backend->>DB: Read item for orchestrationId
+        DB-->>Backend: Return Orchestration Record
+        MobileApp->>User: Update Progress Bar (completedChunks / totalChunks)
     end
 ```
