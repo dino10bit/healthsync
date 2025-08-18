@@ -1247,7 +1247,7 @@ For the **engineering team**, this document serves as the primary "to-do list" f
 
 *   **Technical Notes:**
     *   The core of this feature is the "duplicate detection" algorithm. It should be configurable (e.g., time tolerance, required data overlap).
-    *   The "merge" logic will be complex and specific to each activity type. It needs a strategy for combining fields (e.g., take the max value, sum values, prefer one source over another).
+    *   The "merge" logic will be powered by the **`AI Insights Service`** as defined in `06-technical-architecture.md`. The worker lambda will send the two conflicting activities to the service, which will use a trained ML model to return an intelligently merged super-activity. This is more powerful than simple, hard-coded rules.
 *   **Non-Functional Requirements (NFRs):**
     *   **Algorithmic Performance:** The duplicate detection algorithm must run efficiently and not significantly slow down the overall sync process.
     *   **Configurability:** Power users should eventually be able to set their own merging rules (e.g., "Always prefer GPS from Garmin").
@@ -1759,8 +1759,9 @@ This section contains a backlog of proposed user stories for future consideratio
     *   **And** the body of the notification contains a brief summary, such as "You averaged 8,500 steps and 7.5 hours of sleep this week. Keep it up!".
     *   **And** I can disable this specific notification in the app's settings.
 *   **Technical Notes:**
-    *   A recurring, weekly background task will need to be scheduled.
-    *   This task will query the last 7 days of data, calculate the summary, and trigger a local notification.
+    *   A recurring, weekly background job will query the last 7 days of data.
+    *   To make the summary more engaging than simple stats, the data will be sent to the **`AI Insights Service`**. An LLM will generate a short, insightful, and personalized narrative summary for the user.
+    *   The backend will then send this summary to the device via a push notification.
 *   **Non-Functional Requirements (NFRs):**
     *   **Reliability:** The weekly notification must be delivered reliably.
 *   **Security & Privacy:**
@@ -2142,7 +2143,9 @@ This section contains a backlog of proposed user stories for future consideratio
     *   **And** the troubleshooter presents me with a series of questions and answers to diagnose the issue.
     *   **And** based on my answers, it provides me with a specific, actionable solution (e.g., "It looks like your token expired. Tap here to log in to Garmin again.").
 *   **Technical Notes:**
-    *   The logic for the troubleshooter can be represented as a decision tree, which could be defined in a JSON file and fetched remotely. This allows for updating troubleshooting flows without an app release.
+    *   Instead of a rigid, hard-coded decision tree, this will be powered by the **`AI Insights Service`**.
+    *   When a user starts the troubleshooter, the app will open a conversational interface. The user's problem and the error code will be sent to a specialized LLM (via the AI service) that is primed with all of our support documentation, API docs, and common error resolutions.
+    *   This allows for a much more natural and effective troubleshooting experience than a simple FAQ or decision tree.
 *   **Security & Privacy:** N/A.
 *   **Accessibility (A11y):** The entire interactive flow must be accessible, with questions and answers clearly announced.
 *   **Internationalization (i18n) & Localization (l10n):** The entire troubleshooting script (questions, answers, solutions) must be localized.
