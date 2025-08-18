@@ -1929,3 +1929,317 @@ This section contains a backlog of proposed user stories for future consideratio
     *   This feature directly supports the "Right to Data Portability" under GDPR.
 *   **Release Strategy:**
     *   This will be a Pro feature.
+
+---
+
+#### **US-29:** Set custom sync frequency per connection.
+*   **User Story:** As a power user (Alex), I want to control the sync frequency (e.g., hourly, every 6 hours, daily) for each of my sync connections, so that I can balance data freshness with battery life according to my priorities.
+*   **Persona:** Alex
+*   **Priority:** Could-Have (C-1)
+*   **Story Pts:** 5
+*   **Business Goal:** **Retention & Control.** This feature provides deeper control for power users, making the app more valuable for complex use cases and increasing long-term retention of this key user segment.
+*   **Success Metrics (KPIs):**
+    *   **Feature Adoption:** >30% of users with 3 or more sync configurations customize the frequency for at least one of them.
+*   **Dependencies:**
+    *   **US-05:** Depends on the core background sync engine. The scheduling logic will need to be adapted.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Directly caters to the "Alex" persona's desire for granular control over their data and device performance.
+*   **Test Scenarios:**
+    *   **Positive:** Verify that in the sync configuration screen, there is a "Sync Frequency" option. Verify the user can select from a predefined list (e.g., "High" - approx. every 15-30 mins, "Medium" - approx. hourly, "Low" - approx. every 6 hours). Verify the background job scheduler respects this setting.
+    *   **Negative:** Verify that if not set, the frequency defaults to the system-optimized setting.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am editing a sync configuration.
+    *   **When** I navigate to the advanced settings for that sync.
+    *   **Then** I see an option called "Sync Frequency."
+    *   **And** I can choose from a list of options, such as "High," "Medium," and "Low."
+    *   **And** my choice is saved with the sync configuration.
+    *   **And** the background sync scheduler uses this setting to determine how often to run the sync job for this specific connection.
+*   **Technical Notes:**
+    *   This will require modifying the `WorkManager` or `BGAppRefreshTask` scheduling. Instead of one global schedule, each sync configuration will have its own scheduling parameters.
+    *   The app must clearly communicate that these are not exact timers, but hints to the OS.
+*   **Security & Privacy:** N/A.
+*   **Accessibility (A11y):** The frequency selection UI must be accessible.
+*   **Internationalization (i18n) & Localization (l10n):** The frequency option names ("High," "Medium," "Low") must be localized.
+*   **Release Strategy:** This could be a Pro feature to further enhance the value of the paid tier.
+
+---
+
+#### **US-30:** Preview data before a sync is executed.
+*   **User Story:** As a cautious user (Sarah), I want to see a preview of the data that will be synced before it's written to the destination app, so I can review and approve the changes.
+*   **Persona:** Sarah
+*   **Priority:** Could-Have (C-1)
+*   **Story Pts:** 8
+*   **Business Goal:** **Trust.** This feature is a powerful trust-builder. By giving users a final "say" before data is written, it addresses anxieties about data being changed incorrectly, which is critical for the "Sarah" persona.
+*   **Success Metrics (KPIs):**
+    *   **Feature Adoption:** >20% of users enable the "Pre-Sync Preview" option for at least one sync.
+    *   **Approval Rate:** >95% of presented previews are approved by the user.
+*   **Dependencies:**
+    *   **US-05:** Intercepts the sync process before the final "write" step.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Directly addresses the "Sarah" persona's need for security and trust.
+*   **Test Scenarios:**
+    *   **Positive:** Verify a user can enable "Pre-Sync Preview" in a sync's settings. Verify that when a sync runs, it pauses and sends a notification: "Ready to sync 5 new activities. Tap to review." Verify that tapping the notification opens a screen showing a summary of the data to be written. Verify the user can "Approve" or "Reject" the sync.
+    *   **Negative:** Verify that if rejected, the data is not written and the sync is marked as "Skipped."
+*   **Acceptance Criteria (AC):**
+    *   **Given** I have enabled the "Pre-Sync Preview" option for a sync configuration.
+    *   **When** a background sync runs and finds new data.
+    *   **Then** the sync pauses and I receive a notification.
+    *   **And** when I open the app, I am shown a summary of the data to be written (e.g., "New Activity: Run - 5.2 miles", "New Weight: 150.3 lbs").
+    *   **And** I have two options: "Approve Sync" and "Skip Sync".
+    *   **And** if I tap "Approve Sync", the data is written to the destination.
+    *   **And** if I tap "Skip Sync", the data is discarded for this cycle.
+*   **Technical Notes:**
+    *   Requires a new state in the sync state machine: `AWAITING_USER_APPROVAL`.
+    *   The data fetched from the source needs to be temporarily cached on the device until the user approves or rejects it.
+*   **Security & Privacy:** The temporary cache of health data must be stored in the app's secure, encrypted storage and cleared immediately after the user acts.
+*   **Accessibility (A11y):** The preview screen must be fully accessible, allowing a screen reader to clearly announce the data to be synced.
+*   **Internationalization (i18n) & Localization (l10n):** All UI related to the preview and approval process must be localized.
+*   **Release Strategy:** This is a strong candidate for a Pro feature.
+
+---
+
+#### **US-31:** Smart, automatic backfill of recent data for new users.
+*   **User Story:** As a new user (Sarah), I want the app to automatically sync the last 7 days of my data upon setting up a new connection, so I can see immediate value and confirm it's working without manually running a full historical sync.
+*   **Persona:** Sarah
+*   **Priority:** Should-Have (S-2)
+*   **Story Pts:** 5
+*   **Business Goal:** **Activation.** This creates an immediate "wow" moment for new users, instantly demonstrating the app's value and power. It confirms the connection works and populates the destination app with recent data, significantly boosting activation rates.
+*   **Success Metrics (KPIs):**
+    *   **Activation Rate:** A measurable lift in users who continue to use the app 3 days after install.
+    *   **Task Success Rate:** >99% of initial smart backfills complete successfully.
+*   **Dependencies:**
+    *   **US-04:** This feature would be an extension of the initial sync configuration.
+*   **Strategic Alignment:**
+    *   **Achieve Product-Market Fit:** This feature makes the initial user experience much more rewarding and sticky.
+*   **Test Scenarios:**
+    *   **Positive:** Verify that after creating the very first sync for a data type, the app automatically queues a historical sync for the past 7 days. Verify the user is notified that this is happening. Verify the data appears correctly in the destination app.
+    *   **Negative:** Verify this only happens for the *first* sync of a given data type, not subsequent ones.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a new user and I have just successfully created my first sync connection (e.g., Fitbit Steps -> Google Fit).
+    *   **When** I save the configuration.
+    *   **Then** a one-time job is automatically started to sync the last 7 days of data for that connection.
+    *   **And** the UI shows a status like "Backfilling recent data..."
+*   **Technical Notes:**
+    *   This can reuse the logic from the Historical Sync feature (US-10) but with a fixed, non-editable date range.
+    *   A flag needs to be stored locally to ensure this one-time backfill only runs once per new connection type.
+*   **Security & Privacy:** Same as historical sync; data must be handled securely.
+*   **Accessibility (A11y):** The status message ("Backfilling...") must be announced to screen readers.
+*   **Internationalization (i18n) & Localization (l10n):** The status message must be localized.
+*   **Release Strategy:** This should be a free feature for all users to improve the core onboarding experience.
+
+---
+
+#### **US-32:** Sync advanced biometric data (e.g., HRV, SpO2).
+*   **User Story:** As a data-driven athlete (Alex), I want to sync advanced biometric data like Heart Rate Variability (HRV) and Blood Oxygen (SpO2) between my compatible devices, so I can analyze my recovery and performance in my preferred app.
+*   **Persona:** Alex
+*   **Priority:** Should-Have (S-1)
+*   **Story Pts:** 8
+*   **Business Goal:** **Differentiation & Retention.** Supporting niche but highly-valued data types for power users creates a strong competitive moat and makes the app indispensable for the most demanding (and often most influential) users.
+*   **Success Metrics (KPIs):**
+    *   **Feature Adoption:** >25% of Pro users sync at least one advanced biometric data type.
+*   **Dependencies:**
+    *   **US-14:** Extends the core data mapping logic to new, more complex data types.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Directly serves the "Alex" persona's core need for comprehensive data tracking.
+*   **Test Scenarios:**
+    *   **Positive:** Verify "HRV" and "SpO2" appear as selectable data types in the sync configuration if the user has connected compatible source/destination apps. Verify that the data is mapped and synced correctly.
+    *   **Negative:** Verify these data types are not shown or are disabled if the selected platforms do not support them.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a Pro user.
+    *   **When** I configure a sync between two apps that support HRV (e.g., Oura to Apple Health).
+    *   **Then** "Heart Rate Variability" is an available data type to select.
+    *   **And** when the sync runs, my HRV data from Oura is correctly written to Apple Health.
+*   **Technical Notes:**
+    *   Requires a deep technical investigation into how each platform's API exposes this data. The data models can be complex (e.g., HRV is often a series of R-R intervals, not a single number).
+    *   The mapping logic will need to be carefully designed to handle these complexities.
+*   **Security & Privacy:** This is highly sensitive health data and must be handled with the utmost care, following all existing security protocols.
+*   **Accessibility (A11y):** N/A.
+*   **Internationalization (i18n) & Localization (l10n):** The names of the new data types must be localized.
+*   **Release Strategy:** This is a clear Pro feature. New advanced data types can be rolled out one by one.
+
+---
+
+#### **US-33:** Display API rate limit status to the user.
+*   **User Story:** As a user (Alex) performing a large historical sync, I want to see the current status of my API rate limits for each service (e.g., "Garmin: 75% of hourly limit remaining"), so I can understand why a sync might be paused or running slowly.
+*   **Persona:** Alex
+*   **Priority:** Could-Have (C-3)
+*   **Story Pts:** 4
+*   **Business Goal:** **Trust & Support Deflection.** Proactively showing users technical limitations in a user-friendly way builds immense trust, especially with power users. It also prevents support tickets from users wondering why their large sync has stopped.
+*   **Success Metrics (KPIs):**
+    *   **Support Ticket Reduction:** A measurable decrease in support tickets related to stalled historical syncs.
+*   **Dependencies:**
+    *   **US-10:** Most relevant during historical syncs.
+*   **Strategic Alignment:**
+    *   **Deliver Best-in-Class Reliability:** Transparency about system constraints is a hallmark of a reliable service.
+*   **Test Scenarios:**
+    *   **Positive:** Verify that in the "Connected Apps" settings screen, there is a section showing the rate limit status for each app. Verify this status is updated after syncs. Verify that if a limit is close to being exceeded, the UI reflects this with a warning color.
+    *   **Negative:** Verify that if a service's API doesn't provide rate limit information, the UI shows "Status not available."
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a user.
+    *   **When** I navigate to the "Connected Apps" management screen.
+    *   **Then** underneath each connected app, I see a summary of its current API rate limit status, if available.
+    *   **And** the status is presented in a human-readable format (e.g., "Limit resets in 45 minutes").
+*   **Technical Notes:**
+    *   Requires parsing rate limit information from the headers of API responses from each third-party service. Not all services provide this.
+    *   The app will need to store and display the last known rate limit status.
+*   **Security & Privacy:** N/A.
+*   **Accessibility (A11y):** The rate limit status information must be accessible to screen readers.
+*   **Internationalization (i18n) & Localization (l10n):** The status messages must be localized.
+*   **Release Strategy:** This could be a free feature for all users to improve transparency.
+
+---
+
+#### **US-34:** Set a "Source of Truth" for automatic conflict resolution.
+*   **User Story:** As a user (Alex) who trusts my Garmin for runs, I want to declare it as the "Source of Truth" for running activities, so that if a conflict with another source is detected, the Garmin data is kept automatically without prompting me every time.
+*   **Persona:** Alex
+*   **Priority:** Should-Have (S-2)
+*   **Story Pts:** 5
+*   **Business Goal:** **Retention & Efficiency.** This feature makes the powerful conflict resolution engine (US-15) even smarter and more efficient for users with predictable patterns, reducing friction and making the app feel more personalized and powerful.
+*   **Success Metrics (KPIs):**
+    *   **Feature Adoption:** >40% of users who encounter conflicts set up at least one "Source of Truth" rule.
+    *   **Automatic Resolutions:** >30% of all detected conflicts are resolved automatically via these rules.
+*   **Dependencies:**
+    *   **US-15:** This feature builds directly on top of the conflict resolution engine.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** This level of smart, configurable automation is exactly what the "Alex" persona looks for in a power tool.
+*   **Test Scenarios:**
+    *   **Positive:** Verify there is a "Conflict Resolution Rules" section in settings. Verify a user can create a rule like "For 'Running' activities, always prefer 'Garmin'." Verify that when a conflict matching this rule occurs, it is resolved automatically and noted in the sync history.
+    *   **Negative:** Verify that if no rule is set, the user is prompted for manual resolution as before.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a Pro user in the app's settings.
+    *   **When** I navigate to the "Conflict Resolution" settings.
+    *   **Then** I can define rules by data type.
+    *   **And** for a given data type (e.g., "Sleep"), I can set a ranked list of preferred sources (e.g., 1. Oura, 2. Apple Health).
+    *   **And** when a sync detects a conflict for that data type, it will automatically keep the data from the highest-ranking source and discard the others.
+*   **Technical Notes:**
+    *   The conflict detection engine needs to be modified to consult a new "Rules" table in the database before flagging a conflict for manual review.
+*   **Security & Privacy:** N/A.
+*   **Accessibility (A11y):** The UI for creating and managing these rules must be accessible.
+*   **Internationalization (i18n) & Localization (l10n):** All UI for the rules engine must be localized.
+*   **Release Strategy:** This is a Pro feature, as it enhances the existing conflict resolution capability.
+
+---
+
+#### **US-35:** Use an interactive guide for troubleshooting sync errors.
+*   **User Story:** As a user (Sarah) who sees a "Sync Failed" error, I want the app to provide an interactive guide that asks me questions (e.g., "Are you connected to the internet?") to diagnose the problem and provide a specific solution, instead of me having to read a long FAQ.
+*   **Persona:** Sarah
+*   **Priority:** Should-Have (S-3)
+*   **Story Pts:** 8
+*   **Business Goal:** **Support Deflection & User Empowerment.** An interactive troubleshooter can solve a much wider range of problems than a static FAQ, leading to a dramatic reduction in support tickets. It also empowers users and reduces frustration.
+*   **Success Metrics (KPIs):**
+    *   **Resolution Rate:** >50% of users who start the interactive troubleshooter resolve their issue without contacting support.
+    *   **Support Ticket Reduction:** A measurable decrease in tickets for common, solvable errors.
+*   **Dependencies:**
+    *   **US-07:** The troubleshooter would be launched from a sync card in an error state.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Providing a smart, effective self-service support tool is a massive trust and satisfaction builder for the "Sarah" persona.
+*   **Test Scenarios:**
+    *   **Positive:** Verify that tapping on a sync card with a specific error code (e.g., `AUTH_FAILURE`) launches the troubleshooter. Verify it presents a decision tree (e.g., "Error: Authentication Failed. Let's fix it. Did you recently change your Fitbit password?"). Verify that following the steps leads to a resolution (e.g., navigating the user to the re-authentication screen).
+    *   **Negative:** Verify that if the troubleshooter cannot solve the issue, it ends with a clear "Contact Support" call to action.
+*   **Acceptance Criteria (AC):**
+    *   **Given** my sync has failed with an error.
+    *   **When** I tap on the error details.
+    *   **Then** I am presented with an "Interactive Troubleshooter" button.
+    *   **And** the troubleshooter presents me with a series of questions and answers to diagnose the issue.
+    *   **And** based on my answers, it provides me with a specific, actionable solution (e.g., "It looks like your token expired. Tap here to log in to Garmin again.").
+*   **Technical Notes:**
+    *   The logic for the troubleshooter can be represented as a decision tree, which could be defined in a JSON file and fetched remotely. This allows for updating troubleshooting flows without an app release.
+*   **Security & Privacy:** N/A.
+*   **Accessibility (A11y):** The entire interactive flow must be accessible, with questions and answers clearly announced.
+*   **Internationalization (i18n) & Localization (l10n):** The entire troubleshooting script (questions, answers, solutions) must be localized.
+*   **Release Strategy:** This would be a free feature for all users to improve the support experience.
+
+---
+
+#### **US-36:** Add a home screen widget for at-a-glance sync status.
+*   **User Story:** As a user (Sarah), I want a home screen widget that shows the status of my most important syncs at a glance, so I don't even have to open the app to know things are working.
+*   **Persona:** Sarah
+*   **Priority:** Could-Have (C-2)
+*   **Story Pts:** 8
+*   **Business Goal:** **Engagement & Trust.** A home screen widget keeps the app top-of-mind and constantly reassures the user of its value. For "set it and forget it" users, this is a perfect, low-friction way to interact with the service.
+*   **Success Metrics (KPIs):**
+    *   **Widget Adoption:** >20% of monthly active users have the widget installed on their home screen.
+*   **Dependencies:**
+    *   Requires platform-specific implementation (WidgetKit for iOS, Glance for Android).
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** This feature perfectly serves the "Sarah" persona's desire for effortless peace of mind.
+*   **Test Scenarios:**
+    *   **Positive:** Verify the user can add a SyncWell widget to their home screen. Verify the widget shows the status of the top 1-3 syncs. Verify the widget updates in the background after a sync completes. Verify tapping the widget opens the app.
+    *   **Negative:** Verify the widget shows a "No syncs configured" state if applicable.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a user on my phone's home screen.
+    *   **When** I add a widget.
+    *   **Then** I can find and select the "SyncWell Status" widget.
+    *   **And** the widget displays a summary of my top sync configurations and their last sync status.
+    *   **And** this status updates periodically in the background.
+    *   **And** tapping the widget opens the SyncWell app.
+*   **Technical Notes:**
+    *   Requires using modern, platform-specific widget toolkits.
+    *   Data needs to be shared from the main app to the widget extension through a shared data store.
+    *   Background updates need to be efficient to conserve battery.
+*   **Security & Privacy:** The data shared with the widget extension must be handled securely. The shared container should be properly sandboxed.
+*   **Accessibility (A11y):** The widget must be accessible and its content readable by screen readers.
+*   **Internationalization (i18n) & Localization (l10n):** All text in the widget must be localized.
+*   **Release Strategy:** This could be a Pro feature, offered as a premium convenience.
+
+---
+
+#### **US-37:** Filter syncs by specific activity types.
+*   **User Story:** As a user (Alex) who uses my Garmin for many activities but only wants to post my runs and bike rides to Strava, I want to configure my "Garmin to Strava" sync to only include those specific activity types.
+*   **Persona:** Alex
+*   **Priority:** Could-Have (C-3)
+*   **Story Pts:** 5
+*   **Business Goal:** **Retention & Control.** This provides an essential level of granularity for users who are selective about what they share to different platforms, making the app a more powerful and indispensable tool for them.
+*   **Success Metrics (KPIs):**
+    *   **Feature Adoption:** >25% of "Activity" syncs have a filter applied.
+*   **Dependencies:**
+    *   **US-04:** This adds a new option to the sync configuration screen.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Directly addresses a key need of the "Alex" persona for fine-grained control.
+*   **Test Scenarios:**
+    *   **Positive:** Verify that when configuring an "Activity" sync, there's a "Filter" option. Verify the user can select multiple activity types (e.g., "Run", "Bike", "Swim") from a list. Verify that only activities matching the filter are synced.
+    *   **Negative:** Verify that if no filter is applied, all activities are synced by default.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am configuring a sync for the "Activities" data type.
+    *   **When** I enter the advanced settings for this sync.
+    *   **Then** I see an option to "Filter by Activity Type."
+    *   **And** I can select one or more activity types from a comprehensive list.
+    *   **And** only activities whose type matches my selection will be synced.
+*   **Technical Notes:**
+    *   The sync engine will need to be modified to check the activity's type against the filter configuration before processing it.
+    *   The list of available activity types may need to be fetched from the source platform's API.
+*   **Security & Privacy:** N/A.
+*   **Accessibility (A11y):** The multi-select list for activity types must be accessible.
+*   **Internationalization (i18n) & Localization (l10n):** The activity type names must be localized.
+*   **Release Strategy:** This is a strong candidate for a Pro feature.
+
+---
+
+#### **US-38:** Get notifications for "streaks" or "milestones."
+*   **User Story:** As a user (Sarah), I want to get a fun, encouraging notification when I hit a milestone, like "You've synced 1 million steps!" or "You've synced your workout every day for 7 days straight!", so I feel motivated.
+*   **Persona:** Sarah
+*   **Priority:** Could-Have (C-3)
+*   **Story Pts:** 5
+*   **Business Goal:** **Engagement & Retention.** Gamification and positive reinforcement are powerful tools for building an emotional connection with users, making the app "stickier" and improving long-term retention.
+*   **Success Metrics (KPIs):**
+    *   **Notification CTR:** >20% click-through rate on milestone notifications.
+    *   **Opt-out Rate:** <5% of users disable milestone notifications.
+*   **Dependencies:**
+    *   **US-03:** Requires notification permissions.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Creates positive, delightful moments that build brand loyalty and goodwill with the "Sarah" persona.
+*   **Test Scenarios:**
+    *   **Positive:** Verify that after a sync that crosses a major milestone (e.g., total steps synced > 1,000,000), a congratulatory notification is sent. Verify a user can disable these specific notifications in settings.
+    *   **Negative:** Verify notifications are not sent if the user has them disabled.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a user with notifications enabled.
+    *   **When** a sync completes that causes me to cross a pre-defined milestone (e.g., 500 total activities synced).
+    *   **Then** I receive a friendly push notification congratulating me on the milestone.
+    *   **And** I can disable these "Milestone Notifications" in the app's settings.
+*   **Technical Notes:**
+    *   Requires a background process to check for milestone achievements after each successful sync.
+    *   The milestone definitions (e.g., what counts as a milestone) could be defined in a remote JSON file to allow for adding new ones over time.
+*   **Security & Privacy:** N/A.
+*   **Accessibility (A11y):** The notifications must be accessible.
+*   **Internationalization (i18n) & Localization (l10n):** The notification templates must be fully localized.
+*   **Release Strategy:** This is a great free feature to delight all users.
