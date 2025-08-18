@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- `17-error-handling.md` - Error Handling, Logging & Monitoring
+- `12-trial-subscription.md` - Trial, Subscription & Paywall
+- `08-ux-onboarding.md` - UX, Onboarding & Support
+
+### Strategic / Indirect Dependencies
+- `05-data-sync.md` - Data Sync & Conflict Resolution
+- `21-risks.md` - Risks, Constraints & Mitigation
+- `42-customer-feedback.md` - Customer Feedback Loop
+
+---
+
 # PRD Section 29: Push Notifications & Alerts
 
 ## 1. Executive Summary

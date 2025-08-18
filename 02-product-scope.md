@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- `01-context-vision.md` - Context & Vision
+- `03-competitive-analysis.md` - Competitive Analysis & Differentiation
+
+### Strategic / Indirect Dependencies
+- `04-user-stories.md` - User Stories
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `21-risks.md` - Risks, Constraints & Mitigation
+- `45-future-enhancements.md` - Future Enhancements & Roadmap Expansion
+
+---
+
 # PRD Section 2: Product Scope, Personas & MVP Definition
 
 ## 1. Executive Summary

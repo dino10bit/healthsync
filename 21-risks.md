@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- None
+
+### Strategic / Indirect Dependencies
+- `01-context-vision.md` - Context & Vision
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `22-maintenance.md` - Maintenance & Post-Launch Operations (SRE)
+- `44-contingency-planning.md` - Contingency & Rollback Plans
+- *All other PRD sections serve as inputs to this consolidated risk register.*
+
+---
+
 # PRD Section 21: Risks, Constraints & Mitigation
 
 ## 1. Executive Summary

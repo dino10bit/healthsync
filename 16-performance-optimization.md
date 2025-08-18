@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- `06-technical-architecture.md` - Technical Architecture, Security & Compliance
+- `39-performance-metrics.md` - Performance Monitoring & KPIs
+
+### Strategic / Indirect Dependencies
+- `01-context-vision.md` - Context & Vision
+- `05-data-sync.md` - Data Synchronization & Reliability
+- `22-maintenance.md` - Maintenance & Post-Launch Operations (SRE)
+- `41-metrics-dashboards.md` - Analytics Dashboard Design
+
+---
+
 # PRD Section 16: Performance & Scalability
 
 ## 1. Executive Summary

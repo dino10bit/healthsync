@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `10-ux-feedback.md` - UX, Feedback & Ratings
+- `17-error-handling.md` - Error Handling, Logging & Monitoring
+
+### Strategic / Indirect Dependencies
+- `08-ux-onboarding.md` - UX, Onboarding & Support
+- `22-maintenance.md` - Maintenance & Post-Launch Operations (SRE)
+- `42-customer-feedback.md` - Customer Feedback Loop
+
+---
+
 # PRD Section 24: Help Center, Support & Feedback
 
 ## 1. Executive Summary

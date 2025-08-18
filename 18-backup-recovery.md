@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `06-technical-architecture.md` - Technical Architecture, Security & Compliance
+- `19-security-privacy.md` - Data Security & Privacy Policies
+
+### Strategic / Indirect Dependencies
+- `08-ux-onboarding.md` - UX, Onboarding & Support
+- `22-maintenance.md` - Maintenance & Post-Launch Operations (SRE)
+- `44-contingency-planning.md` - Contingency & Rollback Plans
+
+---
+
 # PRD Section 18: Backup & Disaster Recovery
 
 ## 1. Executive Summary

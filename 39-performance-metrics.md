@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- `16-performance-optimization.md` - Performance Optimization Strategy
+- `23-analytics.md` - Analytics & Metrics Tracking
+- `22-maintenance.md` - Maintenance & Post-Launch Operations (SRE)
+
+### Strategic / Indirect Dependencies
+- `05-data-sync.md` - Data Sync & Conflict Resolution
+- `25-release-management.md` - Release Management & Versioning
+- `41-metrics-dashboards.md` - Analytics Dashboard Design
+
+---
+
 # PRD Section 39: Performance Monitoring & KPIs
 
 ## 1. Executive Summary

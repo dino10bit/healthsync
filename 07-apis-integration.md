@@ -1,3 +1,20 @@
+## Dependencies
+
+### Core Dependencies
+- `06-technical-architecture.md` - Technical Architecture, Security & Compliance
+- `19-security-privacy.md` - Data Security & Privacy Policies
+- `20-compliance-regulatory.md` - Legal & Regulatory Compliance
+- `32-platform-limitations.md` - Platform-Specific Limitations
+- `33-third-party-integration.md` - Third-Party Integration Strategy
+
+### Strategic / Indirect Dependencies
+- `05-data-sync.md` - Data Synchronization & Reliability
+- `15-integration-testing.md` - Integration & End-to-End Testing
+- `21-risks.md` - Risks, Constraints & Mitigation
+- `40-error-recovery.md` - Error Recovery & Troubleshooting
+
+---
+
 # PRD Section 7: APIs & Integration Requirements
 
 ## 1. Executive Summary

@@ -1,3 +1,24 @@
+## Dependencies
+
+### Core Dependencies
+- `05-data-sync.md` - Data Synchronization & Reliability
+- `07-apis-integration.md` - APIs & Integration Requirements
+- `16-performance-optimization.md` - Performance & Scalability
+- `17-error-handling.md` - Error Handling, Logging & Monitoring
+- `18-backup-recovery.md` - Backup & Disaster Recovery
+- `19-security-privacy.md` - Data Security & Privacy Policies
+- `29-notifications-alerts.md` - Push Notifications & Alerts
+
+### Strategic / Indirect Dependencies
+- `01-context-vision.md` - Context & Vision
+- `02-product-scope.md` - Product Scope, Personas & MVP Definition
+- `14-qa-testing.md` - QA, Testing & Release Strategy
+- `21-risks.md` - Risks, Constraints & Mitigation
+- `25-release-management.md` - Release Management & Versioning
+- `44-contingency-planning.md` - Contingency & Rollback Plans
+
+---
+
 # PRD Section 6: Technical Architecture, Security & Compliance
 
 ## 1. Executive Summary

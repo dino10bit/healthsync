@@ -1,3 +1,20 @@
+## Dependencies
+
+### Core Dependencies
+- `02-product-scope.md` - Product Scope, Personas & MVP Definition
+
+### Strategic / Indirect Dependencies
+- `01-context-vision.md` - Context & Vision
+- `05-data-sync.md` - Data Synchronization & Reliability
+- `06-technical-architecture.md` - Technical Architecture
+- `08-ux-onboarding.md` - UX, Onboarding & Support
+- `09-ux-configuration.md` - User Configuration Options
+- `12-trial-subscription.md` - Free Trial & Subscription Flow
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `14-qa-testing.md` - QA, Testing & Release Strategy
+
+---
+
 # PRD Section 4: User Stories & Acceptance Criteria
 
 ## 1. Executive Summary

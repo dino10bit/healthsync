@@ -1,3 +1,18 @@
+## Dependencies
+
+### Core Dependencies
+- `04-user-stories.md` - User Stories
+- `08-ux-onboarding.md` - UX, Onboarding & Support
+- `11-monetization.md` - Monetization, Pricing & Business Model
+- `38-ux-flow-diagrams.md` - UX Flow & Interaction Diagrams
+
+### Strategic / Indirect Dependencies
+- `23-analytics.md` - Analytics & Metrics Tracking
+- `29-notifications-alerts.md` - Push Notifications & Alerts
+- `41-metrics-dashboards.md` - Analytics Dashboard Design
+
+---
+
 # PRD Section 12: Free Trial & Subscription Flow
 
 ## 1. Executive Summary

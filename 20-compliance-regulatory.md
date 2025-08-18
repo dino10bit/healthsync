@@ -1,3 +1,18 @@
+## Dependencies
+
+### Core Dependencies
+- `19-security-privacy.md` - Data Security & Privacy Policies
+- `36-user-privacy-settings.md` - User Privacy Controls & Settings
+
+### Strategic / Indirect Dependencies
+- `07-apis-integration.md` - APIs & Integration Requirements
+- `08-ux-onboarding.md` - UX, Onboarding & Support
+- `11-monetization.md` - Monetization, Pricing & Business Model
+- `21-risks.md` - Risks, Constraints & Mitigation
+- `25-release-management.md` - Release Management & Versioning
+
+---
+
 # PRD Section 20: Legal & Regulatory Compliance
 
 ## 1. Executive Summary

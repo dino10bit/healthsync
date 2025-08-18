@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- `07-apis-integration.md` - APIs & Integration Requirements
+- `14-qa-testing.md` - QA, Testing & Release Strategy
+- `30-sync-mapping.md` - Source-Destination Sync Mapping
+
+### Strategic / Indirect Dependencies
+- `06-technical-architecture.md` - Technical Architecture
+- `25-release-management.md` - Release Management & Versioning
+- `44-contingency-planning.md` - Contingency & Rollback Plans
+
+---
+
 # PRD Section 15: Integration & End-to-End Testing
 
 ## 1. Executive Summary

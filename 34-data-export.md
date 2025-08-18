@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `30-sync-mapping.md` - Source-Destination Sync Mapping
+- `35-data-import.md` - Data Import Feature
+- `14-qa-testing.md` - QA & Testing Strategy
+
+### Strategic / Indirect Dependencies
+- `19-security-privacy.md` - Data Security & Privacy Policies
+- `36-user-privacy-settings.md` - User Privacy Controls & Settings
+
+---
+
 # PRD Section 34: Data Export Feature
 
 ## 1. Executive Summary

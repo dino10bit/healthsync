@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `01-context-vision.md` - Context & Vision
+
+### Strategic / Indirect Dependencies
+- `02-product-scope.md` - Product Scope, Personas & MVP Definition
+- `11-monetization.md` - Monetization, Pricing & Business Model
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `45-future-enhancements.md` - Future Enhancements & Roadmap Expansion
+
+---
+
 # PRD Section 3: Competitive Analysis & Differentiation
 
 ## 1. Executive Summary
@@ -77,11 +90,7 @@ SyncWell's strategy is to win on focus, not features.
 ## 6. Execution Plan / Step-by-Step Implementation
 
 1.  **Phase 1: MVP Development**
-    *   The MVP scope (as defined in `02-product-scope.md`) is designed to directly support the differentiation strategy. The focus is on building a limited number of integrations *perfectly*, ensuring the core experience is simple and reliable.
-2.  **Phase 2: Marketing & Positioning**
-    *   All marketing copy, app store descriptions, and user communication will be built around the four pillars of differentiation: Simplicity, Fair Pricing, Personal Support, and Privacy.
-3.  **Phase 3: Competitive Monitoring**
-    *   The solo developer will dedicate time each month to use competitor apps and read their reviews to stay abreast of market trends and identify new opportunities or threats.
+    *   The MVP scope (as defined in `02-product-scope.md`) is designed to_ | The solo developer will dedicate time each month to use competitor apps and read their reviews to stay abreast of market trends and identify new opportunities or threats.
 
 ## 7. References & Resources
 

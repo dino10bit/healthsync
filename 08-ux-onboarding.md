@@ -1,3 +1,19 @@
+## Dependencies
+
+### Core Dependencies
+- `02-product-scope.md` - Product Scope, Personas & MVP Definition
+- `04-user-stories.md` - User Stories
+- `07-apis-integration.md` - APIs & Integration Requirements
+- `38-ux-flow-diagrams.md` - UX Flow & Interaction Diagrams
+
+### Strategic / Indirect Dependencies
+- `01-context-vision.md` - Context & Vision
+- `12-trial-subscription.md` - Free Trial & Subscription Flow
+- `24-user-support.md` - Help Center, Support & Feedback
+- `37-onboarding-tutorials.md` - Onboarding Guides & Tutorials
+
+---
+
 # PRD Section 8: UX, Onboarding & Support
 
 ## 1. Executive Summary

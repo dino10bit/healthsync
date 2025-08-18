@@ -1,3 +1,18 @@
+## Dependencies
+
+### Core Dependencies
+- `05-data-sync.md` - Data Sync & Conflict Resolution
+- `06-technical-architecture.md` - Technical Architecture, Security & Compliance
+- `07-apis-integration.md` - APIs & Integration Requirements
+- `14-qa-testing.md` - QA & Testing Strategy
+
+### Strategic / Indirect Dependencies
+- `31-historical-data.md` - Historical Data Sync
+- `32-platform-limitations.md` - Platform-Specific Limitations
+- `33-third-party-integration.md` - Third-Party Integration Strategy
+
+---
+
 # PRD Section 30: Source-Destination Sync Mapping
 
 ## 1. Executive Summary

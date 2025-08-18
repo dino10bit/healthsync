@@ -1,3 +1,19 @@
+## Dependencies
+
+### Core Dependencies
+- `02-product-scope.md` - Product Scope, Personas & MVP Definition
+- `04-user-stories.md` - User Stories
+- `06-technical-architecture.md` - Technical Architecture
+- `15-integration-testing.md` - Integration & End-to-End Testing
+
+### Strategic / Indirect Dependencies
+- `17-error-handling.md` - Error Handling, Logging & Monitoring
+- `22-maintenance.md` - Maintenance & Post-Launch Operations
+- `25-release-management.md` - Release Management & Versioning
+- `28-accessibility.md` - Accessibility (WCAG)
+
+---
+
 # PRD Section 14: QA, Testing & Release Strategy
 
 ## 1. Executive Summary

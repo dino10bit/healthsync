@@ -1,3 +1,19 @@
+## Dependencies
+
+### Core Dependencies
+- `01-context-vision.md` - Context & Vision
+- `02-product-scope.md` - Product Scope, Personas & MVP Definition
+- `10-ux-feedback.md` - UX Feedback & Iteration Loops
+- `42-customer-feedback.md` - Customer Feedback Collection & Analysis
+
+### Strategic / Indirect Dependencies
+- `04-user-stories.md` - User Stories
+- `25-release-management.md` - Release Management & Versioning
+- `33-third-party-integration.md` - Third-Party Integration Strategy
+- `45-future-enhancements.md` - Future Enhancements & Roadmap Expansion
+
+---
+
 # PRD Section 13: Roadmap, Milestones & Timeline
 
 ## 1. Executive Summary

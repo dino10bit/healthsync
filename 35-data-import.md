@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- `30-sync-mapping.md` - Source-Destination Sync Mapping
+- `34-data-export.md` - Data Export Feature
+- `05-data-sync.md` - Data Sync & Conflict Resolution
+
+### Strategic / Indirect Dependencies
+- `14-qa-testing.md` - QA & Testing Strategy
+- `17-error-handling.md` - Error Handling, Logging & Monitoring
+- `32-platform-limitations.md` - Platform-Specific Limitations
+
+---
+
 # PRD Section 35: Data Import Feature
 
 ## 1. Executive Summary
