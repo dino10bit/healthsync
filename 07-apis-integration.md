@@ -21,16 +21,25 @@
 
 This document provides the detailed technical requirements for integrating with third-party Health & Fitness APIs. A robust, scalable, and maintainable approach is paramount. This document specifies the design of the **`DataProvider`** architecture, the handling of authentication, and the specific endpoints for the MVP integrations. It is designed for the **engineering team** and reflects the hybrid sync model outlined in `06-technical-architecture.md`.
 
-## 2. The `DataProvider` Concept
+## 2. The `DataProvider` Architecture
 
-Each third-party integration is conceptually a `DataProvider`. This is not a single interface but a set of responsibilities split between the mobile client and the backend, ensuring a separation of concerns.
+To ensure consistency, maintainability, and quality as we scale to dozens of integrations, each third-party integration will be built against a standardized **`DataProvider` SDK**. This internal SDK provides a robust framework that separates the unique business logic of an integration from the boilerplate code required for all integrations.
 
-*   **Mobile Client Responsibilities:**
-    *   Handle the user-facing authentication flow (OAuth).
-    *   For device-native SDKs (e.g., HealthKit), read and write data directly.
-*   **Backend Responsibilities:**
-    *   Securely store and refresh OAuth tokens.
-    *   For cloud-based APIs, execute the data fetching and writing logic within worker lambdas.
+### 2.1. The `DataProvider` SDK
+
+The SDK will provide a set of abstract classes and utilities that every provider must implement or use. This includes:
+*   **Standardized Interfaces:** A clear `fetchData` and `writeData` interface definition.
+*   **Built-in OAuth Handling:** Utilities for handling the OAuth token exchange and refresh flows.
+*   **Centralized Error Handling:** A common set of exceptions that provider-specific code can throw (e.g., `PermanentAuthError`, `TransientAPIError`, `RateLimitError`).
+*   **Automatic Metrics & Logging:** The SDK will automatically capture and publish key metrics (e.g., API call latency, success/failure rates) and structured logs, ensuring consistent observability across all providers.
+*   **Rate Limit Integration:** A simple interface to interact with the global rate-limiting service.
+
+### 2.2. `DataProvider` Responsibilities
+
+Each `DataProvider` implementation will focus purely on the provider-specific business logic:
+*   **Authentication:** Providing the provider-specific URLs and parameters for the OAuth flow.
+*   **Data Mapping:** Transforming the provider's unique data model into SyncWell's canonical data model, and vice-versa.
+*   **Endpoint Logic:** Knowing which specific API endpoints to call for reading and writing data.
 
 ## 3. Authentication: A Secure Hybrid Flow
 
@@ -46,14 +55,33 @@ All cloud-based APIs will use the **OAuth 2.0 Authorization Code Flow with PKCE*
 6.  **Token Exchange (Backend):** The backend worker exchanges the `authorization_code` and `code_verifier` for an `access_token` and `refresh_token` from the provider.
 7.  **Secure Storage (Backend):** The backend stores the encrypted `access_token` and `refresh_token` in **AWS Secrets Manager**, associated with the user's ID. The tokens are now ready for use by the sync workers.
 
-## 4. Token Management & Auto-Refresh (Backend)
+## 4. Token Management & Granular Error Handling
 
-Token management is a purely backend process, handled by the worker lambdas.
+### 4.1. Token Auto-Refresh
+Token management is a purely backend process. Before executing a sync, the `DataProvider` SDK will automatically perform a pre-flight check for token validity and handle the refresh flow if necessary. If a refresh fails because the user has revoked access externally, the SDK will throw a `PermanentAuthError`, causing the sync job to be marked with a `needs_reauth` status.
 
-*   **Pre-flight Check:** Before a worker executes a sync job, it retrieves the relevant tokens from AWS Secrets Manager.
-*   **Refresh Flow:** The worker checks if the token is expired. If so, it uses the `refresh_token` to request a new `access_token` and `refresh_token` from the provider's API.
-*   **Update Storage:** The worker updates the new tokens in AWS Secrets Manager.
-*   **Refresh Failure:** If the refresh token is invalid (e.g., user revoked access), the worker marks the sync connection as `needs_reauth` in DynamoDB. The user will be prompted to reconnect on the mobile app.
+### 4.2. API Error Handling Strategy
+A robust sync engine must intelligently handle the wide variety of errors that can occur when dealing with dozens of external APIs. The `DataProvider` SDK will classify errors and apply the appropriate retry or failure strategy.
+
+| HTTP Status Code | Error Type | System Action | User Impact |
+| :--- | :--- | :--- | :--- |
+| `401 Unauthorized` / `403 Forbidden` | **Permanent Auth Error** | The sync job is immediately failed. The connection is marked as `needs_reauth` in DynamoDB. | User is notified in the app that they need to reconnect the service. |
+| `429 Too Many Requests` | **Rate Limit Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff). The global rate limiter is notified to slow down requests for this provider. | Syncs for this provider may be delayed. This is handled automatically. |
+| `500`, `502`, `503`, `504` | **Transient Server Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff). | Syncs may be delayed. The system will automatically retry. |
+| `400 Bad Request` | **Permanent Request Error** | The job is failed and moved to the Dead-Letter Queue (DLQ) for manual inspection. An alarm is triggered. | The specific sync fails. An engineer is alerted to a potential bug in our `DataProvider` or an unexpected API change. |
+
+## 4a. API Rate Limit Management
+
+With 1M DAU, we will make millions of API calls per day. Proactively managing third-party rate limits is not optional; it is a core architectural requirement to prevent service-wide outages for a specific provider.
+
+*   **Strategy:** We will implement a **distributed, global rate limiting** system using the **token bucket algorithm**.
+*   **Implementation:**
+    1.  **Centralized Ledger:** The **Amazon ElastiCache for Redis** cluster (defined in `06-technical-architecture.md`) will serve as the high-speed, centralized ledger for tracking our current usage against each provider's rate limit.
+    2.  **Pre-flight Check:** Before a `DataProvider` makes an API call, it must request a "token" from our Redis-based rate limit service.
+    3.  **Throttling & Queuing:** If the service determines that making a call would exceed the rate limit, it will deny the request. The `DataProvider` will then return the job to the SQS queue with a delay, effectively pausing execution until the rate limit window resets.
+*   **Prioritization:** The rate limiting service will be aware of the "hot" vs. "cold" paths. When the available API budget is low, it will deny requests from `cold-path` (historical sync) workers before denying requests from `hot-path` (real-time sync) workers. This ensures that a user's large historical sync does not prevent their most recent activities from syncing quickly.
+
+*(Note: This section directly impacts `21-risks.md` and `32-platform-limitations.md`. The rate limits for each provider must be documented.)*
 
 ## 5. MVP API Endpoint Mapping
 
