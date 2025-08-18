@@ -80,7 +80,8 @@ In addition to the main app version release schedule, a **Remote Configuration**
 
 This approach is referenced in several user stories:
 *   **A/B Testing UI/UX:** The copy and imagery in the onboarding carousel (**US-01**) and the messaging in contextual upsells (**US-17**) will be managed via remote config to allow for A/B testing to optimize conversion funnels.
-*   **Staged Feature Rollouts:** New, complex integrations or data types can be rolled out progressively. For example, a new data type for sync (**US-04**) could be enabled for 1%, then 10%, then 100% of users, with performance monitored at each stage.
+*   **Staged Feature Rollouts:** New, complex functionality can be rolled out progressively. For example, a new data type for sync (**US-04**) could be enabled for 1%, then 10%, then 100% of users, with performance monitored at each stage.
+*   **Risk Mitigation for Major Integrations:** For new, high-risk third-party integrations (e.g., **US-25**, **US-27**), the integration can be enabled via Remote Config for a small cohort of beta testers or early adopters first. This allows for real-world testing of the API integration before a general release, minimizing the blast radius of any potential issues.
 *   **Dynamic Configuration:** The list of supported apps for connection (**US-02**) will be managed remotely. This allows us to add a new app to the list or temporarily disable a misbehaving integration without forcing users to update the app.
 *   **Kill Switches:** If a feature is discovered to have a critical bug in production, a "kill switch" in Remote Config can be used to disable it immediately for all users while a hotfix is prepared.
 

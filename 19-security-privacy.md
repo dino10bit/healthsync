@@ -38,22 +38,29 @@ We will proactively model potential threats and define specific countermeasures.
 | **Man-in-the-Middle (MitM) Attack** | An attacker on the same network intercepts traffic between the app and an API. | - **TLS 1.2+:** All network traffic is encrypted. <br>- **Certificate Pinning:** For calls to our own minimal backend, we will implement certificate pinning to ensure the app is talking to our legitimate server, not an imposter. |
 | **OAuth CSRF Attack** | An attacker tricks a user into clicking a malicious link that initiates the OAuth flow, attempting to link the user's health data to an attacker-controlled account. | - **State Parameter:** Use a unique, unguessable `state` parameter in the OAuth 2.0 authorization request and validate it upon callback. This is a requirement for **US-02**. |
 | **Insecure Data Storage** | Sensitive data (tokens, settings) is stored insecurely on the device's file system. | - **Keychain/Keystore for Tokens.** <br>- **Database Encryption:** The local Realm database containing user settings will be encrypted. |
+| **Data Leakage via Export** | A user inadvertently shares a CSV export or cloud backup containing sensitive health data with an untrusted party. | - **Clear Warnings:** The UI must clearly warn the user about the sensitivity of the data they are exporting (**US-21**, **US-28**).<br>- **No Auto-Sharing:** The app must use the OS Share Sheet and not send the data anywhere automatically. The user is in full control of the destination. |
 | **Vulnerable Third-Party Dependency** | A library used by the app has a known security vulnerability. | - **Automated Dependency Scanning:** The CI/CD pipeline will use Snyk to automatically scan for and flag known vulnerabilities in our dependencies. <br>- **Minimize Dependencies:** Keep the number of third-party libraries to a minimum. |
 
 ## 4. Data Flow & Classification
 
-To ensure clarity, we classify data into three categories:
+To ensure clarity, we classify data into four categories:
 
-*   **Class 1: Health Data:** The user's actual health and fitness data (steps, heart rate, etc.).
+*   **Class 1: Health Data (In-Memory):** The user's actual health and fitness data (steps, heart rate, etc.) as it is being processed.
     *   **Flow:** Read from a source API -> Processed in-memory on-device -> Written to a destination API.
-    *   **Storage:** **NEVER** stored at rest by SyncWell.
+    *   **Storage:** **NEVER** stored at rest by SyncWell, only held in memory during an active sync job.
+*   **Class 1a: Health Data (At Rest, External):** Health data that the user explicitly exports.
+    *   **Flow:** Read from source API -> Formatted on-device into a file (CSV/JSON) -> Handed off to OS Share Sheet (**US-28**) or uploaded to user's personal cloud storage (**US-21**).
+    *   **Storage:** The app may temporarily cache this data during the export process, but this cache must be securely wiped immediately after the export is complete. The app is not responsible for the data after the user has saved it externally.
 *   **Class 2: Sensitive Credentials:** OAuth 2.0 tokens.
     *   **Flow:** Received from provider -> Stored in Keychain/Keystore -> Used for API calls.
     *   **Storage:** Exclusively in the hardware-backed Keychain/Keystore.
 *   **Class 3: Configuration & Analytics Data:** User sync settings and anonymous analytics.
-    *   **Definition:** This includes sync configurations (source app, destination app, data types), user preferences (e.g., "run only while charging"), and anonymous analytics events (e.g., `onboarding_completed`, `sync_job_failed`).
+    *   **Definition:** This includes sync configurations (source app, destination app, data types), user preferences (e.g., "run only while charging," sync priority), and anonymous analytics events (e.g., `onboarding_completed`, `sync_job_failed`).
     *   **Flow:** Settings are created by the user and stored locally. Analytics are sent to Firebase.
     *   **Storage:** Settings are stored in the encrypted on-device database. Analytics data is stored in Firebase.
+*   **Class 4: Health Data (In Notification):** Health data displayed in a push notification.
+    *   **Flow:** Data is read from the source, a summary is generated, and it is displayed in a local push notification (**US-24**).
+    *   **Storage:** The notification content may be stored temporarily by the operating system. Notifications should not contain highly sensitive data and should be cleared after being read.
 
 ### 4.1. OAuth2 Security
 As detailed in **US-02**, the OAuth 2.0 implementation must follow best practices:
@@ -98,6 +105,7 @@ The following audit, based on the OWASP MASVS, will be performed before the MVP 
 *   [ ] The OAuth `state` parameter is used and validated correctly (**US-02**).
 *   [ ] The token refresh mechanism is secure.
 *   [ ] The de-authorization process calls the provider's `revoke` endpoint and securely wipes local tokens (**US-13**).
+*   [ ] For integrations that require file access (e.g., Cloud Backup, **US-21**), the app requests the narrowest possible permission scope.
 
 ### Code Quality & Build Settings
 *   [ ] The app is obfuscated in production builds.

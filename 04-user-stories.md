@@ -1530,22 +1530,402 @@ This is a potential sprint plan for the **Must-Have** user stories to build the 
 
 ---
 
-## Proposed Future User Stories
+## Post-MVP User Story Backlog
 
-This section contains a backlog of proposed user stories for future consideration, post-MVP. They are grouped by epic and are in a concise format for review and prioritization.
+This section contains a backlog of proposed user stories for future consideration.
 
 ### Epic 6: Advanced Sync Control & Automation
-*   **US-19 (Prioritize Syncs):** As a power user (Alex), I want to set a priority order for my sync configurations so that more important syncs (like my daily run) are executed before less important ones.
-*   **US-20 (Global Pause):** As a user (Sarah), I want to be able to pause all syncing temporarily with a single tap so I can conserve battery or data when traveling.
-*   **US-21 (Cloud Backup):** As a user (Alex), I want to create a "backup" sync that only runs once a week to archive my data to a cloud storage provider (e.g., Google Drive, Dropbox) so I have a personal, long-term record.
 
+---
+
+#### **US-19:** Prioritize the execution order of syncs.
+*   **User Story:** As a power user (Alex), I want to set a priority order for my sync configurations so that more important syncs (like my daily run) are executed before less important ones.
+*   **Persona:** Alex
+*   **Priority:** Could-Have (C-1)
+*   **Story Pts:** 5
+*   **Business Goal:** **Retention.** This feature caters to power users, giving them a deeper sense of control and making the app more indispensable for complex use cases, thereby increasing long-term retention for this valuable user segment.
+*   **Success Metrics (KPIs):**
+    *   **Feature Adoption:** >25% of users with 3+ sync configurations use the prioritization feature.
+    *   **Task Success Rate:** >99% of users who try to reorder their syncs succeed.
+*   **Dependencies:**
+    *   **US-05:** Depends on the core background sync engine.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Directly addresses the needs of the "Alex" persona for fine-grained control.
+*   **Test Scenarios:**
+    *   **Positive:** Verify a user can drag-and-drop sync cards on the dashboard to reorder them. Verify the new order is saved and reflected on app restart. Verify that when a manual sync is triggered, higher-priority syncs are executed first.
+    *   **Negative:** Verify that the reordering UI is disabled if there is only one sync configuration.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a user on the Main Dashboard with multiple sync configurations.
+    *   **When** I enter "edit" mode on the dashboard.
+    *   **Then** I can drag and drop my Sync Cards to change their order.
+    *   **And** when I save the new order, the background sync engine will prioritize executing jobs based on this order.
+*   **Technical Notes:**
+    *   Add a `priority` integer field to the sync configuration model in the database.
+    *   The background job scheduler should query the jobs in `priority` order.
+*   **Non-Functional Requirements (NFRs):**
+    *   **Responsiveness:** The drag-and-drop interaction must be smooth and fluid.
+*   **Security & Privacy:**
+    *   No new sensitive data is introduced. The priority order is user preference data and should be stored in the encrypted local database.
+*   **Accessibility (A11y):**
+    *   Drag-and-drop must have an accessible alternative (e.g., "Move Up"/"Move Down" buttons in the context menu).
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   All new UI text ("Edit Order", etc.) must be localized.
+*   **Data Governance & Compliance:**
+    *   N/A.
+*   **Release Strategy:**
+    *   This could be a Pro feature to further enhance the value of the paid tier. It would be gated by the user's subscription status.
+
+---
+
+#### **US-20:** Pause and resume all syncing globally.
+*   **User Story:** As a user (Sarah), I want to be able to pause all syncing temporarily with a single tap so I can conserve battery or data when traveling.
+*   **Persona:** Sarah, Alex
+*   **Priority:** Should-Have (S-3)
+*   **Story Pts:** 3
+*   **Business Goal:** **Trust & Control.** Giving users a simple, global control to pause all activity builds trust and provides peace of mind, especially when they are in situations with limited battery or expensive data.
+*   **Success Metrics (KPIs):**
+    *   **Feature Usage:** >10% of monthly active users use the pause feature at least once.
+*   **Dependencies:**
+    *   **US-05:** Depends on the core background sync engine.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** A simple feature that shows respect for the user's device resources (battery, data) builds significant goodwill.
+*   **Test Scenarios:**
+    *   **Positive:** Verify there is a "Pause All Syncs" button in settings. Verify that tapping it stops any in-progress syncs and prevents new ones from starting. Verify the dashboard UI indicates that all syncs are paused. Verify that tapping "Resume Syncing" allows syncs to proceed as normal.
+    *   **Negative:** Verify that manual syncs are also disabled when paused.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a user in the app's settings.
+    *   **When** I tap the "Pause All Syncing" button.
+    *   **Then** all background and manual sync activity is immediately halted.
+    *   **And** the button text changes to "Resume Syncing".
+    *   **And** a clear indicator appears on the main dashboard showing that syncing is paused.
+*   **Technical Notes:**
+    *   A global flag in `SharedPreferences`/`UserDefaults` can control the pause state.
+    *   The background job scheduler must check this flag before starting any work.
+*   **Non-Functional Requirements (NFRs):**
+    *   **State Integrity:** The app must correctly resume the sync state when unpaused, without losing track of what needs to be synced.
+*   **Security & Privacy:**
+    *   N/A.
+*   **Accessibility (A11y):**
+    *   The "Pause" button and the status indicator on the dashboard must be accessible.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   All related UI text ("Pause All Syncing", "Syncing Paused") must be localized.
+*   **Data Governance & Compliance:**
+    *   N/A.
+*   **Release Strategy:**
+    *   This will be a free feature available to all users.
+
+---
+
+#### **US-21:** Back up health data to personal cloud storage.
+*   **User Story:** As a user (Alex), I want to create a "backup" sync that only runs once a week to archive my data to a cloud storage provider (e.g., Google Drive, Dropbox) so I have a personal, long-term record.
+*   **Persona:** Alex
+*   **Priority:** Could-Have (C-1)
+*   **Story Pts:** 13
+*   **Business Goal:** **Differentiation & Retention.** This is a powerful "pro" feature that provides significant value for data-conscious users, creating a strong moat and a reason to upgrade/retain a Pro license.
+*   **Success Metrics (KPIs):**
+    *   **Feature Adoption:** >15% of Pro users set up a cloud backup sync.
+    *   **Successful Backups:** >99% of scheduled backup jobs complete successfully.
+*   **Dependencies:**
+    *   Requires new OAuth integrations for cloud storage providers (Google Drive, Dropbox APIs).
+*   **Strategic Alignment:**
+    *   **Build a Sustainable Business:** Acts as a compelling reason for users to upgrade to a Pro tier.
+*   **Test Scenarios:**
+    *   **Positive:** Verify a user can authorize their Google Drive/Dropbox account. Verify they can configure a sync to export a specific data type as a CSV/JSON file to a designated folder. Verify the backup runs on the user-defined schedule (e.g., weekly).
+    *   **Negative:** Verify that if the cloud storage token is revoked, the sync is paused and the user is notified.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a Pro user.
+    *   **When** I create a new sync configuration.
+    *   **Then** I can select "Cloud Backup" as a destination type.
+    *   **And** I can choose between providers like "Google Drive" or "Dropbox".
+    *   **And** after authorizing the chosen provider, I can configure a schedule (e.g., "Weekly on Sunday").
+    *   **And** on the specified schedule, the app will export the data for the given period as a CSV file to a "SyncWell Backups" folder in my cloud storage.
+*   **Technical Notes:**
+    *   Requires implementing new OAuth2 flows for Google Drive and Dropbox APIs.
+    *   Requires logic to convert health data into CSV or JSON format.
+    *   The background job will need to be scheduled with a less frequent interval.
+*   **Non-Functional Requirements (NFRs):**
+    *   **Data Integrity:** The exported file must be well-formed and accurately represent the source data.
+*   **Security & Privacy:**
+    *   The app will be requesting broad file access permissions to the user's cloud storage. This must be clearly explained in the permission primer. The scopes requested must be the minimum necessary (e.g., permission to create files in its own folder, not read all files).
+*   **Accessibility (A11y):**
+    *   The new configuration options (schedule, file format) must be accessible.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   All new UI for backup configuration must be localized.
+*   **Data Governance & Compliance:**
+    *   The user is explicitly choosing to move their data to a third-party service. The UI must be clear that this data will then be subject to the cloud provider's terms and privacy policy.
+*   **Release Strategy:**
+    *   This will be a Pro feature. The list of supported cloud providers could be rolled out incrementally.
+
+---
 ### Epic 7: Data Insights & Visualization
-*   **US-22 (Source Comparison Chart):** As a user (Sarah), I want to see a simple chart comparing my step count from two different sources over the last week so I can see how well they correlate.
-*   **US-23 (Data Completeness Score):** As a user (Alex), I want to see a "data completeness" score for each day so I can easily identify if key data points (like sleep or workouts) are missing from my records.
-*   **US-24 (Weekly Summary Notification):** As a user (Sarah), I want to receive a weekly summary notification with my key stats (e.g., total steps, average sleep) so I can see my progress at a glance.
 
+---
+
+#### **US-22:** Compare data from two sources in a chart.
+*   **User Story:** As a user (Sarah), I want to see a simple chart comparing my step count from two different sources over the last week so I can see how well they correlate.
+*   **Persona:** Sarah
+*   **Priority:** Could-Have (C-2)
+*   **Story Pts:** 8
+*   **Business Goal:** **Engagement & Trust.** By visualizing the data from different sources, we help users understand the nuances of their devices, building trust and providing a novel insight that increases engagement with the app.
+*   **Success Metrics (KPIs):**
+    *   **Feature Adoption:** >20% of users with multiple sources for the same data type view a comparison chart.
+*   **Dependencies:**
+    *   Requires a chart/graphing library to be added to the project.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Moves the app beyond a simple utility to a tool for insight and understanding.
+*   **Test Scenarios:**
+    *   **Positive:** Verify that on a sync detail screen, a "Compare" button appears if data exists from multiple sources. Verify tapping it shows a simple bar chart comparing the data for the last 7 days. Verify the chart is readable and correctly labeled.
+    *   **Negative:** Verify the "Compare" button is hidden if there is only one source for a data type.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I have synced "Steps" from both Fitbit and Apple Health.
+    *   **When** I view the details for my "Steps" sync.
+    *   **Then** I see a "Compare Sources" button.
+    *   **And** tapping the button displays a simple, clearly-labeled bar chart comparing the daily step counts from both sources for the past 7 days.
+*   **Technical Notes:**
+    *   A lightweight charting library (e.g., `react-native-chart-kit`) will be needed.
+    *   The app will need to query the historical data from its local cache (if implemented) or re-fetch it from the source APIs.
+*   **Non-Functional Requirements (NFRs):**
+    *   **Performance:** The chart must render in under 1 second.
+*   **Security & Privacy:**
+    *   All data processing for the chart happens on-device. No new privacy concerns.
+*   **Accessibility (A11y):**
+    *   The chart must be accessible. This includes providing text alternatives for the data (e.g., a summary table) and ensuring colors are distinguishable for color-blind users. Chart elements should be focusable.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   Chart labels, dates, and numbers must be localized.
+*   **Data Governance & Compliance:**
+    *   N/A.
+*   **Release Strategy:**
+    *   This could be a free feature to drive engagement or a Pro feature to encourage upgrades. Decision to be made based on user feedback.
+
+---
+
+#### **US-23:** See a data completeness score.
+*   **User Story:** As a user (Alex), I want to see a "data completeness" score for each day so I can easily identify if key data points (like sleep or workouts) are missing from my records.
+*   **Persona:** Alex
+*   **Priority:** Could-Have (C-1)
+*   **Story Pts:** 8
+*   **Business Goal:** **Engagement & Retention.** This feature gamifies data tracking and provides a clear, actionable goal for data-driven users, increasing their daily engagement with the app.
+*   **Success Metrics (KPIs):**
+    *   **Feature Engagement:** >30% of "Alex" persona users check their completeness score daily.
+*   **Dependencies:**
+    *   None.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Directly serves the "Alex" persona's desire to meticulously track their data.
+*   **Test Scenarios:**
+    *   **Positive:** Verify a user can define their "key" data types in settings. Verify the main dashboard shows a daily score (e.g., a progress ring) indicating how many of the key data types have been synced for the current day.
+    *   **Negative:** Verify the score is 0% if no key data types have been selected.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I have configured "Steps", "Sleep", and "Workout" as my key data types.
+    *   **When** I view the main dashboard.
+    *   **Then** I see a visual indicator (e.g., a progress ring) showing "2 of 3 tracked today".
+    *   **And** tapping the indicator shows me that "Workout" data is missing.
+*   **Technical Notes:**
+    *   Requires a new settings screen to let the user choose their key data types.
+    *   The dashboard will need to query for the presence of these data types for the current day.
+*   **Non-Functional Requirements (NFRs):**
+    *   **Performance:** The calculation of the score should not slow down the dashboard load time.
+*   **Security & Privacy:**
+    *   N/A.
+*   **Accessibility (A11y):**
+    *   The progress ring must have an accessible label that announces the score (e.g., "Data completeness: 2 of 3 tracked").
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   All related UI text must be localized.
+*   **Data Governance & Compliance:**
+    *   N/A.
+*   **Release Strategy:**
+    *   This is likely a Pro feature, as it caters to the most engaged and data-conscious users.
+
+---
+
+#### **US-24:** Receive a weekly summary notification.
+*   **User Story:** As a user (Sarah), I want to receive a weekly summary notification with my key stats (e.g., total steps, average sleep) so I can see my progress at a glance.
+*   **Persona:** Sarah
+*   **Priority:** Should-Have (S-3)
+*   **Story Pts:** 5
+*   **Business Goal:** **Engagement.** Proactive, insightful notifications bring users back into the app and remind them of its value, even if they don't open it regularly.
+*   **Success Metrics (KPIs):**
+    *   **Notification Click-Through Rate:** >15% of users who receive the summary notification tap on it to open the app.
+    *   **Opt-out Rate:** <5% of users disable the weekly summary notification.
+*   **Dependencies:**
+    *   **US-03:** Requires notification permissions.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** Provides gentle, positive reinforcement, making the user feel good about their progress and the app.
+*   **Test Scenarios:**
+    *   **Positive:** Verify that a user who has granted notification permissions receives a summary notification once a week. Verify the notification contains accurate data (e.g., average steps for the past week). Verify tapping the notification opens the app's main dashboard.
+    *   **Negative:** Verify the notification is not sent if permissions are denied. Verify a user can disable this specific notification in settings without disabling all notifications.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I have enabled notifications for the app.
+    *   **When** it is the end of the week (e.g., Sunday evening).
+    *   **Then** I receive a push notification with the title "Your Weekly SyncWell Summary".
+    *   **And** the body of the notification contains a brief summary, such as "You averaged 8,500 steps and 7.5 hours of sleep this week. Keep it up!".
+    *   **And** I can disable this specific notification in the app's settings.
+*   **Technical Notes:**
+    *   A recurring, weekly background task will need to be scheduled.
+    *   This task will query the last 7 days of data, calculate the summary, and trigger a local notification.
+*   **Non-Functional Requirements (NFRs):**
+    *   **Reliability:** The weekly notification must be delivered reliably.
+*   **Security & Privacy:**
+    *   The notification content contains sensitive health data. The app must ensure this content is not leaked or logged insecurely.
+*   **Accessibility (A11y):**
+    *   The notification content must be readable by screen readers.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   The entire notification text, including the summary sentence structure, must be localized.
+*   **Data Governance & Compliance:**
+    *   N/A.
+*   **Release Strategy:**
+    *   This could be a free feature to drive engagement for all users.
+
+---
 ### Epic 8: Expanded Platform & Data Support
-*   **US-25 (Smart Scale Integration):** As a user (Alex), I want to connect my smart scale (e.g., Withings) as a data source so that my weight is automatically synced.
-*   **US-26 (Mindfulness App Integration):** As a user (Sarah), I want to connect my mindfulness app (e.g., Calm, Headspace) so that my meditation sessions are synced to Apple Health / Google Fit.
-*   **US-27 (Nutrition Data Integration):** As a user (Alex), I want the app to sync nutrition data (calories, macros) from MyFitnessPal so I have a complete picture of my health inputs.
-*   **US-28 (CSV Export):** As a user (Alex), I want to be able to export a specific sync's history as a CSV file so I can do my own analysis in a spreadsheet.
+
+---
+
+#### **US-25:** Connect to smart scales.
+*   **User Story:** As a user (Alex), I want to connect my smart scale (e.g., Withings) as a data source so that my weight is automatically synced.
+*   **Persona:** Alex
+*   **Priority:** Should-Have (S-1)
+*   **Story Pts:** 8
+*   **Business Goal:** **Expansion & Acquisition.** Supporting popular hardware devices directly makes the app relevant to a wider audience and serves as a strong acquisition channel.
+*   **Success Metrics (KPIs):**
+    *   **Feature Adoption:** >10% of users connect a smart scale within 3 months of the feature's launch.
+    *   **App Store Keyword Ranking:** Achieve top-10 ranking for keywords like "Withings sync app".
+*   **Dependencies:**
+    *   Requires a new OAuth integration with the Withings API (or other scale providers).
+*   **Strategic Alignment:**
+    *   **Achieve Product-Market Fit:** Expands the core value proposition to include more types of automated health data collection.
+*   **Test Scenarios:**
+    *   **Positive:** Verify "Withings" appears in the list of source apps. Verify a user can successfully authenticate their Withings account. Verify that a new weight measurement from the scale is automatically synced.
+    *   **Negative:** Verify that if the Withings API is down, the app handles it gracefully.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a user on the "Choose Source App" screen.
+    *   **When** I select "Withings" from the grid.
+    *   **Then** I am guided through the Withings OAuth flow.
+    *   **And** upon successful connection, I can configure a sync for "Weight" and "Body Fat %" from Withings to my chosen destination.
+*   **Technical Notes:**
+    *   Requires a full new integration with the Withings API, including authentication, data fetching, and error handling.
+*   **Non-Functional Requirements (NFRs):**
+    *   **Reliability:** The integration must be robust and handle API changes gracefully.
+*   **Security & Privacy:**
+    *   The new integration must follow all the same security best practices as the existing ones (secure token storage, etc.).
+*   **Accessibility (A11y):**
+    *   N/A (changes are in the connection flow, which is already covered).
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   Any new error messages specific to the Withings integration must be localized.
+*   **Data Governance & Compliance:**
+    *   The integration must adhere to the Withings API terms of service and data use policies.
+*   **Release Strategy:**
+    *   New integrations will be rolled out one at a time. The list of available integrations is controlled by Remote Config.
+
+---
+
+#### **US-26:** Connect to mindfulness apps.
+*   **User Story:** As a user (Sarah), I want to connect my mindfulness app (e.g., Calm, Headspace) so that my meditation sessions are synced to Apple Health / Google Fit.
+*   **Persona:** Sarah
+*   **Priority:** Could-Have (C-2)
+*   **Story Pts:** 8
+*   **Business Goal:** **Expansion & Acquisition.** Tapping into the large user base of popular mindfulness apps can be a significant user acquisition channel.
+*   **Success Metrics (KPIs):**
+    *   **Feature Adoption:** >5% of users connect a mindfulness app.
+*   **Dependencies:**
+    *   Requires new integrations with Calm/Headspace APIs, if they exist and are public. If not, this story is not feasible.
+*   **Strategic Alignment:**
+    *   **Achieve Product-Market Fit:** Broadens the definition of "health data" to include mental wellness, appealing to a different user segment.
+*   **Test Scenarios:**
+    *   **Positive:** Verify "Calm" appears as a source. Verify a user can connect their account. Verify a completed meditation session in Calm is synced as a "Mindful Minute" session to Apple Health / Google Fit.
+    *   **Negative:** N/A.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a user connecting a new source app.
+    *   **When** I select "Calm" from the list.
+    *   **Then** I am guided through the connection process.
+    *   **And** I can configure a sync for "Mindfulness Sessions" to my chosen destination.
+*   **Technical Notes:**
+    *   This is highly dependent on the availability and quality of public APIs from these third-party services. A technical investigation is the first step.
+*   **Non-Functional Requirements (NFRs):**
+    *   N/A.
+*   **Security & Privacy:**
+    *   Standard security practices for the new integration apply.
+*   **Accessibility (A11y):**
+    *   N/A.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   Any new error messages must be localized.
+*   **Data Governance & Compliance:**
+    *   Must adhere to the API terms of service for the new integration.
+*   **Release Strategy:**
+    *   New integrations will be rolled out one at a time.
+
+---
+
+#### **US-27:** Connect to nutrition apps.
+*   **User Story:** As a user (Alex), I want the app to sync nutrition data (calories, macros) from MyFitnessPal so I have a complete picture of my health inputs.
+*   **Persona:** Alex
+*   **Priority:** Should-Have (S-1)
+*   **Story Pts:** 13
+*   **Business Goal:** **Expansion & Retention.** For many health-conscious users, nutrition is as important as exercise. Integrating with the market leader (MyFitnessPal) would make SyncWell dramatically more valuable and sticky.
+*   **Success Metrics (KPIs):**
+    *   **Feature Adoption:** >20% of Pro users connect a nutrition app.
+    *   **App Store Keyword Ranking:** Achieve top-10 ranking for "MyFitnessPal sync".
+*   **Dependencies:**
+    *   Requires a new, potentially complex integration with the MyFitnessPal API.
+*   **Strategic Alignment:**
+    *   **Achieve Product-Market Fit:** Creates a "whole health" data platform, significantly expanding the product's value proposition.
+*   **Test Scenarios:**
+    *   **Positive:** Verify a user can connect their MyFitnessPal account. Verify that after logging a meal in MyFitnessPal, the nutrition data (calories, protein, carbs, fat) is synced to the destination (e.g., Apple Health).
+    *   **Negative:** Test with incomplete nutrition data.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a Pro user connecting a new source app.
+    *   **When** I select "MyFitnessPal".
+    *   **Then** I am guided through the connection process.
+    *   **And** I can configure a sync for "Nutrition" to my chosen destination.
+*   **Technical Notes:**
+    *   The MyFitnessPal API is known to be complex or semi-private. A deep technical investigation and potential partnership may be required. This is a high-risk, high-reward feature.
+*   **Non-Functional Requirements (NFRs):**
+    *   N/A.
+*   **Security & Privacy:**
+    *   Nutrition data is highly sensitive. All standard security practices apply.
+*   **Accessibility (A11y):**
+    *   N/A.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   Nutrition-specific terms and units may need localization.
+*   **Data Governance & Compliance:**
+    *   Must adhere strictly to the MyFitnessPal API terms of service.
+*   **Release Strategy:**
+    *   This would be a major Pro feature. Its development would likely be a multi-sprint effort.
+
+---
+
+#### **US-28:** Export sync history to a CSV file.
+*   **User Story:** As a user (Alex), I want to be able to export a specific sync's history as a CSV file so I can do my own analysis in a spreadsheet.
+*   **Persona:** Alex
+*   **Priority:** Should-Have (S-2)
+*   **Story Pts:** 5
+*   **Business Goal:** **Retention & Trust.** Empowering users to export their own data reinforces our "Your Data is Yours" promise. It gives power users the ultimate control, building deep trust and loyalty.
+*   **Success Metrics (KPIs):**
+    *   **Feature Usage:** >10% of Pro users use the export feature.
+*   **Dependencies:**
+    *   None.
+*   **Strategic Alignment:**
+    *   **Establish a Loyal User Base:** This is a key feature for the "Alex" persona, demonstrating a commitment to data portability and user control.
+*   **Test Scenarios:**
+    *   **Positive:** Verify that a "Export as CSV" option exists in the sync detail screen. Verify that tapping it allows the user to select a date range. Verify that a correctly formatted CSV file is generated and can be shared via the native share sheet.
+    *   **Negative:** Verify the export handles an empty date range gracefully.
+*   **Acceptance Criteria (AC):**
+    *   **Given** I am a Pro user viewing the details for a specific sync.
+    *   **When** I tap the "Export" button.
+    *   **Then** I can select a date range.
+    *   **And** upon confirmation, the app generates a CSV file with the sync history for that period.
+    *   **And** the native OS share sheet is presented, allowing me to save the file or send it to another app.
+*   **Technical Notes:**
+    *   Requires logic to query the sync history from the local database and format it as a CSV string.
+    *   Will use the native platform's share sheet intent/API.
+*   **Non-Functional Requirements (NFRs):**
+    *   **Performance:** The export for a large date range (e.g., one year) should complete in under 10 seconds.
+*   **Security & Privacy:**
+    *   The user is explicitly choosing to export their data. The app is responsible for generating the file securely, but once it is passed to the OS share sheet, it is outside the app's control.
+*   **Accessibility (A11y):**
+    *   The export options (date range, etc.) must be accessible.
+*   **Internationalization (i18n) & Localization (l10n):**
+    *   The column headers in the CSV file should be in English (as they are for machine reading), but the UI for the export feature must be localized.
+*   **Data Governance & Compliance:**
+    *   This feature directly supports the "Right to Data Portability" under GDPR.
+*   **Release Strategy:**
+    *   This will be a Pro feature.

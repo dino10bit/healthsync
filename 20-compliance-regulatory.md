@@ -34,6 +34,7 @@ This scorecard is a living document that will be reviewed quarterly to ensure on
 | **GDPR** | Lawful Basis for Processing (Consent) | Implemented. Consent is explicitly given when the user agrees to the privacy policy (**US-01**) and authorizes each third-party app (**US-02**). | - |
 | **GDPR** | Data Minimization | Implemented. The app only requests the minimum necessary scopes for OAuth and only handles data in-memory. | - |
 | **GDPR** | Right to Erasure | Implemented. The "De-authorize" feature (**US-13**) and "Delete Sync" feature (**US-08**) allow the user to delete their credentials and configurations. | - |
+| **GDPR** | Right to Data Portability | Implemented. The "CSV Export" feature (**US-28**) allows users to export their data in a common, machine-readable format. | - |
 | **CCPA** | "Do Not Sell" Info | Addressed in Privacy Policy. We do not sell user data. | - |
 | **Apple App Store** | Guideline 5.1 (Privacy) | Implemented | - |
 | **Apple App Store** | Guideline 3.1 (Payments) | Implemented | - |
@@ -50,6 +51,10 @@ Adherence to the terms of service for each integrated API is critical to prevent
 | **Fitbit** | Similar "Limited Use" policy. Stricter rules on data aggregation and display. | Requires "Sync with Fitbit" button with official branding. | 150 requests per user per hour. |
 | **Garmin Connect** | Data can only be displayed to the user it belongs to. Cannot be aggregated across users. | Requires use of official Garmin logos and naming. | Varies by endpoint; generally less restrictive but must be monitored. |
 | **Strava** | Data cannot be re-syndicated. Must honor user privacy settings (e.g., private activities). | Requires "Connect with Strava" button. | 600 requests every 15 minutes; 30,000 daily. |
+| **Google Drive** | TBD | TBD | TBD |
+| **Dropbox** | TBD | TBD | TBD |
+| **Withings** | TBD | TBD | TBD |
+| **MyFitnessPal** | TBD. API may be private; requires investigation. | TBD | TBD |
 
 ## 5. Implementation of Compliance Measures
 
