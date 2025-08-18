@@ -3,6 +3,7 @@
 ### Core Dependencies
 - `06-technical-architecture.md` - Technical Architecture, Security & Compliance
 - `39-performance-metrics.md` - Performance Monitoring & KPIs
+- `04-user-stories.md` - User Stories & Acceptance Criteria
 
 ### Strategic / Indirect Dependencies
 - `01-context-vision.md` - Context & Vision
@@ -12,28 +13,39 @@
 
 ---
 
-# PRD Section 16: Performance & Scalability
+# PRD Section 16: Performance, Scalability & Reliability
 
 ## 1. Executive Summary
 
-This document defines the performance and scalability requirements for the SyncWell application. For a utility app that frequently runs in the background, performance is a primary feature. A slow, bloated, or battery-draining app will be quickly uninstalled. This document establishes a proactive strategy for performance management, including strict performance budgets, a detailed profiling methodology, and specific optimization techniques.
+This document defines the performance, scalability, and reliability requirements for the SyncWell application. For a utility app that frequently runs in the background, these are primary features. A slow, bloated, or battery-draining app will be quickly uninstalled. This document establishes a proactive strategy for managing these factors, including strict budgets, a detailed profiling methodology, and specific optimization techniques. The requirements listed here are derived directly from the **Non-Functional Requirements (NFRs)** specified in `04-user-stories.md`.
 
 The goal is to ensure SyncWell is fast, fluid, and efficient on a wide range of devices. For the **solo developer**, this disciplined approach is essential for building a high-quality product and maintaining it effectively as the codebase grows.
 
-## 2. The Performance Budget
+## 2. Performance & Reliability Budget
 
-The following performance budget defines the non-negotiable limits for the application. Any pull request that causes a metric to exceed this budget must be rejected or reworked.
+The following budget defines the non-negotiable limits for the application. Any pull request that causes a metric to exceed this budget must be rejected or reworked.
 
-| Metric | Target (P90) | Tool for Measurement |
-| :--- | :--- | :--- |
-| **Cold App Start Time** | < 2.0 seconds | Firebase Performance Monitoring |
-| **Warm App Start Time** | < 0.7 seconds | Firebase Performance Monitoring |
-| **UI Render Time (Screen Transition)** | < 250 ms | Firebase Performance Monitoring |
-| **Slow Frames Rate** | < 1% | Firebase Performance Monitoring |
-| **Memory Usage (Heap)** | < 150 MB | Android Studio Profiler / Xcode Instruments |
-| **CPU Usage (Background Sync)** | < 5% of a single core | Android Studio Profiler / Xcode Instruments |
-| **Energy Impact (iOS)** | Low | Xcode Instruments |
+| Metric | Target (P90) | Related User Story | Tool for Measurement |
+| :--- | :--- | :--- | :--- |
+| **Cold App Start Time** | < 2.0 seconds | General | Firebase Performance Monitoring |
+| **Warm App Start Time** | < 0.7 seconds | General | Firebase Performance Monitoring |
+| **Dashboard Load Time** | < 1.0 second | US-16 | Firebase Performance Monitoring (Custom Trace) |
+| **Onboarding Carousel Load Time** | < 200 ms | US-01 | Firebase Performance Monitoring (Custom Trace) |
+| **Sync Config Flow Transition** | < 250 ms | US-04 | Manual Timing / Flipper |
+| **Manual Sync UI Feedback** | < 200 ms | US-06 | Manual Timing / Flipper |
+| **Manual Sync Latency** | < 10 seconds | US-06 | Firebase Performance Monitoring (Custom Trace) |
+| **Slow Frames Rate** | < 1% | General | Firebase Performance Monitoring |
+| **Memory Usage (Heap)** | < 150 MB | General | Android Studio Profiler / Xcode Instruments |
+| **CPU Usage (Background Sync)** | < 5% of a single core | US-05 | Android Studio Profiler / Xcode Instruments |
+| **Energy Impact / Battery Drain (24h)** | < 5% | US-05 | Xcode Instruments / Android Battery Historian |
 | **App Bundle Size Increase** | < 5% per PR | CI/CD script (e.g., using `danger.js`) |
+
+### Reliability Requirements
+
+Beyond speed, the app must be fundamentally reliable.
+*   **Resilience:** The background sync (US-05) and historical sync (US-10) processes **must** be resilient to network failures. They should pause and resume automatically when connectivity is restored.
+*   **API Interaction:** The app **must** gracefully handle third-party API rate limits and errors, using exponential backoff for retries and clearly communicating unrecoverable errors to the user.
+*   **Idempotency:** All data-writing operations **must** be idempotent to prevent data duplication on sync retries (US-05).
 
 ## 3. Profiling & Monitoring Strategy
 
@@ -41,7 +53,7 @@ Performance will be actively profiled and monitored throughout the development l
 
 *   **Continuous Monitoring (Production):**
     *   **Tool:** Firebase Performance Monitoring & Crashlytics.
-    *   **Process:** Key metrics (App Start, Screen Render Times, Crash-Free Rate) will be tracked for all users in production. The developer will review these dashboards weekly to identify regressions or negative trends. Alerts will be configured for major spikes.
+    *   **Process:** Key metrics (App Start, Screen Render Times, Crash-Free Rate) and all custom traces from the budget above will be tracked for all users in production. The developer will review these dashboards weekly to identify regressions or negative trends. Alerts will be configured for major spikes.
 *   **Development-Time Profiling:**
     *   **Tool:** React Native Flipper.
     *   **Process:** Flipper will be used during daily development to inspect component render times, debug state management issues, and analyze network requests.
@@ -50,7 +62,7 @@ Performance will be actively profiled and monitored throughout the development l
     *   **Process:** Before every major release, a "deep dive" profiling session will be conducted on a physical, mid-range device. The focus will be on:
         *   **Memory Allocation:** Hunting for memory leaks.
         *   **CPU Usage:** Analyzing the performance of complex functions.
-        *   **Energy Impact:** Ensuring background tasks are efficient and not causing excessive battery drain.
+        *   **Energy Impact:** Ensuring background tasks are efficient and not causing excessive battery drain, validating the budget target.
 
 ## 4. Key Optimization Techniques
 
