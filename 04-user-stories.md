@@ -55,8 +55,18 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 
 | ID | User Story | Persona | Priority | Story Pts |
 | :--- | :--- | :--- | :--- | :--- |
-| **US-12** | As a user (Sarah), I want to find answers to common questions in an in-app Help Center so that I can solve problems myself without contacting support. | Sarah | Must-Have (M-8) | 3 |
+| **US-12** | As a user (Sarah), I want to find answers to common questions in an in-app Help Center so that I can solve problems myself without contacting support. | Sarah | Must-Have (M-7) | 3 |
 | **US-13** | As a user (Alex), I want to be able to de-authorize a connected app and have all my credentials for it securely deleted so that I have full control over my privacy. | Alex | Must-Have (M-5) | 3 |
+
+### Epic 5: Strategic Differentiators & Pro Features
+
+| ID | User Story | Persona | Priority | Story Pts |
+| :--- | :--- | :--- | :--- | :--- |
+| **US-14** | As a user (Alex) with both an iPhone and an Android tablet, I want to sync my Apple Health data to Google Fit so I can see my complete health picture on both devices. | Alex | Must-Have (M-2) | 13 |
+| **US-15** | As a user (Alex) who records a run on both their Garmin watch and Peloton bike, I want the app to automatically detect the duplicate and offer to merge them into one activity so my stats aren't counted twice. | Alex | Should-Have (S-2) | 13 |
+| **US-16** | As a user (Sarah), I want a single dashboard that shows me the status of all my connections and when they last synced so I can feel confident that everything is working correctly. | Sarah | Must-Have (M-5) | 5 |
+| **US-17** | As a free user (Sarah), I want to be clearly shown the value of upgrading to 'Pro' when I encounter a pro feature (like Conflict Resolution) so I understand what I'm paying for. | Sarah | Should-Have (S-3) | 3 |
+| **US-18** | As a user (Alex), I want to purchase a single 'Family Plan' that my partner and I can use so we can both manage our health data without buying two separate licenses. | Alex | Could-Have (C-2) | 8 |
 
 ## 3. Acceptance Criteria (AC)
 
@@ -97,6 +107,15 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Then** I can select a start date and an end date.
 *   **And** when I initiate the sync, the app provides clear feedback that the process has started and may take a long time.
 *   **And** the app processes the historical data in the background, one day at a time, without blocking the main UI.
+
+### AC for US-15:
+*   **Given** I am a Pro user who has connected Garmin and Peloton
+*   **And** I have recorded the same run on both services
+*   **When** the next sync runs
+*   **Then** the Sync Health Dashboard should show a "Conflict Detected" status for that sync.
+*   **And** when I tap on it, I see a screen showing the two activities side-by-side.
+*   **And** I am presented with options: "Keep Garmin", "Keep Peloton", or "Merge".
+*   **And** if I choose "Merge", a single, enriched activity is created in my destination app.
 
 ## 4. MVP Sprint Plan
 

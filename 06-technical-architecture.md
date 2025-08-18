@@ -44,48 +44,47 @@ This diagram shows the system in its environment, illustrating its relationship 
 
 ### Level 2: Containers
 
-This level zooms into the system boundary to show the high-level technical containers.
+This level zooms into the system boundary to show the high-level technical containers designed to operate at massive scale.
 
-1.  **Mobile Application (Cross-Platform: React Native)**
-    *   **Description:** The user-facing application that runs on the user's iOS or Android device. It is the primary container for all application logic.
-    *   **Technology:** React Native.
+1.  **Mobile Application (Kotlin Multiplatform & Native UI)**
+    *   **Description:** The user-facing application that runs on the user's iOS or Android device. It contains the UI and presentation logic.
+    *   **Technology:** Kotlin Multiplatform (KMP) for shared business logic, with native UI for each platform (SwiftUI for iOS, Jetpack Compose for Android).
     *   **Responsibilities:**
-        *   Provides the entire User Interface.
-        *   Executes the core data synchronization logic.
-        *   Manages all communication with third-party APIs.
+        *   Provides a high-performance, native User Interface.
+        *   Delegates all business logic to the shared KMP module.
         *   Securely stores user credentials (OAuth tokens) on the device.
-2.  **Serverless Backend (Firebase)**
-    *   **Description:** A minimal set of serverless functions and services that support the mobile application. It does **not** store or process any user health data.
-    *   **Technology:** Firebase (Cloud Functions, Firestore for minimal config data, Analytics, Crashlytics).
+        *   Initiates sync requests to the backend.
+2.  **Scalable Serverless Backend (AWS)**
+    *   **Description:** An event-driven, serverless backend on Amazon Web Services, designed to handle millions of users and high request volumes. It does **not** store or process any raw user health data.
+    *   **Technology:** AWS Lambda, Amazon API Gateway, Amazon SQS, Amazon DynamoDB.
     *   **Responsibilities:**
-        *   (Potentially) Handling OAuth redirect callbacks for certain web-based auth flows.
-        *   (Potentially) Server-side receipt validation for in-app purchases to prevent fraud.
-        *   Sending broadcast push notifications (e.g., new feature announcements).
-        *   Collecting anonymous analytics and crash reports.
+        *   **API Gateway:** Provides a secure, scalable HTTP endpoint for the mobile app to request syncs.
+        *   **Request Lambda:** A function that validates sync requests and places them as jobs into an SQS queue. This provides a fast (<50ms) response to the user.
+        *   **SQS Queue:** A highly durable and scalable queue that decouples the request from the processing. It ensures that no sync jobs are lost, even during massive load spikes.
+        *   **Worker Lambdas:** A fleet of functions that pull jobs from the SQS queue and execute the actual third-party API calls. This is where the core sync logic, including the **Conflict Resolution Engine**, runs.
+        *   **DynamoDB:** A NoSQL database for storing user configuration, sync state, and metadata with single-digit millisecond latency.
 
-### Level 3: Components (Inside the Mobile Application)
+### Level 3: Components (Inside the KMP Shared Module)
 
-This level zooms into the Mobile Application to show its key internal components.
+This level zooms into the shared business logic module that runs on both iOS and Android.
 
-*   **`UI`:** The React components, screens, and navigation logic that form the user interface.
-*   **`State Management (Redux)`:** A centralized store that manages the application's state, ensuring predictable state transitions.
-*   **`Sync Engine`:** The core business logic, as detailed in `05-data-sync.md`. Contains the `SyncScheduler`, `JobQueue`, and `SyncProcessor`.
-*   **`Provider Manager`:** Responsible for loading and managing the different `DataProvider` modules.
-*   **`DataProvider (Interface)`:** A standardized interface for all third-party integrations.
-    *   **`FitbitProvider` (Implementation):** An example implementation for the Fitbit API.
-    *   **`GarminProvider` (Implementation):** An example implementation for the Garmin API.
-*   **`Secure Storage`:** A wrapper around the native Keychain/Keystore for securely storing and retrieving sensitive data like OAuth tokens.
-*   **`Local Database (Realm)`:** The on-device database for storing the sync job queue and user settings.
+*   **`SyncManager`:** The core orchestrator for the sync process.
+*   **`ConflictResolutionEngine`:** A dedicated component for detecting and resolving data conflicts based on user-defined rules.
+*   **`ProviderManager`:** Responsible for loading and managing the different `DataProvider` modules.
+*   **`DataProvider (Interface)`:** A standardized interface for all third-party integrations (Fitbit, Garmin, etc.).
+*   **`ApiClient`:** A robust HTTP client for making API calls to the SyncWell backend and third-party services.
+*   **`SecureStorageWrapper`:** An abstraction over the native Keychain/Keystore for securely storing and retrieving sensitive data like OAuth tokens.
+*   **`SettingsRepository`:** Manages user settings and preferences, storing them on-device.
 
 ## 3. Technology Stack & Rationale
 
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
-| **Cross-Platform Framework** | **React Native** | **Familiarity & Ecosystem.** Allows a solo developer to target both iOS and Android from a single codebase. The JavaScript/React ecosystem is vast, with extensive libraries and community support, which accelerates development. |
-| **State Management** | **Redux Toolkit** | **Predictability & Scalability.** Provides a strict, predictable pattern for managing global app state, which is crucial for preventing bugs in a complex application. Redux DevTools offer excellent debugging capabilities. |
-| **On-Device Database** | **Realm** | **Performance & Ease of Use.** Realm is a high-performance mobile database that is often faster than SQLite-based solutions. It offers reliable encryption and a simple, object-oriented API that works well with React Native. |
-| **Serverless Backend** | **Firebase** | **Integrated & Low-Maintenance.** Firebase provides a suite of tools (Auth, Functions, Firestore, Analytics, Crashlytics) that are well-integrated and require minimal server management, which is ideal for a solo developer. |
-| **API Client** | **Axios** | **Robust & Flexible.** A mature and widely-used HTTP client for making API requests, with good support for features like interceptors, which are useful for automatically refreshing expired OAuth tokens. |
+| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Performance & Native Feel.** KMP allows sharing the complex business logic (sync engine, data providers) in a common Kotlin codebase while building the UI with the platform's native tools (SwiftUI, Jetpack Compose). This provides the best possible performance and user experience, which is critical for a high-reliability app. |
+| **State Management** | **Platform-Native (SwiftUI/Combine, Jetpack Compose/Flow)** | **Simplicity & Performance.** By using native UI, we can leverage the modern, reactive state management patterns built into each platform. This reduces complexity and avoids the overhead of a third-party state management library. |
+| **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** SQLDelight is a KMP-native library that generates type-safe Kotlin APIs from SQL statements. This ensures data consistency and reliability across both iOS and Android. |
+| **Serverless Backend** | **AWS (Lambda, SQS, DynamoDB)** | **Massive Scalability & Reliability.** This event-driven architecture is the industry standard for building highly scalable applications. It is designed to meet our targets of 1M DAU and 10,000 RPS, offering virtually unlimited scale with pay-per-use cost efficiency. |
+| **API Client** | **Ktor** | **Kotlin-Native & Multiplatform.** Ktor is a modern, coroutine-based HTTP client that is designed for Kotlin and works seamlessly in a KMP environment, simplifying the networking code. |
 
 ## 4. Security & Compliance
 
