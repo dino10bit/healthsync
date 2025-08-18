@@ -18,104 +18,67 @@
 
 This document provides the detailed technical specification for the **Historical Data Sync** feature, a core premium offering. This feature allows paying users to backfill their health data, providing a powerful incentive to upgrade.
 
-A naive implementation of this feature (a single, long-running job) is brittle and prone to failure. To ensure maximum reliability and a transparent user experience, we will implement a robust **job chunking and orchestration** strategy. This specification, derived from `05-data-sync.md`, details this architecture, the data model for progress tracking, and the user experience for monitoring a large sync.
+A naive implementation of this feature (a single, long-running job) is brittle and prone to failure. To ensure maximum reliability and a transparent user experience, we will use **AWS Step Functions** to orchestrate the complex workflow, as defined in the core technical architecture.
 
-## 2. Historical Sync Architecture: Job Chunking & Orchestration
+## 2. Historical Sync Architecture: AWS Step Functions
 
-The historical sync feature uses the dedicated "cold path" on the backend, but instead of a single, long-running job, it uses an orchestration model to create dozens or hundreds of small, independent jobs.
+The historical sync feature is orchestrated using a dedicated **AWS Step Functions state machine**. This managed service is purpose-built for coordinating multi-step, long-running, and potentially error-prone workflows, making it the ideal choice for this feature.
 
-1.  **Orchestration at the Start:** When a user requests a historical sync for a large date range (e.g., Jan 1, 2020 to Dec 31, 2023), the `Request Lambda` initiates the orchestration process.
-2.  **Parent Record Creation:** It first creates a single "Orchestration Record" in a new DynamoDB table. This record represents the entire historical sync operation and will be used to track its overall progress.
-3.  **Job Chunking:** The orchestrator then breaks the total date range into smaller, logical **chunks** (e.g., one-month intervals).
-4.  **Queueing Independent Jobs:** It then enqueues one message in the `cold-queue` for each chunk. For example, a 3-year sync would generate 36 individual messages in SQS (e.g., "Sync Jan 2020", "Sync Feb 2020", etc.).
+When a user requests a historical sync, the mobile app calls an API endpoint that triggers a new execution of this state machine. The state machine, not a custom application-level orchestrator, is responsible for managing the entire lifecycle of the sync.
 
-### Data Model
+## 3. Benefits of the AWS Step Functions Strategy
 
-**`Orchestration Record` (DynamoDB)**
-This record tracks the overall job.
+Using a managed orchestrator like AWS Step Functions provides significant advantages over a custom-built solution:
 
-```json
-{
-  "orchestrationId": "orch-uuid-123", // Partition Key
-  "userId": "user-abc",
-  "source": "fitbit",
-  "destination": "strava",
-  "startDate": "2020-01-01",
-  "endDate": "2023-12-31",
-  "status": "IN_PROGRESS", // PENDING, IN_PROGRESS, COMPLETED, FAILED
-  "totalChunks": 36,
-  "completedChunks": 15,
-  "failedChunks": 1
-}
-```
+*   **Reliability & State Management:** Step Functions persists the state of every execution, meaning workflows are durable and can be resumed automatically. The service guarantees at-least-once execution of each step.
+*   **Built-in Error Handling:** The state machine has robust, declarative error handling and retry logic. We can configure it to automatically retry failed API calls with exponential backoff, or route specific errors to custom cleanup logic, all without complex application code.
+*   **Observability:** Every Step Functions execution is fully auditable and visualized in the AWS console. This provides immediate, detailed insight into where a workflow failed, why it failed, and what the inputs/outputs were for each step, dramatically reducing debugging time.
+*   **Parallelism:** The state machine will use a `Map` state to process data chunks (e.g., one month of data) in parallel. This allows for massive scaling of `Cold-Path Worker Lambdas` to complete a multi-year sync much faster than a sequential process.
 
-**`Chunk Job` (SQS Message)**
-This is the small, independent job processed by a worker.
+## 4. State Machine Execution Flow
 
-```json
-{
-  "orchestrationId": "orch-uuid-123",
-  "userId": "user-abc",
-  "source": "fitbit",
-  "destination": "strava",
-  "chunkStartDate": "2021-03-01",
-  "chunkEndDate": "2021-03-31"
-}
-```
+The high-level logic of the state machine is defined in `06-technical-architecture.md`. The flow is as follows:
 
-## 3. Benefits of the Chunking Strategy
-
-This architecture is fundamentally more resilient and scalable than a single-job model.
-
-*   **Resilience & Fault Isolation:** The `Cold-Path Worker Lambdas` process one small chunk at a time. If the job for "March 2021" fails due to a temporary API error or a single corrupt data point, it has **zero impact** on the processing of "April 2021". The failed chunk job can be retried independently via the Dead-Letter Queue (DLQ) without halting the entire historical sync.
-*   **Parallelism & Performance:** SQS and Lambda are massively parallel. By creating many small jobs, we can have dozens or hundreds of `Cold-Path Worker Lambdas` running in parallel, processing multiple months of data simultaneously. This dramatically reduces the total time required to complete a large backfill.
-*   **Resumability:** The state is tracked in the `Orchestration Record`. The process can be paused and resumed at any time. If the entire system were to shut down, the orchestration could be restarted, identify which chunks were not yet complete, and re-enqueue only the missing jobs.
-*   **Meaningful Progress Tracking:** The UI can provide a much more accurate and encouraging progress report to the user by querying the `Orchestration Record`.
-
-## 4. Execution Flow
-
-1.  A `Cold-Path Worker` receives a `Chunk Job` message from the `cold-queue`.
-2.  It executes the sync for the small date range specified in the message (e.g., one month).
-3.  Upon successful completion, the worker performs an **atomic increment** on the `completedChunks` attribute of the parent `Orchestration Record` in DynamoDB.
-4.  If all chunks are complete (`completedChunks` + `failedChunks` == `totalChunks`), the worker sets the `Orchestration Record` status to `COMPLETED`.
-5.  If the job fails and is moved to the DLQ, a separate process will increment the `failedChunks` count on the parent record.
+1.  **Initiate Sync & Calculate Chunks:** The workflow is triggered with the user's request details. The first state is a Lambda function that calculates the total date range and breaks it into an array of smaller, logical chunks (e.g., `[{start: "2022-01-01", end: "2022-01-31"}, ...]`).
+2.  **Execute in Parallel (`Map` State):** The state machine's `Map` state iterates over the array of chunks. For each chunk, it invokes a `Cold-Path Worker Lambda`, passing the chunk's date range as input. This allows for dozens or hundreds of chunks to be processed in parallel, up to a configurable concurrency limit.
+3.  **Process a Single Chunk:** The `Cold-Path Worker Lambda` is responsible for fetching data for its assigned chunk, performing the transformation, and writing it to the destination.
+4.  **Handle Errors:** If a worker Lambda fails with a transient error, the state machine's retry policy will automatically re-invoke it. If it fails permanently, the `Map` state's error handling configuration will catch the failure, log it, and potentially allow the rest of the workflow to continue.
+5.  **Finalize & Notify:** Once all chunks in the `Map` state have completed successfully, a final Lambda function is invoked to mark the overall job as complete and send a push notification to the user.
 
 ## 5. Visual Diagrams
 
-### Job Chunking & Orchestration Flow
+### Historical Sync State Machine
 ```mermaid
 graph TD
-    subgraph User
-        A[Requests 2-Year Sync]
-    end
-    subgraph AWS Backend
-        B[Request Lambda (Orchestrator)]
-        C[DynamoDB Orchestration Table]
-        D[SQS Cold Queue]
-        E[Cold-Path Workers]
-    end
-
-    A --> B
-    B -- 1. Create Record --> C
-    B -- 2. Generate 24 Chunk Jobs --> D
-    E -- 3. Polls for chunk job --> D
-    E -- 4. Process 1-month sync --> E
-    E -- 5. Update Progress --> C
+    A[Start] --> B{Initiate Sync &<br>Calculate Chunks};
+    B --> C{Process Chunks in Parallel<br>(Map State)};
+    C -- For Each Chunk --> D[Process One Chunk<br>(Lambda)];
+    D -- Success --> E{Did All Chunks Succeed?};
+    C -- All Chunks Complete --> E;
+    E -- Yes --> F[Finalize Sync<br>(Lambda)];
+    F --> G[End];
+    D -- Failure --> H{Retry?};
+    H -- Yes --> D;
+    H -- No --> I[Log Error &<br>Continue/Fail];
+    I --> E;
 ```
 
 ### UI Status Polling
+The mobile app can get the status of the sync by calling a backend API. This API will use the AWS SDK and the specific execution's ARN (`executionArn`) to call the `DescribeExecution` API action. This returns the current status (`RUNNING`, `SUCCEEDED`, `FAILED`) and other metadata that can be used to render a progress bar.
+
 ```mermaid
 sequenceDiagram
     participant User
     participant MobileApp as Mobile App
     participant Backend as SyncWell Backend
-    participant DB as DynamoDB Orchestration Table
+    participant StepFunctions as AWS Step Functions
 
     User->>MobileApp: Views Progress Screen
     loop Every 10 seconds
-        MobileApp->>Backend: GET /orchestrations/{orchId}/status
-        Backend->>DB: Read item for orchestrationId
-        DB-->>Backend: Return Orchestration Record
-        MobileApp->>User: Update Progress Bar (completedChunks / totalChunks)
+        MobileApp->>Backend: GET /historical-syncs/{executionArn}/status
+        Backend->>StepFunctions: DescribeExecution(executionArn)
+        StepFunctions-->>Backend: Return Execution Status & Metadata
+        Backend-->>MobileApp: Return {status: "RUNNING", progress: 0.45}
+        MobileApp->>User: Update Progress Bar (45%)
     end
 ```
