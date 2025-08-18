@@ -75,7 +75,7 @@ graph TD
         SecretsManager[Secrets Manager for Tokens]
         S3[S3 for DLQ]
         AI_Service[AI Insights Service]
-        Observability[Monitoring & Observability (CloudWatch)]
+        Observability["Monitoring & Observability (CloudWatch)"]
     end
 
     subgraph "User's Device"
@@ -138,9 +138,9 @@ This diagram shows the components within the new `AI Insights Service`.
 graph TD
     subgraph AI Insights Service
         A[API Gateway]
-        B[Conflict Resolution Model (SageMaker)]
-        C[Troubleshooting LLM (Lambda -> Bedrock)]
-        D[Summary LLM (Lambda -> Bedrock)]
+        B["Conflict Resolution Model (SageMaker)"]
+        C["Troubleshooting LLM (Lambda -> Bedrock)"]
+        D["Summary LLM (Lambda -> Bedrock)"]
     end
 
     A -- Invokes --> B
@@ -170,7 +170,7 @@ graph TD
     A[Mobile App] -- 1. Initiate --> B[Backend]
     B -- 2. Fetch --> C[Source Cloud API]
     C -- 3. Data --> B
-    B -- 4. (Optional) Get Merge Suggestion --> AI_Service[AI Insights Service]
+    B -- "4. (Optional) Get Merge Suggestion" --> AI_Service[AI Insights Service]
     AI_Service -- 5. Suggestion --> B
     B -- 6. Write --> D[Destination Cloud API]
     D -- 7. Success --> B
