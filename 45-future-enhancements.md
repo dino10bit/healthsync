@@ -68,6 +68,21 @@ This theme builds on the introduction of the **Family Plan** in Q4, exploring ne
     *   **Description:** A portal for certified health and fitness coaches to (with explicit user consent) view their clients' incoming data from various platforms in one unified dashboard.
     *   **Strategic Goal:** Create a high-value B2B subscription tier and become an essential tool for the coaching industry.
 
+### Theme 4: Quality of Life & Power User Features (Post-Year 1)
+
+This theme focuses on enhancing the core user experience with features that provide more control, transparency, and delight.
+
+*   **US-29:** Set custom sync frequency per connection.
+*   **US-30:** Preview data before a sync is executed.
+*   **US-31:** Smart, automatic backfill of recent data for new users.
+*   **US-32:** Sync advanced biometric data (HRV, SpO2).
+*   **US-33:** Display API rate limit status to the user.
+*   **US-34:** Set a "Source of Truth" for automatic conflict resolution.
+*   **US-35:** Use an interactive guide for troubleshooting sync errors.
+*   **US-36:** Add a home screen widget for at-a-glance sync status.
+*   **US-37:** Filter syncs by specific activity types.
+*   **US-38:** Get notifications for "streaks" or "milestones."
+
 ## 4. Evaluation Framework
 When it comes time to consider one of these ideas for the official roadmap, it will be evaluated against a more formal framework:
 *   **Market Size & Opportunity:** What is the total addressable market for this feature?

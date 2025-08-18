@@ -57,6 +57,7 @@ This register categorizes and assesses the top risks to the project.
 | R-14 | **Technical/OS** | Changes in platform background execution policies break automatic syncing. | **High** | **Medium** | **High** |
 | R-32 | **Implementation** | A critical bug in the billing logic prevents users from accessing paid features. | **Low** | **High** | **Medium** |
 | R-04 | **Market** | The product fails to gain traction and attract a sufficient user base to be viable. | **Medium** | **High** | **High** |
+| R-61 | **Product/UX** | The addition of numerous power-user features (e.g., filtering, custom frequency, rules) leads to a complex UI that alienates the core, less-technical user persona. | **Medium** | **Medium** | **Medium** |
 
 ## 4. Detailed Mitigation & Contingency Plans
 
