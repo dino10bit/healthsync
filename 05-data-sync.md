@@ -51,7 +51,7 @@ The `Worker Lambda` will follow this algorithm for each job pulled from the SQS 
 
 ## 4. Smart Conflict Resolution Engine
 
-This engine is a core feature of SyncWell, designed to eliminate data duplication and loss. It offers several strategies that Pro users can choose from.
+This engine is a core feature of SyncWell, designed to eliminate data duplication and loss. It offers several strategies that Pro users can choose from, catering to our key user personas. For "Sarah," who values simplicity, the default `Prioritize Source` is a "set it and forget it" solution. For "Alex," who wants ultimate control, the ability to choose a strategy, especially the `AI-Powered Merge`, is a key differentiator.
 
 *   **`Prioritize Source`:** The default behavior. New data from the source platform will always overwrite any existing data in the destination for the same time period.
 *   **`Prioritize Destination`:** Never overwrite existing data. If a conflicting entry is found in the destination, the source entry is ignored.
@@ -59,12 +59,36 @@ This engine is a core feature of SyncWell, designed to eliminate data duplicatio
     *   **Mechanism:** The worker lambda sends the two conflicting activity records (as JSON) to the `AI Insights Service`.
     *   **Intelligence:** The service's ML model, trained on thousands of examples of merged activities, analyzes the data. It might learn, for example, that a user's Garmin device provides more reliable GPS data, while their Wahoo chest strap provides more accurate heart rate data.
     *   **Output:** The AI service returns a single, merged activity record that combines the best attributes of both sources. For example, it could take the GPS track from a Garmin device and combine it with Heart Rate data from a Wahoo chest strap for the same activity, creating a single, more complete workout file. This is far more flexible and powerful than hard-coded rules.
+    *   **Fallback Mechanism:** **Reliability of the core sync is paramount.** If the `AI Insights Service` is unavailable, times out, or returns an error, the Conflict Resolution Engine **will not fail the sync job**. Instead, it will log the error and automatically fall back to the default `Prioritize Source` strategy. The conflict will be flagged in our monitoring system for later analysis, and a potential feature could allow users to review these "failed merges" at a later time.
 
 ## 5. Data Integrity
 
 *   **Durable Queueing:** By using SQS, we guarantee that a sync job will be processed "at-least-once". Our worker logic is idempotent (re-running the same job will not create duplicates) to handle rare cases of a message being delivered twice.
 *   **Transactional State:** State updates in DynamoDB are atomic. The `lastSyncTime` is only updated if the entire write operation to the destination platform succeeds.
 *   **Dead Letter Queue (DLQ):** If a job fails repeatedly (e.g., due to a persistent third-party API error or a problem with the AI service), SQS will automatically move it to a DLQ. This allows for manual inspection and debugging without blocking the main queue.
+
+## 5a. Historical Data Sync (`cold-path`)
+
+Handling a user's request to sync several years of historical data (User Story **US-10**) presents a significant challenge. A single, long-running job is brittle and prone to failure. To address this, we will implement a robust "cold path" process.
+
+1.  **Job Orchestration:** When a user requests a historical sync for a date range (e.g., Jan 1, 2020 to Dec 31, 2023), the `Request Lambda` does not create a single job. Instead, it acts as an orchestrator:
+    *   It creates a parent "Orchestration Record" in DynamoDB that tracks the overall progress of the historical sync.
+    *   It breaks the total date range into smaller, logical **chunks** (e.g., one-month intervals).
+    *   It then enqueues one message in the `cold-queue` for each chunk (e.g., "Sync Jan 2020", "Sync Feb 2020", etc.).
+
+2.  **Chunked Execution:**
+    *   The `Cold-Path Worker Lambdas` are configured to poll the `cold-queue`. Each worker processes one chunk at a time.
+    *   This is inherently more resilient. If the job for "March 2021" fails, it does not impact the processing of "April 2021". The failed job can be retried independently.
+
+3.  **Progress Tracking & Resumability:**
+    *   As each chunk-job is successfully completed, the worker updates the parent Orchestration Record in DynamoDB.
+    *   This allows the mobile app to query the status of the overall historical sync and show meaningful progress to the user (e.g., "Synced 18 of 48 months...").
+    *   This design also means the entire process is pausable and resumable.
+
+4.  **Rate Limiting & Throttling:**
+    *   The cold path workers are subject to the same third-party API rate limits. The separation of hot and cold queues helps ensure that a large historical sync does not consume the entire rate limit budget, preserving it for real-time syncs. The rate-limiting mechanism is detailed in `07-apis-integration.md`.
+
+*(Note: This section directly impacts `31-historical-data.md` and `16-performance-optimization.md`, which will need to be updated to reflect this chunking strategy.)*
 
 ## 6. Functional & Non-Functional Requirements
 *(Unchanged)*
