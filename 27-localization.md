@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `26-internationalization.md` - Internationalization & Multi-Language Support
+
+### Strategic / Indirect Dependencies
+- `11-monetization.md` - Monetization, Pricing & Business Model
+- `23-analytics.md` - Analytics & Metrics Tracking
+- `24-user-support.md` - Help Center, Support & Feedback
+- `25-release-management.md` - Release Management & Versioning
+
+---
+
 # PRD Section 27: Localization & Cultural Adaptation
 
 ## 1. Executive Summary

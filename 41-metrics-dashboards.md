@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `23-analytics.md` - Analytics & Metrics Tracking
+- `11-monetization.md` - Monetization, Pricing & Business Model
+- `39-performance-metrics.md` - Performance Monitoring & KPIs
+
+### Strategic / Indirect Dependencies
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `42-customer-feedback.md` - Customer Feedback Loop
+
+---
+
 # PRD Section 41: Analytics Dashboard Design
 
 ## 1. Executive Summary

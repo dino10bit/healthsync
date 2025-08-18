@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- `05-data-sync.md` - Data Sync & Conflict Resolution
+- `12-trial-subscription.md` - Trial, Subscription & Paywall
+- `30-sync-mapping.md` - Source-Destination Sync Mapping
+- `32-platform-limitations.md` - Platform-Specific Limitations
+
+### Strategic / Indirect Dependencies
+- `09-ux-configuration.md` - UX, Configuration & Settings
+- `17-error-handling.md` - Error Handling, Logging & Monitoring
+
+---
+
 # PRD Section 31: Historical Data Handling
 
 ## 1. Executive Summary

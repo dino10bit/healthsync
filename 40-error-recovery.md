@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `17-error-handling.md` - Error Handling, Logging & Monitoring
+- `24-user-support.md` - Help Center, Support & Feedback
+- `38-ux-flow-diagrams.md` - UX Flow & Interaction Diagrams
+
+### Strategic / Indirect Dependencies
+- `29-notifications-alerts.md` - Push Notifications & Alerts
+- `37-onboarding-tutorials.md` - Onboarding Guides & Tutorials
+
+---
+
 # PRD Section 40: Error Recovery & Troubleshooting
 
 ## 1. Executive Summary

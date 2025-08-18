@@ -1,3 +1,20 @@
+## Dependencies
+
+### Core Dependencies
+- `02-product-scope.md` - Product Scope, Personas & MVP Definition
+- `06-technical-architecture.md` - Technical Architecture
+- `07-apis-integration.md` - APIs & Integration Requirements
+- `17-error-handling.md` - Error Handling, Logging & Monitoring
+- `30-sync-mapping.md` - Source-Destination Sync Mapping
+
+### Strategic / Indirect Dependencies
+- `01-context-vision.md` - Context & Vision
+- `16-performance-optimization.md` - Performance & Scalability
+- `31-historical-data.md` - Historical Data Handling
+- `40-error-recovery.md` - Error Recovery & Troubleshooting
+
+---
+
 # PRD Section 5: Data Synchronization & Reliability
 
 ## 1. Executive Summary

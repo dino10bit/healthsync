@@ -1,3 +1,18 @@
+## Dependencies
+
+### Core Dependencies
+- `06-technical-architecture.md` - Technical Architecture, Security & Compliance
+- `40-error-recovery.md` - Error Recovery & Troubleshooting
+
+### Strategic / Indirect Dependencies
+- `05-data-sync.md` - Data Synchronization & Reliability
+- `14-qa-testing.md` - QA, Testing & Release Strategy
+- `22-maintenance.md` - Maintenance & Post-Launch Operations (SRE)
+- `24-user-support.md` - Help Center, Support & Feedback
+- `41-metrics-dashboards.md` - Analytics Dashboard Design
+
+---
+
 # PRD Section 17: Error Handling, Logging & Monitoring
 
 ## 1. Executive Summary

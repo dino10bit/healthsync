@@ -1,3 +1,18 @@
+## Dependencies
+
+### Core Dependencies
+- `01-context-vision.md` - Context & Vision
+- `06-technical-architecture.md` - Technical Architecture, Security & Compliance
+- `20-compliance-regulatory.md` - Legal & Regulatory Compliance
+
+### Strategic / Indirect Dependencies
+- `07-apis-integration.md` - APIs & Integration Requirements
+- `17-error-handling.md` - Error Handling, Logging & Monitoring
+- `18-backup-recovery.md` - Backup & Disaster Recovery
+- `36-user-privacy-settings.md` - User Privacy Controls & Settings
+
+---
+
 # PRD Section 19: Data Security & Privacy Policies
 
 ## 1. Executive Summary

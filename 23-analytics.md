@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `01-context-vision.md` - Context & Vision
+- `11-monetization.md` - Monetization, Pricing & Business Model
+
+### Strategic / Indirect Dependencies
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `19-security-privacy.md` - Data Security & Privacy Policies
+- `41-metrics-dashboards.md` - Analytics Dashboard Design
+
+---
+
 # PRD Section 23: Analytics & Metrics Tracking
 
 ## 1. Executive Summary

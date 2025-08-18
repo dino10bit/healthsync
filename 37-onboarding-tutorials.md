@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `08-ux-onboarding.md` - UX, Onboarding & Support
+- `24-user-support.md` - Help Center, Support & Feedback
+
+### Strategic / Indirect Dependencies
+- `10-ux-feedback.md` - UX, Feedback & Ratings
+- `23-analytics.md` - Analytics & Metrics Tracking
+- `42-customer-feedback.md` - Customer Feedback Loop
+
+---
+
 # PRD Section 37: Onboarding Guides & Tutorials
 
 ## 1. Executive Summary
@@ -49,7 +62,7 @@ This specification details the technical architecture for delivering tutorials, 
 ## 5. KPIs / Success Metrics
 
 *   **Tutorial Completion Rate:** An analytics event, `tutorial_completed`, will be fired when a user finishes an interactive guide.
-*   **Help Center Article Effectiveness:** A "Was this helpful?" (Yes/No) poll at the bottom of each article. Articles with a <70% "Yes" rating will be prioritized for a rewrite.
+*   **Help Center Article Effectiveness:** A "Was this helpful?" (Yes/No) poll at the bottom of each article.
 *   **Support Ticket Deflection:** We will track the number of tickets created for topics that have a corresponding "Top 5" tutorial. A successful tutorial should lead to a measurable decrease in these tickets.
 *   **Feature Adoption Post-Tutorial:** Correlating the viewing of a feature's tutorial with the subsequent adoption of that feature by the user.
 

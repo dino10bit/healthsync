@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- `07-apis-integration.md` - APIs & Integration Requirements
+- `30-sync-mapping.md` - Source-Destination Sync Mapping
+- `24-user-support.md` - Help Center, Support & Feedback
+
+### Strategic / Indirect Dependencies
+- `09-ux-configuration.md` - UX, Configuration & Settings
+- `17-error-handling.md` - Error Handling, Logging & Monitoring
+- `31-historical-data.md` - Historical Data Handling
+
+---
+
 # PRD Section 32: Platform-Specific Limitations
 
 ## 1. Executive Summary
@@ -52,5 +66,5 @@ This section documents workarounds that can be communicated to users in FAQ arti
 
 ## 6. Optional Visuals / Diagram Placeholders
 *   **[Flowchart] Limitation Discovery Process:** A flowchart showing the process from "New API Error Pattern Detected" to "Limitation ID Created" and "User Communication Matrix Updated."
-*   **[Mockup] Dynamic UI for Limitations:** A mockup showing the Sync Configuration screen with Garmin grayed out as a destination, with a clear tooltip explaining why.
+*   **[Mockup] Dynamic UI for Limitations:** A mockup of the Sync Configuration screen with Garmin grayed out as a destination, with a clear tooltip explaining why.
 *   **[Table] User Communication Matrix:** A full, detailed version of the table in Section 4.

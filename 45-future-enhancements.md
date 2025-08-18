@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+
+### Strategic / Indirect Dependencies
+- `01-context-vision.md` - Context & Vision
+- `03-competitive-analysis.md` - Competitive & SWOT Analysis
+- `11-monetization.md` - Monetization, Pricing & Business Model
+- `42-customer-feedback.md` - Customer Feedback Loop
+
+---
+
 # PRD Section 45: Future Enhancements & Roadmap Expansion
 
 ## 1. Executive Summary

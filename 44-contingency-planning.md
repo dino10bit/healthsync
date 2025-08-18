@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `21-risks.md` - Risks, Constraints & Mitigation
+- `25-release-management.md` - Release Management & Versioning
+- `22-maintenance.md` - Maintenance & Post-Launch Operations (SRE)
+
+### Strategic / Indirect Dependencies
+- `19-security-privacy.md` - Data Security & Privacy Policies
+- `24-user-support.md` - Help Center, Support & Feedback
+
+---
+
 # PRD Section 44: Contingency & Rollback Plans
 
 ## 1. Executive Summary

@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `24-user-support.md` - Help Center, Support & Feedback
+- `33-third-party-integration.md` - Third-Party Integration Strategy
+- `43-changelog.md` - Changelog & Release Notes
+
+### Strategic / Indirect Dependencies
+- `10-ux-feedback.md` - UX, Feedback & Ratings
+- `41-metrics-dashboards.md` - Analytics Dashboard Design
+
+---
+
 # PRD Section 42: Customer Feedback Collection & Analysis
 
 ## 1. Executive Summary

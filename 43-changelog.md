@@ -1,3 +1,15 @@
+## Dependencies
+
+### Core Dependencies
+- `25-release-management.md` - Release Management & Versioning
+
+### Strategic / Indirect Dependencies
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `22-maintenance.md` - Maintenance & Post-Launch Operations (SRE)
+- `42-customer-feedback.md` - Customer Feedback Loop
+
+---
+
 # PRD Section 43: Changelog & Version History
 
 ## 1. Executive Summary

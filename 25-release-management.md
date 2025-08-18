@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `14-qa-testing.md` - QA & Testing Strategy
+- `22-maintenance.md` - Maintenance & Post-Launch Operations (SRE)
+
+### Strategic / Indirect Dependencies
+- `43-changelog.md` - Changelog & Release Notes
+- `44-contingency-planning.md` - Contingency & Rollback Plans
+- `42-customer-feedback.md` - Customer Feedback Loop
+
+---
+
 # PRD Section 25: Release Management & Versioning
 
 ## 1. Executive Summary

@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- `08-ux-onboarding.md` - UX, Onboarding & Support
+- `09-ux-configuration.md` - UX, Configuration & Settings
+- `14-qa-testing.md` - QA & Testing Strategy
+
+### Strategic / Indirect Dependencies
+- `02-product-scope.md` - Product Scope & Requirements
+- `20-compliance-regulatory.md` - Legal & Regulatory Compliance
+- `24-user-support.md` - Help Center, Support & Feedback
+
+---
+
 # PRD Section 28: Accessibility (a11y)
 
 ## 1. Executive Summary

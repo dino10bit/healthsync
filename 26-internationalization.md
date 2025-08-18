@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `27-localization.md` - Localization Strategy
+
+### Strategic / Indirect Dependencies
+- `02-product-scope.md` - Product Scope & Requirements
+- `08-ux-onboarding.md` - UX, Onboarding & Support
+- `09-ux-configuration.md` - UX, Configuration & Settings
+- `14-qa-testing.md` - QA & Testing Strategy
+
+---
+
 # PRD Section 26: Internationalization & Multi-Language Support
 
 ## 1. Executive Summary

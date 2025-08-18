@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `08-ux-onboarding.md` - UX, Onboarding & Support
+- `09-ux-configuration.md` - UX, Configuration & Settings
+- `12-trial-subscription.md` - Trial, Subscription & Paywall
+- `17-error-handling.md` - Error Handling, Logging & Monitoring
+
+### Strategic / Indirect Dependencies
+- `14-qa-testing.md` - QA & Testing Strategy
+
+---
+
 # PRD Section 38: UX Flow & Interaction Diagrams
 
 ## 1. Executive Summary

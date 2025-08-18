@@ -1,3 +1,18 @@
+## Dependencies
+
+### Core Dependencies
+- `03-competitive-analysis.md` - Competitive & SWOT Analysis
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `42-customer-feedback.md` - Customer Feedback Loop
+
+### Strategic / Indirect Dependencies
+- `07-apis-integration.md` - APIs & Integration Requirements
+- `21-risks.md` - Risks, Constraints & Mitigation
+- `25-release-management.md` - Release Management & Versioning
+- `32-platform-limitations.md` - Platform-Specific Limitations
+
+---
+
 # PRD Section 33: Third-Party Integration Strategy
 
 ## 1. Executive Summary

@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- None
+
+### Strategic / Indirect Dependencies
+- `02-product-scope.md` - Product Scope, Personas & MVP Definition
+- `03-competitive-analysis.md` - Competitive Analysis & Differentiation
+- `11-monetization.md` - Monetization, Pricing & Business Model
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `45-future-enhancements.md` - Future Enhancements & Roadmap Expansion
+
+---
+
 # PRD Section 1: Context & Vision
 
 ## 1. Executive Summary

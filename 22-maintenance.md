@@ -1,3 +1,18 @@
+## Dependencies
+
+### Core Dependencies
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `17-error-handling.md` - Error Handling, Logging & Monitoring
+- `24-user-support.md` - Help Center, Support & Feedback
+- `44-contingency-planning.md` - Contingency & Rollback Plans
+
+### Strategic / Indirect Dependencies
+- `21-risks.md` - Risks, Constraints & Mitigation
+- `25-release-management.md` - Release Management & Versioning
+- `41-metrics-dashboards.md` - Analytics Dashboard Design
+
+---
+
 # PRD Section 22: Maintenance & Post-Launch Operations (SRE)
 
 ## 1. Executive Summary

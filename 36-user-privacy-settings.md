@@ -1,3 +1,16 @@
+## Dependencies
+
+### Core Dependencies
+- `19-security-privacy.md` - Data Security & Privacy Policies
+- `20-compliance-regulatory.md` - Legal & Regulatory Compliance
+
+### Strategic / Indirect Dependencies
+- `18-backup-recovery.md` - Backup & Disaster Recovery
+- `23-analytics.md` - Analytics & Metrics Tracking
+- `34-data-export.md` - Data Export Feature
+
+---
+
 # PRD Section 36: User Privacy Controls & Settings
 
 ## 1. Executive Summary

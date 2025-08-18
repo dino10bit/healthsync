@@ -1,3 +1,18 @@
+## Dependencies
+
+### Core Dependencies
+- `01-context-vision.md` - Context & Vision
+- `02-product-scope.md` - Product Scope, Personas & MVP Definition
+- `03-competitive-analysis.md` - Competitive Analysis & Differentiation
+
+### Strategic / Indirect Dependencies
+- `12-trial-subscription.md` - Free Trial & Subscription Flow
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `23-analytics.md` - Analytics & Metrics Tracking
+- `41-metrics-dashboards.md` - Analytics Dashboard Design
+
+---
+
 # PRD Section 11: Monetization, Pricing & Business Model
 
 ## 1. Executive Summary

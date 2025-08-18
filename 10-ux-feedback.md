@@ -1,3 +1,17 @@
+## Dependencies
+
+### Core Dependencies
+- `24-user-support.md` - Help Center, Support & Feedback
+- `42-customer-feedback.md` - Customer Feedback Collection & Analysis
+
+### Strategic / Indirect Dependencies
+- `01-context-vision.md` - Context & Vision
+- `13-roadmap.md` - Roadmap, Milestones & Timeline
+- `23-analytics.md` - Analytics & Metrics Tracking
+- `45-future-enhancements.md` - Future Enhancements & Roadmap Expansion
+
+---
+
 # PRD Section 10: User Feedback & Iteration Loops
 
 ## 1. Executive Summary

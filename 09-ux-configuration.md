@@ -1,3 +1,20 @@
+## Dependencies
+
+### Core Dependencies
+- `02-product-scope.md` - Product Scope, Personas & MVP Definition
+- `04-user-stories.md` - User Stories
+- `32-platform-limitations.md` - Platform-Specific Limitations
+- `36-user-privacy-settings.md` - User Privacy Controls & Settings
+- `38-ux-flow-diagrams.md` - UX Flow & Interaction Diagrams
+
+### Strategic / Indirect Dependencies
+- `05-data-sync.md` - Data Synchronization & Reliability
+- `10-ux-feedback.md` - UX Feedback & Iteration Loops
+- `28-accessibility.md` - Accessibility (WCAG)
+- `40-error-recovery.md` - Error Recovery & Troubleshooting
+
+---
+
 # PRD Section 9: User Configuration Options
 
 ## 1. Executive Summary
