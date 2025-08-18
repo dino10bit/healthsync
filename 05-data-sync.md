@@ -21,18 +21,19 @@
 
 This document provides the detailed technical and functional specification for SyncWell's core data synchronization engine. The primary objective is to create a highly reliable, secure, and efficient system for transferring health data. The success of the entire application is fundamentally dependent on the robustness and integrity of this engine.
 
-This document serves as a blueprint for the **solo developer**, detailing the specific architecture, algorithms, and policies required. A well-defined sync engine is the most critical and complex component of the project; this specification aims to de-risk its development by providing a clear and comprehensive plan.
+This document serves as a blueprint for the **product and engineering teams**, detailing the specific architecture, algorithms, and policies required. A well-defined sync engine is the most critical and complex component of the project; this specification aims to de-risk its development by providing a clear and comprehensive plan.
 
 ## 2. Sync Engine Architecture
 
-The data synchronization engine is a server-side, event-driven system built on AWS, as defined in `06-technical-architecture.md`. This architecture is designed for massive scale and reliability.
+The data synchronization engine is a server-side, event-driven system built on AWS, as defined in `06-technical-architecture.md`. This architecture is designed for massive scale and reliability, separating real-time and historical syncs into "hot" and "cold" paths.
 
-*   **`API Gateway` + `Request Lambda`:** The public-facing entry point. The mobile app calls this endpoint to request a sync. The Lambda validates the request and places a job message into the SQS queue.
-*   **`SQS Queue`:** A durable, scalable queue that acts as a buffer between the request and the actual processing. This ensures that sync jobs are never lost.
-*   **`Worker Lambdas`:** The heart of the engine. A fleet of serverless functions that pull jobs from the queue and execute them. Each worker is responsible for the full lifecycle of a single sync job.
+*   **`API Gateway` + `Request Lambda`:** The public-facing entry point. The mobile app calls this endpoint to request a sync. The Lambda validates the request and places a job message into the appropriate SQS queue (hot or cold path).
+*   **`SQS Queues`:** Two primary, durable queues (one for real-time, one for historical) act as a buffer, ensuring sync jobs are never lost.
+*   **`Worker Lambdas`:** The heart of the engine. A fleet of serverless functions that pull jobs from the queues and execute them. Each worker is responsible for the full lifecycle of a single sync job.
 *   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration (Fitbit, Garmin, etc.) must implement.
 *   **`Smart Conflict Resolution Engine`:** A core component within the worker lambda that analyzes data from the source and destination to intelligently resolve conflicts before writing.
 *   **`DynamoDB`:** Used to store essential state required for the sync process, such as `lastSyncTime` for each connection and user-defined conflict resolution rules.
+*   **`S3 for Dead-Letter Queues`**: Messages that fail processing repeatedly are sent to a Dead-Letter Queue (DLQ) and stored in an S3 bucket for analysis and manual reprocessing.
 
 ## 3. The Synchronization Algorithm (Server-Side Delta Sync)
 
@@ -70,7 +71,7 @@ This engine is a core feature of SyncWell, designed to eliminate data duplicatio
 
 *   **Delta Syncing:** The system must only fetch data that has changed since the last successful sync for a given connection.
 *   **Conflict Resolution:** The system must implement the "Source Priority" conflict resolution strategy.
-*   **Manual & Automatic Triggers:** The sync process can be initiated either manually by the user or automatically by the `SyncScheduler`.
+*   **Manual & Automatic Triggers:** The sync process can be initiated either manually by the user or automatically on a schedule.
 *   **Clear Status Feedback:** The UI must clearly show the `lastSyncTime` for each connection.
 
 ### Non-Functional Requirements
@@ -82,19 +83,85 @@ This engine is a core feature of SyncWell, designed to eliminate data duplicatio
     *   **P95 Job Completion Time:** A typical delta sync job must be fully processed and completed in **<15 seconds**.
 *   **API Rate Limiting Compliance:** Each `DataProvider` in the worker lambdas must implement a robust exponential backoff and retry mechanism to gracefully handle third-party rate limits.
 *   **Security:** All communication between the mobile app and the backend, and between the backend and third-party APIs, must use TLS 1.2+.
+*   **Infrastructure Reproducibility**: The entire backend infrastructure must be defined as code (IaC) using Terraform to ensure consistency and disaster recovery capabilities.
 
 ## 7. Risk Analysis & Mitigation
-
-(This section remains largely the same but is included for completeness.)
 
 | Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
 | :--- | :--- | :--- | :--- | :--- |
 | **R-13** | A third-party API returns unexpected or malformed data, causing sync failures. | High | High | Implement robust error handling and data validation in each `DataProvider`. Use a "dead letter queue" for failed sync jobs to allow for manual inspection and reprocessing. |
-| **R-14**| Frequent changes in platform background execution policies break automatic syncing. | High | Medium | Provide clear, user-friendly instructions on how to disable battery optimization. Implement a fallback mechanism where the app syncs upon being opened if a background sync fails. |
+| **R-14**| A third-party API changes in a backward-incompatible way, breaking an integration. | Medium | High | Implement contract testing and versioned `DataProviders`. Have a robust monitoring and alerting system to detect an increase in API errors quickly. |
 | **R-15**| The complexity of handling different data formats and API quirks is underestimated. | Medium | High | Start with a small number of well-documented APIs. Build a modular and extensible architecture. Write comprehensive unit tests for the data mapping logic in each provider. |
+| **R-16**| User OAuth tokens are leaked or compromised, leading to unauthorized data access. | Low | Critical | Implement strict IAM roles for backend services. Encrypt all secrets at rest. Follow security best practices for credential handling and never log sensitive tokens. |
 
-## 8. Optional Visuals / Diagram Placeholders
+## 8. Visual Diagrams
 
-*   **[Diagram] Sync Engine Architecture:** A component diagram showing the `SyncScheduler`, `JobQueue`, `SyncProcessor`, and their interactions.
-*   **[Diagram] Sequence Diagram for Delta Sync:** A detailed sequence diagram showing the step-by-step algorithm, including the calls to the source and destination providers.
-*   **[Diagram] State Machine for a Sync Job:** A state diagram showing the lifecycle of a job as it moves through the queue (e.g., Queued, In Progress, Retrying, Succeeded, Failed).
+### Sync Engine Architecture
+```mermaid
+graph TD
+    subgraph User Device
+        MobileApp
+    end
+    subgraph AWS
+        APIGateway[API Gateway]
+        RequestLambda[Request Lambda]
+        HotQueue[SQS - Hot Path]
+        ColdQueue[SQS - Cold Path]
+        HotWorkers[Worker Lambdas - Hot]
+        ColdWorkers[Worker Lambdas - Cold]
+        DynamoDB[DynamoDB]
+        DLQ_S3[S3 for DLQ]
+    end
+    subgraph External
+        ThirdPartyAPIs[3rd Party Health APIs]
+    end
+
+    MobileApp -- Sync Request --> APIGateway
+    APIGateway --> RequestLambda
+    RequestLambda -- Places Job --> HotQueue
+    RequestLambda -- Places Job --> ColdQueue
+    HotWorkers -- Polls --> HotQueue
+    ColdWorkers -- Polls --> ColdQueue
+    HotWorkers -- Read/Write --> DynamoDB
+    ColdWorkers -- Read/Write --> DynamoDB
+    HotWorkers -- Syncs Data --> ThirdPartyAPIs
+    ColdWorkers -- Syncs Data --> ThirdPartyAPIs
+    HotQueue -- On Failure --> DLQ_S3
+    ColdQueue -- On Failure --> DLQ_S3
+```
+
+### Sequence Diagram for Delta Sync
+```mermaid
+sequenceDiagram
+    participant Worker as Worker Lambda
+    participant DynamoDB as DynamoDB
+    participant SourceAPI as Source API
+    participant DestAPI as Destination API
+    participant SQS as SQS Queue
+
+    Worker->>DynamoDB: Get lastSyncTime
+    activate Worker
+    DynamoDB-->>Worker: Return lastSyncTime
+    Worker->>SourceAPI: Fetch data since lastSyncTime
+    SourceAPI-->>Worker: Return new data
+    Worker->>DestAPI: Fetch overlapping data
+    DestAPI-->>Worker: Return destination data
+    Worker->>Worker: Run Conflict Resolution
+    Worker->>DestAPI: Write final data
+    DestAPI-->>Worker: Success
+    Worker->>DynamoDB: Update lastSyncTime
+    DynamoDB-->>Worker: Success
+    Worker->>SQS: Delete Job Message
+    deactivate Worker
+```
+
+### State Machine for a Sync Job
+```mermaid
+graph TD
+    A[Queued] --> B{In Progress};
+    B --> C[Succeeded];
+    B --> D{Retrying};
+    D --> B;
+    D --> E[Failed];
+    E --> F[Moved to DLQ];
+```

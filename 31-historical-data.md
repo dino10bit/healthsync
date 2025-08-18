@@ -16,61 +16,112 @@
 
 ## 1. Executive Summary
 
-This document provides the detailed technical and functional specification for the **Historical Data Sync** feature, a core premium offering for SyncWell. This feature allows paying users to backfill their health data, providing a powerful incentive to upgrade and a key tool for users migrating from other ecosystems.
+This document provides the detailed technical specification for the **Historical Data Sync** feature, a core premium offering. This feature allows paying users to backfill their health data, providing a powerful incentive to upgrade.
 
-Given its complexity and potential for high API usage, this feature must be implemented with extreme care. This specification details the job queue architecture, the state management, the "circuit breaker" safety pattern, and the user experience required to deliver this feature reliably and safely.
+Given its complexity and potential for high API usage, this feature is built using a robust, isolated backend architecture. This specification details the **dual-queue, "hot/cold" architecture**, the job state management in DynamoDB, and the "circuit breaker" safety pattern required to deliver this feature reliably.
 
-## 2. Historical Sync Architecture
+## 2. Historical Sync Architecture (Backend)
 
-The historical sync feature will be built on top of the core sync engine but will use a separate, dedicated job queue to ensure operational priority.
+The historical sync feature uses a separate, dedicated "cold path" on the backend to ensure these long-running, low-priority jobs do not interfere with normal, real-time syncs.
 
-*   **Job Queues:** The app will maintain two sync job queues in its local database:
-    1.  **`P0_REALTIME_QUEUE`:** The default queue for normal, forward-looking delta syncs.
-    2.  **`P1_HISTORICAL_QUEUE`:** A lower-priority queue used exclusively for historical backfill jobs.
-*   **Processing Logic:** The `SyncProcessor` will always fully drain the `P0_REALTIME_QUEUE` before it begins processing any jobs from the `P1_HISTORICAL_QUEUE`. This ensures that the user's most recent data is always prioritized.
-*   **Job Data Model:** Each job in the `P1_HISTORICAL_QUEUE` will have the following structure:
-    ```typescript
-    interface HistoricalJob {
-      jobId: string;
-      sourceProvider: string;
-      destinationProvider: string;
-      dataType: string;
-      startDate: string; // The start of the user's selected range
-      endDate: string;   // The end of the user's selected range
-      cursorDate: string; // The specific day currently being processed
-      status: 'PENDING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED';
-      errorCount: number;
-      lastAttempt: string;
+*   **Dual SQS Queues:**
+    1.  **`hot-queue`:** For normal, real-time syncs. Processed immediately.
+    2.  **`cold-queue`:** A separate queue for historical backfill jobs.
+*   **Dual Lambda Worker Fleets:**
+    *   **`hot-workers`:** A fleet of Lambdas with short timeouts, high concurrency, and auto-scaling, dedicated to draining the `hot-queue` as fast as possible.
+    *   **`cold-workers`:** A separate fleet of Lambdas configured with **long timeouts** (e.g., up to 15 minutes). These workers process the `cold-queue` and are designed to handle long-running API calls for historical data.
+*   **DynamoDB Job State Table:** A dedicated DynamoDB table tracks the state of every historical sync job. This table is the "source of truth" for the job's progress.
+    ```json
+    // Item in the HistoricalJobs DynamoDB Table
+    {
+      "jobId": "uuid-123", // Partition Key
+      "userId": "user-abc",
+      "source": "fitbit",
+      "destination": "strava",
+      "startDate": "2021-01-01",
+      "endDate": "2023-01-01",
+      "cursorDate": "2022-10-27", // The day currently being processed
+      "status": "PAUSED",
+      "errorCount": 6,
+      "lastAttempt": "2023-10-27T14:30:00Z"
     }
     ```
 
 ## 3. Job State Machine & "Circuit Breaker"
 
-Each historical sync job will operate as a formal state machine.
+The `cold-worker` Lambdas orchestrate the job as a state machine, with the state being persisted in DynamoDB.
 
-*   **`PENDING`**: The initial state when a job is created.
-*   **`RUNNING`**: The `SyncProcessor` is actively fetching and writing data for the `cursorDate`.
-    *   *Transition:* On success, the `cursorDate` is decremented by one day, and the state remains `RUNNING`. If `cursorDate` < `startDate`, the job transitions to `COMPLETED`.
-    *   *Transition:* On a recoverable API error (e.g., 503), the `errorCount` is incremented. The job remains `RUNNING` for the next attempt.
-*   **`PAUSED` (Circuit Breaker):** If the `errorCount` for a job exceeds **5** within a **1-hour** window, the job transitions to `PAUSED`. The `SyncProcessor` will not attempt to run this job again for at least **4 hours**. This prevents our app from hammering a third-party API that is having issues.
-*   **`FAILED`**: If a non-recoverable error occurs (e.g., invalid credentials, 401 error), or if a job fails more than 20 times in total, it transitions to `FAILED`. It will not be retried automatically.
-*   **`COMPLETED`**: The job has successfully processed all data from `endDate` back to `startDate`.
+1.  A `cold-worker` picks up a message from the `cold-queue`. The message contains the `jobId`.
+2.  The worker reads the full job details from the DynamoDB table using the `jobId`.
+3.  It fetches data for the `cursorDate`.
+4.  On success, it **updates the `cursorDate` in DynamoDB** (e.g., decrements by one day). If the job is not yet complete, it **places a new message for the same `jobId` back into the `cold-queue`** to process the next day.
+5.  If a recoverable error occurs, the worker increments the `errorCount` in DynamoDB.
+6.  **Circuit Breaker:** If the `errorCount` exceeds a threshold (e.g., 5 failures in 1 hour), the worker sets the job `status` to **`PAUSED`** in DynamoDB and does **not** re-queue the job. A separate scheduled task will periodically scan for `PAUSED` jobs and re-activate them after a cool-down period.
+7.  If a non-recoverable error occurs (e.g., 401 invalid credentials), the worker sets the `status` to **`FAILED`**.
 
 ## 4. Dynamic UI & User Experience
 
-The UI must be intelligent and transparent to manage user expectations.
+The UI is decoupled from the processing logic and gets its information by polling the backend.
 
-*   **Dynamic Configuration:** The date pickers on the configuration screen must be dynamically constrained based on the selected source platform's known limitations.
-    *   **Example:** If the user selects "Garmin" as the source and "Steps" as the data type, the `startDate` picker will be disabled for any date more than 2 years in the past. A small message will appear: "Garmin only provides access to the last 2 years of step data."
-*   **Progress Visualization:** The progress screen will provide rich, real-time feedback:
-    *   A progress bar showing `(endDate - cursorDate) / (endDate - startDate)`.
-    *   Text status: "Syncing data for October 26, 2023..."
+*   **Status Polling:** While the historical sync progress screen is open, the mobile app will poll a new API Gateway endpoint every 5-10 seconds. This endpoint reads the job's status directly from the DynamoDB job state table and returns it to the client.
+*   **Progress Visualization:** The UI uses the polled data to provide rich, real-time feedback:
+    *   A progress bar calculated from the `startDate`, `endDate`, and `cursorDate`.
+    *   Text status: "Syncing data for {{cursorDate}}..."
     *   If `status` is `PAUSED`: "Syncing is temporarily paused because the {{sourceProvider}} servers are busy. We will automatically resume in a few hours."
-    *   If `status` is `FAILED`: "Syncing has failed due to an error: {{error_message}}. Please try again or contact support."
-*   **User Controls:** For any job in the `PAUSED` or `FAILED` state, "Retry Now" and "Cancel Job" buttons will become visible, giving the user control over the process.
+*   **User Controls:** For jobs in a `PAUSED` or `FAILED` state, the user can tap "Retry Now". This calls an endpoint that immediately changes the job's status back to `PENDING` and places it in the `cold-queue`.
 
-## 5. Optional Visuals / Diagram Placeholders
-*   **[Diagram] Dual Queue Architecture:** A diagram showing the P0 (Realtime) and P1 (Historical) queues feeding into the `SyncProcessor`, illustrating the priority system.
-*   **[Diagram] Historical Job State Machine:** A formal state machine diagram illustrating the states and transitions described in Section 3.
-*   **[Mockup] Dynamic UI:** A mockup of the configuration screen showing the `startDate` picker being disabled and the explanatory message appearing when Garmin is selected.
-*   **[Mockup] Progress Screen States:** A set of mockups showing the progress screen in its different states: `RUNNING`, `PAUSED`, and `FAILED`, including the relevant user controls.
+## 5. Visual Diagrams
+
+### Dual Queue Backend Architecture
+```mermaid
+graph TD
+    subgraph Mobile App
+        A[Initiate Historical Sync]
+    end
+    subgraph AWS Backend
+        B[API Gateway]
+        C[SQS Hot Queue]
+        D[SQS Cold Queue]
+        E[Hot Workers]
+        F[Cold Workers]
+        G[DynamoDB State Table]
+    end
+    A --> B
+    B -- Places job details --> G
+    B -- Places job message --> D
+    E --> C
+    F -- Polls --> D
+    F -- Reads/Writes Job State --> G
+    F -- Re-queues job for next chunk --> D
+```
+
+### Historical Job State Machine
+```mermaid
+graph TD
+    A[Pending] --> B{Running};
+    B -- Chunk Success, More to Do --> A;
+    B -- Chunk Success, All Done --> C[Completed];
+    B -- Recoverable Error --> D{Retry};
+    D -- Retries < 5 --> B;
+    D -- Retries > 5 --> E[Paused (Circuit Breaker)];
+    E -- After Cooldown --> A;
+    B -- Unrecoverable Error --> F[Failed];
+```
+
+### UI Status Polling
+```mermaid
+sequenceDiagram
+    participant User
+    participant MobileApp as Mobile App
+    participant Backend as SyncWell Backend
+    participant DB as DynamoDB State Table
+
+    User->>MobileApp: Views Progress Screen
+    loop Every 10 seconds
+        MobileApp->>Backend: GET /jobs/{jobId}/status
+        Backend->>DB: Read item for jobId
+        DB-->>Backend: Return job state
+        Backend-->>MobileApp: Return job state (JSON)
+        MobileApp->>User: Update Progress Bar & Status Text
+    end
+```

@@ -15,78 +15,87 @@
 
 ## 1. Executive Summary
 
-This document provides the detailed technical and functional specification for the **Data Export** feature in SyncWell. This feature empowers users with true ownership of their health data by allowing them to export it from any connected source into standard, open file formats (FIT, TCX, GPX, CSV). This is a key power-user feature that aligns with our principles of transparency and user control.
+This document provides the detailed specification for the **Data Export** feature. This feature empowers users with true ownership of their data by allowing them to export it into standard, open file formats (FIT, TCX, GPX, CSV).
 
-This specification details a robust architecture for fetching, formatting, and exporting data, including a streaming approach for handling large datasets and a validation suite to ensure format compliance. For the **solo developer**, this provides a clear plan for implementing a complex feature reliably and efficiently.
+To ensure reliability and performance, especially for large exports, this feature is built on an **asynchronous, backend-driven architecture**. This specification details the process of offloading export jobs to the backend, processing them reliably, and notifying the user when the export is ready for download.
 
-## 2. Data Export Architecture
+## 2. Data Export Architecture (Backend-Driven)
 
-The export feature will be built on a modular, streaming architecture to ensure performance and reliability.
+The export process is offloaded to the backend to avoid performance, battery, and reliability issues associated with on-device processing.
 
-*   **`ExportManager`:** This is the high-level service that the UI interacts with. It manages the export job, coordinates the other components, and provides progress updates to the UI.
-*   **Streaming Fetch:** The `ExportManager` will not fetch the entire date range of data at once. It will request data from the `DataProvider` in smaller, sequential chunks (e.g., one month at a time) to keep memory usage low.
-*   **`Exporter` (Interface):** A standardized interface for all file formatters.
-    ```typescript
-    interface Exporter {
-      // Returns the file extension (e.g., "fit", "csv")
-      getFileExtension(): string;
-
-      // Initializes the export, e.g., writing file headers
-      beginExport(tempFilePath: string): Promise<void>;
-
-      // Appends a chunk of canonical data to the file
-      appendData(data: CanonicalData[]): Promise<void>;
-
-      // Finalizes the export, e.g., writing footers or calculating checksums
-      endExport(): Promise<string>; // Returns the final file path
-    }
-    ```
-*   **Concrete Implementations:** `FitFileExporter`, `TcxFileExporter`, `GpxExporter`, `CsvExporter`. Each will encapsulate the logic and any third-party libraries needed for its specific format.
+1.  **Initiation (Mobile):** The user selects the source, date range, and format in the mobile app and taps "Start Export."
+2.  **Job Request (Mobile -> Backend):** The app sends a request to a new `/export` endpoint on our API Gateway.
+3.  **Queueing (Backend):** The backend creates a new export job entry in a DynamoDB table and places a corresponding job message into a dedicated **`export-queue` in SQS**.
+4.  **Processing (Backend):** A dedicated fleet of **`export-workers` (AWS Lambdas)** polls the `export-queue`. A worker processes the job by:
+    *   Fetching all the required data from the third-party API.
+    *   Using the `Exporter` modules to format the data into the requested file type(s).
+    *   Compressing the files into a single `.zip` archive.
+5.  **Storage & Notification (Backend):**
+    *   The worker uploads the final `.zip` file to a secure, temporary folder in **S3**.
+    *   The worker updates the job's status to `COMPLETED` in DynamoDB and adds the secure, time-limited S3 download URL.
+    *   The backend sends a **push notification** to the user.
+6.  **Download (Mobile):** The user taps the notification, and the mobile app downloads the file from the S3 URL.
 
 ## 3. User Experience & Workflow
 
-1.  **Configuration:** The user navigates to "Export Data," selects the source app, data type(s), and a date range.
-2.  **Initiation:** The user taps "Start Export."
-3.  **Process:**
-    *   The `ExportManager` starts the job on a **background thread**.
-    *   The UI displays a progress bar and a message, e.g., "Exporting... Fetching data for January 2023."
-    *   The `ExportManager` iterates through the date range in monthly chunks, fetching data and passing it to the appropriate `Exporter`'s `appendData` method.
-    *   The UI progress bar updates as each chunk is processed.
-4.  **Completion:**
-    *   Once complete, the `ExportManager`'s `endExport` method finalizes the file.
-    *   A local push notification is sent to the user: "Your data export is complete and ready to save."
-    *   Tapping the notification (or the "Save File" button in the UI) opens the native OS Share Sheet, allowing the user to save the file to any destination.
+The user experience is designed to be simple and asynchronous.
+
+1.  **Configuration:** The user configures their export in the app.
+2.  **Initiation:** After tapping "Start Export," the UI updates to show a persistent status indicator: *"Your export is being prepared. We will notify you when it's ready to download."*
+3.  **Wait:** The user can now safely close the app. The export is processed on the backend.
+4.  **Completion Notification:** Once the export is complete, the user receives a push notification: *"Your data export is ready to download."*
+5.  **Download:** Tapping the notification opens the app to a screen where they can download the `.zip` file. The download link will be valid for a limited time (e.g., 24 hours).
 
 ## 4. File Format Specifications
 
-| Data Type | Supported Formats | Technical Notes & Validation |
+| Data Type | Supported Formats | Notes |
 | :--- | :--- | :--- |
-| **Activities** | **FIT, TCX, GPX, CSV**| **FIT** is the primary, richest format. The `FitFileExporter` will use the official Garmin FIT SDK definitions. **GPX** will only be generated for activities with GPS data. **CSV** will be a summary view. |
-| **Daily Steps**| **CSV** | A CSV with columns: `date` (YYYY-MM-DD), `step_count`. |
-| **Weight** | **CSV** | A CSV with columns: `timestamp` (ISO 8601), `weight_kg`, `body_fat_percentage`, `bmi`. |
-| **Sleep** | **CSV** | A CSV with columns: `start_time`, `end_time`, `total_duration_seconds`, `duration_asleep_seconds`, `duration_in_rem_seconds`, etc. |
+| **Activities** | **FIT, TCX, GPX, CSV**| **FIT** is the primary, richest format. |
+| **Daily Steps**| **CSV** | Columns: `date`, `step_count`. |
+| **Weight** | **CSV** | Columns: `timestamp`, `weight_kg`, `body_fat_percentage`. |
+| **Sleep** | **CSV** | Columns: `start_time`, `end_time`, `duration_asleep_seconds`, etc. |
 
 ## 5. Export Validation Suite (QA)
 
-To ensure the integrity of our exported files, a formal validation process will be implemented.
+To ensure the integrity of our exported files, a validation process will be implemented in the **backend's CI/CD pipeline**.
 
-*   **Golden Files:** A "golden set" of sample `.fit`, `.tcx`, and `.gpx` files, generated by SyncWell, will be checked into the source code repository. These files are known to be valid.
-*   **CI/CD Validation Job:** A new job will be added to the CI/CD pipeline that runs on every release branch.
-    *   **Step 1:** The job will use an official command-line validation tool (e.g., Garmin's `FitCSVTool.jar` for FIT files) to validate the "golden files." This ensures we don't have regressions in our file generation logic.
-    *   **Step 2:** The job will also perform round-trip testing. It will take a golden file, run it through SyncWell's *importer* to create a canonical object, and then run that object through the *exporter*. The resulting file is then compared against the original golden file.
+*   **Golden Files:** A "golden set" of sample `.fit`, `.tcx`, etc., files will be stored in the repository.
+*   **CI/CD Validation Job:** On every deployment, a job will run an official command-line tool (e.g., Garmin's `FitCSVTool.jar`) to validate that the files generated by the backend `Exporter` modules are compliant with their respective standards.
 
 ## 6. Risk Analysis & Mitigation
 
-(This section remains largely the same but is included for completeness.)
-
 | Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
 | :--- | :--- | :--- | :--- | :--- |
-| **R-91** | The generated export files are corrupt or do not comply with the format standards. | **Low** | **High** | The formal "Export Validation Suite" in the CI/CD pipeline is the primary mitigation. This provides automated, continuous validation of our file generation logic. |
-| **R-92** | Exporting a very large date range causes the app to run out of memory and crash. | **Low** | **Medium** | The streaming architecture (fetching and writing in monthly chunks) is designed specifically to mitigate this risk by keeping memory usage flat regardless of the export size. |
-| **R-93** | The chosen third-party library for a specific file format is abandoned or has a critical bug. | **Low** | **Medium** | The `Exporter` interface acts as an adapter. This makes it much easier to swap out one underlying library for another without changing the rest of the export logic. |
+| **R-91** | The generated export files are corrupt or non-compliant. | **Low** | **High** | The formal "Export Validation Suite" in the backend CI/CD pipeline is the primary mitigation. |
+| **R-92** | An export job for a very large date range exceeds the maximum Lambda execution time (15 mins). | **Medium** | **Medium** | The `export-worker` will be designed to be pausable and resumable. It will process data in chunks and, if nearing the timeout, will save its state and re-queue itself to continue where it left off. |
+| **R-93** | The temporary S3 bucket for downloads is misconfigured, allowing public access. | **Low** | **Critical**| All S3 bucket policies will be defined in Terraform and will be set to private by default. Download links will be pre-signed, time-limited URLs, which provide secure, temporary access. |
 
-## 7. Optional Visuals / Diagram Placeholders
-*   **[Diagram] Export Architecture:** A component diagram showing the `ExportManager`, the `DataProvider`, and the different `Exporter` interface implementations.
-*   **[Sequence Diagram] Streaming Export:** A sequence diagram illustrating the process of exporting a large date range, showing the loop of fetching a chunk, appending it to the file, and updating the UI.
-*   **[Mockup] Export Progress:** A mockup of the UI showing the export in progress with a progress bar and a "Cancel" button.
-*   **[Diagram] CI/CD Validation Flow:** A flowchart showing the "Export Validation Suite" job, including the validation and round-trip testing steps.
+## 7. Visual Diagrams
+
+### Backend-Driven Export Architecture
+```mermaid
+graph TD
+    subgraph Mobile App
+        A[Initiate Export]
+        H[Download File]
+    end
+    subgraph AWS Backend
+        B[API Gateway]
+        C[SQS Export Queue]
+        D[Export Workers (Lambda)]
+        E[DynamoDB Job Table]
+        F[S3 for Exports]
+        G[Push Notification Service]
+    end
+
+    A --> B;
+    B -- Job Request --> C;
+    B -- Creates Job --> E;
+    D -- Polls --> C;
+    D -- Fetches/Formats Data --> D;
+    D -- Uploads File --> F;
+    D -- Updates Status & URL --> E;
+    D -- Triggers Push --> G;
+    G --> H;
+    H -- Uses URL from Backend --> F;
+```

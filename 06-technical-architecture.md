@@ -23,9 +23,9 @@
 
 ## 1. Executive Summary
 
-This document specifies the complete technical architecture for the SyncWell application. The architecture is designed to be robust, scalable, secure, and maintainable, adhering to modern software engineering principles while being pragmatic for implementation by a **solo developer**.
+This document specifies the complete technical architecture for the SyncWell application. The architecture is designed for high availability, massive scalability, and robust security to support **1 million Daily Active Users (DAU)**. It adheres to modern cloud-native principles and is engineered for a high-performing product team.
 
-We will use the **C4 Model** as a framework to describe the architecture at different levels of detail, ensuring clarity for both technical and non-technical stakeholders. The core architectural principles are **modularity** (via a Provider-based pattern), **security by design**, and **privacy by default**. This document is the master blueprint for the system's construction.
+We will use the **C4 Model** as a framework to describe the architecture. The core architectural principles are **modularity**, **security by design**, and **privacy by default**. A key feature is its **hybrid sync model**, which combines a serverless backend for cloud-to-cloud syncs with on-device processing for integrations requiring native SDKs (e.g., Apple HealthKit). This approach maximizes reliability and performance.
 
 ## 2. Architectural Model (C4)
 
@@ -33,73 +33,181 @@ We will use the **C4 Model** as a framework to describe the architecture at diff
 
 This diagram shows the system in its environment, illustrating its relationship with users and external systems.
 
-*   **System:** The **SyncWell Application System**.
-*   **Users:**
-    *   **Health-Conscious User:** Interacts with the SyncWell Mobile App to configure syncs and manage their data connections.
-*   **External Systems:**
-    *   **Third-Party Health Platforms** (e.g., Garmin Connect, Fitbit API, Strava API): The primary systems SyncWell reads data from and writes data to.
-    *   **Platform App Stores** (Apple App Store, Google Play Store): Used for application distribution and handling in-app purchases.
-    *   **Platform Notification Services** (APNs, FCM): Used to send push notifications.
-    *   **Platform Backup Services** (iCloud, Google Drive Auto-Backup): Used for backing up user settings.
+```mermaid
+graph TD
+    subgraph SyncWell Ecosystem
+        A[Mobile App]
+        B[Backend]
+    end
+
+    subgraph Users
+        C[Health-Conscious User]
+    end
+
+    subgraph External Systems
+        D[Third-Party Health Platforms (Cloud APIs)]
+        D2[On-Device Health Platforms (HealthKit)]
+        E[Platform App Stores]
+        F[Platform Notification Services]
+    end
+
+    C -- Manages health data via --> A
+    A -- Initiates syncs --> B
+    A -- Reads/Writes data from/to --> D2
+    A -- Distributes through --> E
+    B -- Orchestrates syncs --> A
+    B -- Fetches and pushes data to --> D
+    B -- Sends push notifications via --> F
+```
 
 ### Level 2: Containers
 
-This level zooms into the system boundary to show the high-level technical containers designed to operate at massive scale.
+This level zooms into the system boundary to show the high-level technical containers.
+
+```mermaid
+graph TD
+    subgraph "AWS Cloud"
+        APIGateway[API Gateway]
+        RequestLambda[Request Lambda]
+        SQSQueue[SQS Queue]
+        WorkerLambda[Worker Lambdas]
+        DynamoDB[DynamoDB for Metadata]
+        SecretsManager[Secrets Manager for Tokens]
+        S3[S3 for DLQ]
+    end
+
+    subgraph "User's Device"
+        MobileApp[Mobile Application w/ KMP Module]
+    end
+
+    MobileApp -- HTTPS Request --> APIGateway
+    APIGateway -- Invokes --> RequestLambda
+    RequestLambda -- Puts job --> SQSQueue
+    WorkerLambda -- Polls for jobs --> SQSQueue
+    WorkerLambda -- Reads/writes config --> DynamoDB
+    WorkerLambda -- Gets credentials --> SecretsManager
+    SQSQueue -- Sends failed messages --> S3
+```
 
 1.  **Mobile Application (Kotlin Multiplatform & Native UI)**
-    *   **Description:** The user-facing application that runs on the user's iOS or Android device. It contains the UI and presentation logic.
-    *   **Technology:** Kotlin Multiplatform (KMP) for shared business logic, with native UI for each platform (SwiftUI for iOS, Jetpack Compose for Android).
+    *   **Description:** The user-facing application that runs on iOS or Android. It handles all user interactions and is a key component of the hybrid sync model.
+    *   **Technology:** Kotlin Multiplatform (KMP) for shared business logic, SwiftUI for iOS, Jetpack Compose for Android.
     *   **Responsibilities:**
         *   Provides a high-performance, native User Interface.
-        *   Delegates all business logic to the shared KMP module.
-        *   Securely stores user credentials (OAuth tokens) on the device.
-        *   Initiates sync requests to the backend.
+        *   Manages the OAuth 2.0 authentication flow and securely transmits tokens to the backend.
+        *   For device-native integrations (Apple HealthKit), it performs the data reading and writing directly on the device, orchestrated by the backend.
+        *   Initiates all sync requests to the backend.
 2.  **Scalable Serverless Backend (AWS)**
-    *   **Description:** An event-driven, serverless backend on Amazon Web Services, designed to handle millions of users and high request volumes. It does **not** store or process any raw user health data.
-    *   **Technology:** AWS Lambda, Amazon API Gateway, Amazon SQS, Amazon DynamoDB.
+    *   **Description:** An event-driven, serverless backend on AWS that orchestrates all syncs. It does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
+    *   **Technology:** AWS Lambda, API Gateway, SQS, DynamoDB, AWS Secrets Manager.
     *   **Responsibilities:**
-        *   **API Gateway:** Provides a secure, scalable HTTP endpoint for the mobile app to request syncs.
-        *   **Request Lambda:** A function that validates sync requests and places them as jobs into an SQS queue. This provides a fast (<50ms) response to the user.
-        *   **SQS Queue:** A highly durable and scalable queue that decouples the request from the processing. It ensures that no sync jobs are lost, even during massive load spikes.
-        *   **Worker Lambdas:** A fleet of functions that pull jobs from the SQS queue and execute the actual third-party API calls. This is where the core sync logic, including the **Conflict Resolution Engine**, runs.
-        *   **DynamoDB:** A NoSQL database for storing user configuration, sync state, and metadata with single-digit millisecond latency.
+        *   **Orchestration:** Manages the state and triggers for all sync jobs.
+        *   **Cloud-to-Cloud Syncs:** Worker Lambdas execute the full sync logic for cloud-based APIs (e.g., Fitbit, Garmin).
+        *   **Secure Credential Storage:** Securely stores and manages user OAuth tokens for third-party APIs using AWS Secrets Manager.
+        *   **Metadata Storage:** Uses DynamoDB to store user configuration, sync state, and job metadata.
 
 ### Level 3: Components (Inside the KMP Shared Module)
 
-This level zooms into the shared business logic module that runs on both iOS and Android.
+The KMP module contains the core business logic. This code can be executed **on the device** (for HealthKit syncs) or **on the backend** (if using a JVM-based Lambda), maximizing code reuse.
 
-*   **`SyncManager`:** The core orchestrator for the sync process.
-*   **`ConflictResolutionEngine`:** A dedicated component for detecting and resolving data conflicts based on user-defined rules.
-*   **`ProviderManager`:** Responsible for loading and managing the different `DataProvider` modules.
-*   **`DataProvider (Interface)`:** A standardized interface for all third-party integrations (Fitbit, Garmin, etc.).
-*   **`ApiClient`:** A robust HTTP client for making API calls to the SyncWell backend and third-party services.
-*   **`SecureStorageWrapper`:** An abstraction over the native Keychain/Keystore for securely storing and retrieving sensitive data like OAuth tokens.
-*   **`SettingsRepository`:** Manages user settings and preferences, storing them on-device.
+*   **`SyncManager`:** Orchestrates the sync process based on instructions from the backend.
+*   **`ConflictResolutionEngine`:** Detects and resolves data conflicts.
+*   **`ProviderManager`:** Manages the different `DataProvider` modules.
+*   **`DataProvider (Interface)`:** A standardized interface for all third-party integrations.
+*   **`ApiClient`:** Handles HTTP calls to backend and third-party services.
+*   **`SecureStorageWrapper`:** Abstraction for Keychain/Keystore (on-device) and AWS Secrets Manager (on-backend).
 
-## 3. Technology Stack & Rationale
+## 3. Sync Models: A Hybrid Architecture
+
+To ensure reliability and accommodate platform constraints, SyncWell uses a hybrid architecture.
+
+### Model 1: Cloud-to-Cloud Sync
+
+*   **Use Case:** Syncing between two cloud-based services (e.g., Fitbit to Strava).
+*   **Flow:**
+    1.  Mobile app initiates the sync via API Gateway.
+    2.  The backend worker lambda handles the entire process: fetches data from the source API, resolves conflicts, and writes data to the destination API.
+    3.  **Advantage:** Highly reliable and does not depend on the user's device being online.
+
+```mermaid
+graph TD
+    A[Mobile App] -- 1. Initiate --> B[Backend]
+    B -- 2. Fetch --> C[Source Cloud API]
+    C -- 3. Data --> B
+    B -- 4. Write --> D[Destination Cloud API]
+    D -- 5. Success --> B
+```
+
+### Model 2: Device-to-Cloud Sync
+
+*   **Use Case:** Syncing from a device-native source to a cloud destination (e.g., Apple Health to Fitbit).
+*   **Flow:**
+    1.  A background task on the mobile app reads data from the native source (e.g., HealthKit).
+    2.  The mobile app sends this data to a secure endpoint on our backend.
+    3.  A backend worker lambda receives the data and writes it to the destination cloud API.
+    4.  **Advantage:** The only way to get data out of sandboxed, on-device sources like HealthKit.
+
+```mermaid
+graph TD
+    A[Mobile App / HealthKit] -- 1. Read Data --> B[Mobile App]
+    B -- 2. Upload Data --> C[Backend]
+    C -- 3. Write --> D[Destination Cloud API]
+```
+
+### Model 3: Cloud-to-Device Sync
+
+*   **Use Case:** Syncing from a cloud source to a device-native destination (e.g., Garmin to Apple Health).
+*   **Flow:**
+    1.  The backend worker lambda fetches data from the source cloud API.
+    2.  The worker stores the data temporarily in a secure, time-limited cache (e.g., Redis or a signed S3 URL).
+    3.  The backend sends a silent push notification to the user's device.
+    4.  The mobile app, upon receiving the notification, wakes up, downloads the data from the temporary cache, and writes it to the native destination (e.g., HealthKit).
+    5.  **Advantage:** Allows writing data to on-device stores reliably.
+
+```mermaid
+graph TD
+    A[Backend] -- 1. Fetch --> B[Source Cloud API]
+    B -- Data --> A
+    A -- 2. Send Push --> C[Mobile App]
+    C -- 3. Wakes up & Writes --> D[Mobile App / HealthKit]
+```
+
+## 4. Technology Stack & Rationale
 
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
-| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Performance & Native Feel.** KMP allows sharing the complex business logic (sync engine, data providers) in a common Kotlin codebase while building the UI with the platform's native tools (SwiftUI, Jetpack Compose). This provides the best possible performance and user experience, which is critical for a high-reliability app. |
-| **State Management** | **Platform-Native (SwiftUI/Combine, Jetpack Compose/Flow)** | **Simplicity & Performance.** By using native UI, we can leverage the modern, reactive state management patterns built into each platform. This reduces complexity and avoids the overhead of a third-party state management library. |
-| **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** SQLDelight is a KMP-native library that generates type-safe Kotlin APIs from SQL statements. This ensures data consistency and reliability across both iOS and Android. |
-| **Serverless Backend** | **AWS (Lambda, SQS, DynamoDB)** | **Massive Scalability & Reliability.** This event-driven architecture is the industry standard for building highly scalable applications. It is designed to meet our targets of 1M DAU and 10,000 RPS, offering virtually unlimited scale with pay-per-use cost efficiency. |
-| **API Client** | **Ktor** | **Kotlin-Native & Multiplatform.** Ktor is a modern, coroutine-based HTTP client that is designed for Kotlin and works seamlessly in a KMP environment, simplifying the networking code. |
+| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) across the mobile app and potentially the backend (if using a JVM Lambda), while maintaining native UI performance. |
+| **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
+| **Serverless Backend** | **AWS (Lambda, SQS, DynamoDB)** | **Massive Scalability & Reliability.** Event-driven architecture to meet our 1M DAU target with pay-per-use cost efficiency. |
+| **Secure Credential Storage** | **AWS Secrets Manager** | **Security & Manageability.** Provides a secure, managed service for storing, rotating, and retrieving the OAuth tokens required by our backend workers. |
+| **Infrastructure as Code** | **Terraform** | **Reproducibility & Control.** Manages all cloud infrastructure as code, ensuring our setup is version-controlled and easily reproducible. |
+| **CI/CD**| **GitHub Actions** | **Automation & Quality.** Automates the build, test, and deployment of the mobile app and backend services. |
 
-## 4. Security & Compliance
+## 5. Security & Compliance
 
 ### Security Measures
 
-*   **Data Encryption in Transit:** All network traffic will use TLS 1.2+. **Certificate Pinning** will be implemented for all API calls made from the mobile app to our own backend services to prevent Man-in-the-Middle (MitM) attacks.
-*   **Data Encryption at Rest:** Sensitive credentials will be stored exclusively in the native Keychain (iOS) and Keystore (Android). The local Realm database will be encrypted.
-*   **Code Security:** Production builds will be obfuscated. A dependency scanner (Snyk) will be run in the CI/CD pipeline to check for vulnerabilities.
+*   **Data Encryption in Transit:** All network traffic will use TLS 1.2+. Certificate Pinning will be implemented for API calls to our own backend.
+*   **Data Encryption at Rest:**
+    *   **Backend:** User OAuth tokens are encrypted and stored in AWS Secrets Manager.
+    *   **On-Device:** Any sensitive data is stored in the native Keychain (iOS) and Keystore (Android).
+*   **Code Security:** Production builds will be obfuscated. Dependency scanning (Snyk) will be integrated into the CI/CD pipeline.
 
 ### Compliance
-*   The architecture is designed to facilitate compliance with GDPR, CCPA, and all relevant platform policies by ensuring that no personal health data is ever stored on servers controlled by SyncWell. All user data processing happens on the user's device.
+*   User health data is only ever processed **ephemerally in memory** on our backend servers during an active sync job. It is **never persisted** on our systems.
+*   For integrations requiring native SDKs (like Apple Health), data processing occurs on the user's device, further enhancing privacy. This hybrid model is designed to be compliant with GDPR, CCPA, and other privacy regulations.
 
-## 5. Optional Visuals / Diagram Placeholders
+## 6. Open-Source Tools and Packages
 
-*   **[Diagram] C4 Level 1: System Context Diagram.** A visual representation of the system, its user, and the external systems it interacts with.
-*   **[Diagram] C4 Level 2: Containers Diagram.** A diagram showing the Mobile Application and the Serverless Backend, with arrows indicating the key interactions.
-*   **[Diagram] C4 Level 3: Components Diagram.** A detailed diagram of the components inside the Mobile Application, showing how the UI, State Management, Sync Engine, and Providers are structured.
-*   **[Diagram] Secure Data Flow:** A diagram illustrating how an OAuth token is received from a third-party service, passed to the Secure Storage component, and then retrieved by a DataProvider, without ever being stored in plain text or leaving the device.
+| Category | Tool/Package | Description |
+| :--- | :--- | :--- |
+| **Mobile Development** | **Kotlin Multiplatform** | Core framework for sharing code. |
+| | **SwiftUI / Jetpack Compose** | Modern UI frameworks for iOS and Android. |
+| | **SQLDelight** | KMP library for type-safe SQL. |
+| | **Ktor** | KMP HTTP client. |
+| **Backend Development** | **AWS Lambda, SQS, DynamoDB** | Core AWS services for the serverless backend. |
+| | **Terraform** | Infrastructure as Code tool. |
+| **Testing** | **JUnit, XCTest, Turbine, MockK** | Standard libraries for testing Kotlin and Swift code. |
+| **CI/CD** | **GitHub Actions, Fastlane** | CI/CD platform and mobile release automation. |
+| **Static Analysis** | **Detekt, SwiftLint** | Static analysis tools for Kotlin and Swift. |
+| **Dependency Scanning** | **Snyk** | Vulnerability scanning for dependencies. |

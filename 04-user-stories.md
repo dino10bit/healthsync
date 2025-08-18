@@ -21,7 +21,7 @@
 
 This document translates the product scope into a backlog of actionable user stories for the SyncWell MVP. Each story is crafted from the perspective of our user personas and is accompanied by detailed, testable acceptance criteria. This structured approach ensures that development efforts are directly tied to user needs and business value.
 
-For the **solo developer**, this document serves as the primary "to-do list" for building the MVP. The detailed acceptance criteria provide a clear definition of "done" for each task, reducing ambiguity and ensuring the final product aligns with the strategic vision. The stories are prioritized according to the MoSCoW framework defined in `02-product-scope.md`.
+For the **engineering team**, this document serves as the primary "to-do list" for building the MVP. The detailed acceptance criteria provide a clear definition of "done" for each task, reducing ambiguity and ensuring the final product aligns with the strategic vision. The stories are prioritized according to the MoSCoW framework defined in `02-product-scope.md`.
 
 ## 2. MVP User Story Backlog
 
@@ -169,11 +169,11 @@ For the **solo developer**, this document serves as the primary "to-do list" for
         *   **Then** I am returned to the "Choose Source App" screen and a non-blocking toast/snackbar message appears, saying "Authorization failed. Please try again."
 
 *   **Technical Notes:**
-    *   OAuth 2.0 logic must securely handle the authorization code flow, storing tokens in the platform's secure storage (`Keystore` / `Keychain`).
+    *   OAuth 2.0 logic must securely handle the authorization code flow, and securely passing the authorization code to the SyncWell backend for token exchange and storage.
     *   The list of source/destination apps should be remotely configurable (e.g., via Firebase Remote Config) to allow for future additions without an app update.
     *   A state machine should manage the onboarding flow state (`AWAITING_SOURCE_AUTH`, `AWAITING_DESTINATION_AUTH`, etc.).
 *   **Non-Functional Requirements (NFRs):**
-    *   **Security:** OAuth tokens must be stored using platform-best-practice encryption (`Keystore`/`Keychain`). The `WebView` must be secure and prevent any script injection or credential snooping.
+    *   **Security:** The `WebView` must be secure and prevent any script injection or credential snooping.
     *   **Reliability:** The app must gracefully handle and parse common OAuth API errors (e.g., rate limiting, server errors, invalid scope) and present a user-friendly error message.
 *   **Stakeholder & Team Impact:**
     *   **Support Team:** Needs a detailed troubleshooting guide for common OAuth failures for each supported platform (e.g., "What to do if Fitbit login fails with a 'redirect_uri_mismatch' error?").
@@ -200,7 +200,7 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 *   **Security & Privacy:**
     *   OAuth 2.0 `state` parameter must be used to prevent CSRF attacks.
     *   The redirect URI must be strictly validated against a whitelist.
-    *   Access and refresh tokens must be stored encrypted at rest in the platform's most secure storage (`Keystore`/`Keychain`).
+    *   The mobile app handles the `authorization_code` and passes it to the backend. The backend exchanges it for tokens, which are never returned to the device, and stores them securely in AWS Secrets Manager.
     *   The in-app browser for OAuth must prevent JavaScript injection and credential snooping.
     *   Refer to: `19-security-privacy.md`, Section 4.1 "OAuth2 Security".
 *   **Accessibility (A11y):**
@@ -353,7 +353,7 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **And** a new "Sync Card" representing this configuration appears on the dashboard.
 
 *   **Technical Notes:**
-    *   The sync configuration should be stored locally in a structured database (e.g., SQLite/Room, Core Data).
+    *   The sync configuration is created on the client but the source of truth is stored in the backend database (DynamoDB). The client may cache this configuration for faster UI rendering.
     *   The configuration model must support multiple data types per sync connection.
     *   The logic for graying out invalid destinations must be robust and consider platform limitations (e.g., Garmin as write-only). See `32-platform-limitations.md`.
 *   **Non-Functional Requirements (NFRs):**
@@ -380,7 +380,7 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **R-26:** "Users misunderstand the configuration options." - Mitigation: The step-by-step flow and visual cues (grayed-out options) are designed to prevent user error.
 
 *   **Security & Privacy:**
-    *   No new credentials or sensitive data are handled here, but the configuration itself represents the user's intent to move data. This configuration must be stored securely on the device.
+    *   No new credentials or sensitive data are handled here, but the configuration itself represents the user's intent to move data. This configuration is stored in the backend database. The client is responsible for sending it over a secure channel (HTTPS).
 *   **Accessibility (A11y):**
     *   The multi-step progress indicator must be accessible.
     *   Multi-select and single-select lists must support screen readers and keyboard/switch controls. Grayed-out (disabled) options must be announced as such.
@@ -437,16 +437,16 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **And** the "Last Synced" timestamp on the dashboard is updated upon successful completion.
 
 *   **Technical Notes:**
-    *   This is the core feature. Implementation will use `WorkManager` on Android and `BGAppRefreshTask` on iOS.
-    *   The background task must be efficient and respect OS-imposed time limits.
-    *   It needs robust error handling and retry logic (e.g., exponential backoff for network errors). See `17-error-handling.md`.
-    *   The sync logic must be idempotent to prevent duplicate data entries on retries.
+    *   This is the core feature, and it is **orchestrated by the backend**.
+    *   The mobile app is responsible for initiating a sync request with the backend. For cloud-to-cloud syncs, the backend handles everything.
+    *   For syncs involving device-native SDKs (e.g., Apple HealthKit), the backend uses push notifications to trigger background processing on the device.
+    *   The core sync logic, error handling, and retry mechanisms reside on the backend workers, as detailed in `05-data-sync.md`.
 *   **Non-Functional Requirements (NFRs):**
-    *   **Resource Efficiency:** A full background sync cycle must consume a negligible amount of battery (<1% of total capacity). Data usage should be minimized by fetching only new data.
+    *   **Resource Efficiency:** For syncs involving the device (e.g., writing to HealthKit), the background task must be lightweight and consume negligible battery. For cloud-to-cloud syncs, there is no impact on the user's device.
     *   **Resilience:** The sync job must be able to recover from network loss and resume when connectivity is restored.
     *   **Idempotency:** The sync logic must be designed to prevent duplicate data entries in the destination, even if a job is run multiple times.
 *   **Stakeholder & Team Impact:**
-    *   **Developer:** This is the most complex piece of engineering. It requires deep knowledge of OS-specific background processing limitations.
+    *   **Developer:** This is the most complex piece of engineering. It requires deep knowledge of the backend serverless architecture (Lambda, SQS) and the various third-party API integrations.
     *   **Support Team:** Will need clear dashboards to see sync success/failure rates at an aggregate level to identify systemic platform issues.
 
 *   **UI/UX Considerations:**
@@ -459,7 +459,7 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   `event: background_sync_job_failed`, `property: error_code`
 
 *   **Associated Risks:**
-    *   Platform-specific restrictions on background tasks can make syncing unreliable. Mitigation: Thoroughly test on various OS versions and devices. Clearly communicate limitations to the user.
+    *   A third-party API outage or latency can cause syncs to fail or be delayed. Mitigation: Our backend has robust retry logic and a Dead-Letter Queue for failed jobs. We monitor partner API status.
 
 *   **Security & Privacy:**
     *   All API calls made during the background sync must use HTTPS.
@@ -520,7 +520,7 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **And** the refresh indicator disappears.
 
 *   **Technical Notes:**
-    *   The manual sync should reuse the same core sync logic as the background task but run in a foreground service to ensure it completes.
+    *   The manual sync sends a request to the backend to place a job in the high-priority `hot-queue`. The core sync logic is the same and is executed on the backend.
     *   The UI must be updated in real-time to reflect the state of the sync (syncing, success, failure).
 *   **Non-Functional Requirements (NFRs):**
     *   **Responsiveness:** The UI must remain responsive during a manual sync; the process must not block the main thread.
@@ -668,7 +668,7 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **And** if I tap "Cancel," the dialog is dismissed, and no change is made.
 
 *   **Technical Notes:**
-    *   The deletion should cascade, removing the configuration from the local database and cancelling any pending background jobs associated with it.
+    *   The deletion request is sent to the backend. The backend is responsible for deleting the configuration from DynamoDB and cancelling any associated pending jobs.
 *   **Non-Functional Requirements (NFRs):**
     *   **Data Integrity:** When a sync is deleted, all associated data and pending jobs must be irrevocably removed from the app's storage.
     *   **Performance:** The UI should update immediately (<500ms) after the user confirms the deletion.
@@ -689,7 +689,7 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   Accidental deletion. Mitigation: The confirmation dialog is the standard and effective mitigation for this.
 
 *   **Security & Privacy:**
-    *   The deletion of the configuration must be complete and irreversible from the device's storage.
+    *   The deletion of the configuration must be complete and irreversible from the backend database.
 *   **Accessibility (A11y):**
     *   The confirmation dialog must be fully accessible, with clear labels for the "Delete" and "Cancel" actions.
 *   **Internationalization (i18n) & Localization (l10n):**
@@ -840,7 +840,7 @@ For the **solo developer**, this document serves as the primary "to-do list" for
         *   **Then** I am shown a paywall screen explaining the feature and prompting me to upgrade (see US-17).
 
 *   **Technical Notes:**
-    *   This task must be run in a long-running foreground service to prevent the OS from killing it.
+    *   This task is offloaded to the backend. The mobile app sends a request, and the backend uses a dedicated `cold-queue` and long-running `cold-workers` to process the historical sync, as detailed in `31-historical-data.md`.
     *   The process must be pausable and resumable. State (e.g., the last successfully synced day) must be persisted.
     *   The process should fetch data in small chunks (e.g., one day at a time) to manage memory and network usage.
     *   Rate limiting for third-party APIs must be respected.
@@ -864,7 +864,7 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   `event: historical_sync_paused`
 
 *   **Associated Risks:**
-    *   High battery and data consumption. Mitigation: The warning dialog is essential. The process should also be configured to run only when the device is charging, if possible.
+    *   High API usage on third-party services. Mitigation: The backend will have rate-limiting and circuit-breaker patterns. The user will be warned that the sync may take a long time to complete on the backend.
 
 *   **Security & Privacy:**
     *   Same as US-05. The large volume of data being transferred increases the importance of secure transmission and handling. The process must be robust against leaving orphaned data if it fails mid-way.
@@ -1080,15 +1080,14 @@ For the **solo developer**, this document serves as the primary "to-do list" for
     *   **And** each application in the list has a "Disconnect" button.
     *   **When** I tap "Disconnect" for a specific app (e.g., Fitbit).
     *   **Then** a confirmation dialog appears, warning me that this will delete the connection and all associated sync configurations.
-    *   **And** if I confirm, the app makes an API call to revoke the OAuth token on the service provider's side.
-    *   **And** all stored credentials (access token, refresh token) for that app are permanently deleted from the device's secure storage.
+*   **And** if I confirm, the app sends a request to the SyncWell backend.
+    *   **And** the backend revokes the OAuth token with the service provider and deletes it from AWS Secrets Manager.
     *   **And** all sync configurations using that app are deleted from the dashboard.
     *   **And** the app is removed from the "Connected Apps" list.
 
 *   **Technical Notes:**
-    *   The de-authorization process must call the `revoke` endpoint of the respective service's API, if available.
-    *   Credentials must be deleted from `Keystore` / `Keychain`.
-    *   The deletion of sync configurations must cascade correctly in the local database.
+    *   The de-authorization request is sent to the backend.
+    *   The backend is responsible for calling the `revoke` endpoint and securely deleting the credentials from AWS Secrets Manager and all related configurations from DynamoDB.
 *   **Non-Functional Requirements (NFRs):**
     *   **Security:** The token revocation call must be implemented correctly. All local copies of credentials MUST be securely wiped.
     *   **Irreversibility:** The action must be final and complete. No trace of the connection or its credentials should remain within the app.
@@ -1111,7 +1110,7 @@ For the **solo developer**, this document serves as the primary "to-do list" for
 
 *   **Security & Privacy:**
     *   This is a critical security feature. It must ensure that the OAuth token revocation API call is made successfully.
-    *   It must perform a secure wipe of the credentials from the `Keystore`/`Keychain`. A simple deletion may not be sufficient; an overwrite or a specific API call might be needed to ensure it's unrecoverable.
+    *   It must trigger the backend to perform a secure wipe of the credentials from AWS Secrets Manager.
     *   Refer to: `19-security-privacy.md`, Section 5 "Credential Lifecycle Management".
 *   **Accessibility (A11y):**
     *   The confirmation dialog and "Disconnect" button must be fully accessible.

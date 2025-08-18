@@ -17,110 +17,106 @@
 
 ## 1. Executive Summary
 
-This document specifies the comprehensive data security and privacy architecture for the SyncWell application. In the health data space, trust is not a feature; it is the foundation of the entire product. This document codifies our commitment to protecting user data through a "privacy-first" design philosophy and a robust, multi-layered security strategy.
+This document specifies the comprehensive data security and privacy architecture for the SyncWell application. In the health data space, trust is the foundation of the product. This document codifies our commitment to protecting user data through a "privacy-first" design philosophy and a robust, multi-layered security strategy.
 
-This internal specification serves two purposes: it is a blueprint for the **solo developer** to implement state-of-the-art security measures, and it is a testament to **investors** of the project's deep commitment to responsible data stewardship. It is the technical foundation for the public-facing Privacy Policy.
+This internal specification is a blueprint for the **engineering team** to implement state-of-the-art security measures. It is the technical foundation for the public-facing Privacy Policy.
 
 ## 2. Guiding Principles
 
-*   **Data Minimization:** We only request and handle data that is absolutely essential for the app's functionality.
-*   **Privacy by Design:** Privacy is not an add-on. The system is architected from the ground up to protect user data.
-*   **Zero Server-Side Health Data:** This is our core privacy promise. SyncWell operates as a secure, on-device data conduit. We **never** see, store, or process user health data on our servers.
+*   **Data Minimization:** We only request and handle data that is absolutely essential.
+*   **Privacy by Design:** The system is architected from the ground up to protect user data.
+*   **Ephemeral Backend Processing:** This is our core privacy promise. SyncWell's backend services **never persist user health data**. Health data is only ever held in-memory on our backend servers during an active sync job and is immediately discarded.
 *   **Radical Transparency:** We are open and honest with users about what data we handle and why.
 
 ## 3. Threat Modeling & Countermeasures
 
-We will proactively model potential threats and define specific countermeasures.
-
 | Threat Scenario | Description | Countermeasure(s) |
 | :--- | :--- | :--- |
-| **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** Use the most secure, hardware-backed storage for OAuth tokens. <br>- **Jailbreak/Root Detection:** The app will detect if it is running on a compromised device and may limit functionality or warn the user. |
-| **Man-in-the-Middle (MitM) Attack** | An attacker on the same network intercepts traffic between the app and an API. | - **TLS 1.2+:** All network traffic is encrypted. <br>- **Certificate Pinning:** For calls to our own minimal backend, we will implement certificate pinning to ensure the app is talking to our legitimate server, not an imposter. |
-| **OAuth CSRF Attack** | An attacker tricks a user into clicking a malicious link that initiates the OAuth flow, attempting to link the user's health data to an attacker-controlled account. | - **State Parameter:** Use a unique, unguessable `state` parameter in the OAuth 2.0 authorization request and validate it upon callback. This is a requirement for **US-02**. |
-| **Insecure Data Storage** | Sensitive data (tokens, settings) is stored insecurely on the device's file system. | - **Keychain/Keystore for Tokens.** <br>- **Database Encryption:** The local Realm database containing user settings will be encrypted. |
-| **Data Leakage via Export** | A user inadvertently shares a CSV export or cloud backup containing sensitive health data with an untrusted party. | - **Clear Warnings:** The UI must clearly warn the user about the sensitivity of the data they are exporting (**US-21**, **US-28**).<br>- **No Auto-Sharing:** The app must use the OS Share Sheet and not send the data anywhere automatically. The user is in full control of the destination. |
-| **Vulnerable Third-Party Dependency** | A library used by the app has a known security vulnerability. | - **Automated Dependency Scanning:** The CI/CD pipeline will use Snyk to automatically scan for and flag known vulnerabilities in our dependencies. <br>- **Minimize Dependencies:** Keep the number of third-party libraries to a minimum. |
+| **Backend Server Compromise** | An attacker gains access to the backend infrastructure. | - **Strict IAM Roles & Least Privilege:** Lambda functions can only access the specific resources they need. <br>- **AWS Secrets Manager:** User OAuth tokens are stored encrypted in a dedicated, secure service. <br>- **VPC & Security Groups:** Backend services are isolated from the public internet where possible. <br>- **Regular Audits & Pen Testing:** Proactively identify and fix vulnerabilities. |
+| **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** Used for any on-device secrets. <br>- **Jailbreak/Root Detection:** The app will detect if it is running on a compromised device. |
+| **Man-in-the-Middle (MitM) Attack** | An attacker intercepts traffic between the app and the backend. | - **TLS 1.2+:** All network traffic is encrypted. <br>- **Certificate Pinning:** Implemented for calls to our own backend to ensure the app is talking to our legitimate server. |
+| **Insecure Data Storage** | Sensitive data is stored insecurely. | - **Backend:** All user tokens are stored encrypted in AWS Secrets Manager. <br>- **On-Device:** The local settings database is encrypted. |
+| **Vulnerable Third-Party Dependency** | A library used by the app or backend has a known security vulnerability. | - **Automated Dependency Scanning:** The CI/CD pipeline will use Snyk to scan for vulnerabilities. |
 
 ## 4. Data Flow & Classification
 
-To ensure clarity, we classify data into four categories:
+*   **Class 1: Health Data (In-Memory, Ephemeral):** The user's actual health data (steps, etc.).
+    *   **Flow:** Read from a source API -> Processed in-memory on a backend worker OR on-device -> Written to a destination API.
+    *   **Storage:** **NEVER** stored at rest on SyncWell servers. It is discarded from memory immediately after the job completes.
+*   **Class 2: Sensitive Credentials (OAuth Tokens):**
+    *   **Flow:** Acquired via a secure hybrid flow, where the mobile app gets an auth code and the backend exchanges it for tokens.
+    *   **Storage:** Stored encrypted at rest in **AWS Secrets Manager**, tightly controlled by IAM policies.
+*   **Class 3: Configuration & Metadata:** User sync settings and job metadata.
+    *   **Flow:** Settings are created by the user and sent to the backend.
+    *   **Storage:** Stored in DynamoDB. Does not contain any raw health data.
 
-*   **Class 1: Health Data (In-Memory):** The user's actual health and fitness data (steps, heart rate, etc.) as it is being processed.
-    *   **Flow:** Read from a source API -> Processed in-memory on-device -> Written to a destination API.
-    *   **Storage:** **NEVER** stored at rest by SyncWell, only held in memory during an active sync job.
-*   **Class 1a: Health Data (At Rest, External):** Health data that the user explicitly exports.
-    *   **Flow:** Read from source API -> Formatted on-device into a file (CSV/JSON) -> Handed off to OS Share Sheet (**US-28**) or uploaded to user's personal cloud storage (**US-21**).
-    *   **Storage:** The app may temporarily cache this data during the export process, but this cache must be securely wiped immediately after the export is complete. The app is not responsible for the data after the user has saved it externally.
-*   **Class 2: Sensitive Credentials:** OAuth 2.0 tokens.
-    *   **Flow:** Received from provider -> Stored in Keychain/Keystore -> Used for API calls.
-    *   **Storage:** Exclusively in the hardware-backed Keychain/Keystore.
-*   **Class 3: Configuration & Analytics Data:** User sync settings and anonymous analytics.
-    *   **Definition:** This includes sync configurations (source app, destination app, data types), user preferences (e.g., "run only while charging," sync priority), and anonymous analytics events (e.g., `onboarding_completed`, `sync_job_failed`).
-    *   **Flow:** Settings are created by the user and stored locally. Analytics are sent to Firebase.
-    *   **Storage:** Settings are stored in the encrypted on-device database. Analytics data is stored in Firebase.
-*   **Class 4: Health Data (In Notification):** Health data displayed in a push notification.
-    *   **Flow:** Data is read from the source, a summary is generated, and it is displayed in a local push notification (**US-24**).
-    *   **Storage:** The notification content may be stored temporarily by the operating system. Notifications should not contain highly sensitive data and should be cleared after being read.
+### Data Security Flow Diagram
+```mermaid
+graph TD
+    subgraph User Device
+        A[Mobile App]
+        B[Secure Keystore/Keychain]
+    end
+    subgraph AWS Backend
+        C[API Gateway]
+        D[Lambda Workers]
+        E[AWS Secrets Manager]
+        F[DynamoDB]
+    end
+    subgraph External
+        G[3rd Party APIs]
+    end
 
-### 4.1. OAuth2 Security
-As detailed in **US-02**, the OAuth 2.0 implementation must follow best practices:
-*   The `state` parameter will be used to prevent Cross-Site Request Forgery (CSRF).
-*   The `redirect_uri` will be strictly validated against a whitelist of allowed URIs.
-*   The in-app browser used for the flow must be secure (e.g., `SFSafariViewController` on iOS) and not allow for credential snooping or script injection.
+    A -- User Auth --> G
+    A -- Sends Auth Code to --> C
+    C --> D
+    D -- Exchanges Code for Tokens --> G
+    G -- Tokens --> D
+    D -- Stores Tokens in --> E
+    D -- Stores Config in --> F
+    D -- Gets Tokens from --> E
+    D -- Syncs Data with --> G
+```
 
 ## 5. Credential Lifecycle Management
-Per **US-13**, the lifecycle of user credentials must be managed securely.
-*   **Creation:** Tokens are acquired via the OAuth 2.0 flow.
-*   **Storage:** Tokens are stored exclusively in the hardware-backed `Keystore`/`Keychain`.
-*   **Deletion:** When a user de-authorizes an app, the app MUST:
-    1.  Make an API call to the service provider's `revoke` endpoint to invalidate the token on the server side.
-    2.  Perform a secure wipe of the access and refresh tokens from the local `Keystore`/`Keychain`. This action must be irreversible.
 
-## 6. Privacy Impact Assessment (PIA) Process
+The lifecycle of user credentials is managed by the backend to maximize security.
 
-Before any new feature that handles a new type of data is developed, a mini-PIA will be conducted by answering the following questions:
-1.  What new data is being collected/processed?
-2.  Why is it necessary for the feature to function?
-3.  How will it be secured in transit and at rest?
-4.  Will this data be shared with any new third parties?
-5.  How can the user control or delete this data?
-6.  Does this change require an update to the Privacy Policy?
+*   **Creation:** Tokens are acquired via the secure hybrid OAuth 2.0 flow detailed in `07-apis-integration.md`.
+*   **Storage:** Tokens are stored encrypted in **AWS Secrets Manager**.
+*   **Usage:** Worker Lambdas are granted temporary, role-based access to retrieve the tokens they need for a specific job.
+*   **Deletion:** When a user de-authorizes an app via the mobile client:
+    1.  The mobile app sends a "revoke" request to the SyncWell backend.
+    2.  The backend retrieves the token from Secrets Manager.
+    3.  The backend calls the service provider's `revoke` endpoint to invalidate the token.
+    4.  The backend permanently deletes the token from Secrets Manager.
 
-## 6. Pre-Launch Security Audit Checklist
+## 6. Backend and API Security
 
-The following audit, based on the OWASP MASVS, will be performed before the MVP launch.
+The backend is a core component and must be secured accordingly.
+
+*   **Authentication:** Communication between the mobile app and our backend API Gateway will be authenticated using short-lived JSON Web Tokens (JWTs) or a similar standard.
+*   **Authorization:** API Gateway and Lambda functions will use strict IAM roles, adhering to the principle of least privilege. A worker for Fitbit should not have access to Garmin tokens.
+*   **Network Security:** Services will be placed in a Virtual Private Cloud (VPC). Access to databases and secret stores will be restricted to services within the VPC, not exposed to the public internet.
+*   **Logging & Monitoring:** All API calls and backend activity will be logged (without sensitive data) and monitored for anomalous behavior using services like AWS CloudTrail and CloudWatch.
+
+## 7. Pre-Launch Security Audit Checklist
 
 ### Data Storage & Cryptography
-*   [ ] All sensitive data (tokens) is stored exclusively in the Keychain/Keystore.
-*   [ ] The local database is encrypted.
-*   [ ] No sensitive data is written to application logs.
-*   [ ] The app properly clears any sensitive data from memory after use.
+*   [ ] User OAuth tokens are stored encrypted in AWS Secrets Manager.
+*   [ ] The on-device database is encrypted.
+*   [ ] No sensitive data (tokens, health data) is written to application or backend logs.
 
 ### Network Communication
 *   [ ] All network traffic uses TLS 1.2+.
-*   [ ] Certificate pinning is correctly implemented for backend communication.
+*   [ ] Certificate pinning is implemented for mobile-to-backend communication.
+*   [ ] Backend services are properly isolated in a VPC.
 
 ### Authentication & Authorization
-*   [ ] OAuth 2.0 with PKCE is used for all cloud-based integrations.
-*   [ ] The OAuth `state` parameter is used and validated correctly (**US-02**).
-*   [ ] The token refresh mechanism is secure.
-*   [ ] The de-authorization process calls the provider's `revoke` endpoint and securely wipes local tokens (**US-13**).
-*   [ ] For integrations that require file access (e.g., Cloud Backup, **US-21**), the app requests the narrowest possible permission scope.
+*   [ ] Mobile-to-backend communication is authenticated (e.g., via JWTs).
+*   [ ] IAM roles follow the principle of least privilege.
+*   [ ] The de-authorization process is robust and deletes tokens from the backend.
 
 ### Code Quality & Build Settings
 *   [ ] The app is obfuscated in production builds.
-*   [ ] The app has jailbreak/root detection mechanisms.
-*   [ ] All third-party dependencies have been scanned for known vulnerabilities.
-
-## 7. Optional Visuals / Diagram Placeholders
-
-*   **[Diagram] Data Flow Diagram (DFD):** A detailed DFD showing the three classes of data and how they flow between the user, the mobile app, the secure storage, third-party APIs, and the minimal backend.
-*   **[Table] Threat Model:** A more detailed version of the table in Section 3, including risk ratings (Probability/Impact) for each threat.
-*   **[Checklist] Pre-Launch Security Audit:** A full, detailed checklist based on Section 6 that can be used to track the audit process.
-
-## 8. Backend and API Security (Future)
-While the MVP is designed to be client-only, future features like the Family Plan (**US-18**) will require a backend. This section will be expanded to include:
-*   API authentication and authorization (e.g., JWTs).
-*   Server hardening procedures.
-*   Database security.
-*   Protection against common web vulnerabilities (OWASP Top 10).
+*   [ ] All third-party dependencies (mobile and backend) have been scanned for known vulnerabilities.

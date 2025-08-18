@@ -15,78 +15,70 @@
 
 ## 1. Executive Summary
 
-This document specifies the strategy for data backup and disaster recovery for the SyncWell application. The primary objective is to ensure a seamless user experience when switching devices or reinstalling the app. While SyncWell's core privacy principle is to **never store user health data**, it does store user-created configuration data on the device. Protecting this data from loss is critical for user retention.
+This document specifies the strategy for data recovery and service resilience for the SyncWell application. With the move to a backend-centric architecture, our focus shifts from on-device backups to ensuring the high availability and durability of our backend services. The primary objective is to provide a seamless user experience when switching devices or reinstalling the app, with zero data loss and no need for manual reconfiguration.
 
-This strategy focuses on leveraging robust, automated, platform-native solutions (iCloud and Google Drive Auto Backup) to minimize development overhead and provide a reliable recovery experience. It also details the data schema and user experience for the restore process.
+This strategy leverages user authentication ("Sign in with Apple/Google") and the robust, managed services of AWS to ensure user data is always available and that our service can recover from a major disaster.
 
-## 2. Data to be Backed Up
+## 2. The Recovery Model: Backend as the Source of Truth
 
-The following non-sensitive, user-specific configuration data is considered critical for the backup process.
+The concept of "backing up" from the device is replaced by "recovering from the backend". The user's entire configuration is the "state" of their account on our backend.
 
-*   **Sync Configurations:** The user-defined rules for data synchronization (source, destination, data type).
-*   **App Settings:** User preferences (e.g., notification toggles).
-*   **Connected App Metadata:** The *names* of the apps the user has authorized (e.g., "fitbit"). This allows the UI to show which apps need re-authentication.
+*   **User Account:** Each user is identified by a stable, unique ID provided by "Sign in with Apple" or "Sign in with Google".
+*   **Backend State:** All data associated with this user ID is stored securely on our backend:
+    *   **Sync Configurations & App Settings:** Stored in DynamoDB.
+    *   **OAuth Tokens:** Encrypted and stored in AWS Secrets Manager.
 
-**Explicitly Out of Scope for Backup:**
-*   **OAuth Tokens:** For security reasons, sensitive credentials stored in the Keychain/Keystore are **not** included in the backup.
-*   Any personal health and fitness data.
-*   Detailed sync logs and application cache.
+This means a user can install the app on any device, sign in, and their experience will be instantly restored to its last-known state.
 
-## 3. Backup Data Schema & Versioning
+## 3. The New Device / Re-install Experience
 
-The backed-up data will be stored in a single, versioned JSON file (e.g., `syncwell_backup_v1.json`).
+The recovery process is now an integral part of the onboarding flow for a returning user.
 
-*   **Schema Versioning:** The file will contain a `schema_version` key (e.g., `"schema_version": 1`). When a new version of the app introduces a breaking change to the settings structure, this version number will be incremented.
-*   **Migration on Restore:** When the app restores a backup file, it will first check the `schema_version`. If the version is older than the current version, the app will run a migration function to update the restored settings to the new structure before applying them. This prevents crashes and data corruption from old backups.
+1.  **First Launch:** On first launch, the app presents the user with "Sign in with Apple" and "Sign in with Google" options.
+2.  **Authentication:** The user signs in with the same method they used originally. This provides the app with a stable user ID.
+3.  **State Recovery:** The app sends this user ID to the SyncWell backend. The backend returns the user's complete configuration (syncs, settings).
+4.  **Instant Setup:** The app UI populates with all the user's sync configurations.
+5.  **Seamless Syncing:** The user's OAuth tokens are already on the backend, so syncs can resume immediately without the user needing to re-authenticate with every third-party service. This is a critical improvement to the user experience.
 
-## 4. Backup & Recovery Strategy
+### New Device Recovery Flow
+```mermaid
+sequenceDiagram
+    participant User
+    participant MobileApp as Mobile App
+    participant AuthProvider as Apple/Google
+    participant Backend as SyncWell Backend
 
-### 4.1. Automated Cloud Backup (Primary Method)
+    User->>MobileApp: 1. Launches app on new device
+    MobileApp->>User: 2. Prompts for Sign In
+    User->>AuthProvider: 3. Signs in
+    AuthProvider-->>MobileApp: 4. Returns stable User ID
+    MobileApp->>Backend: 5. Request state for User ID
+    Backend-->>MobileApp: 6. Return all configurations
+    MobileApp->>User: 7. Displays fully configured app
+```
 
-*   **Mechanism:** Leverage the native, free, and automatic backup services:
-    *   **iOS:** iCloud Backup. Data will be stored in the `Application Support` directory.
-    *   **Android:** Auto Backup for Apps. The backup rules will be configured in `backup_rules.xml` to include only the `syncwell_backup_v1.json` file.
-*   **User Experience on Restore:**
-    1.  User installs SyncWell on a new device that has been restored from a cloud backup.
-    2.  On first launch, the app detects both that it is a fresh install AND that a `syncwell_backup_v1.json` file exists.
-    3.  The app displays a "Welcome Back!" screen: "We've restored your sync configurations. For your security, please re-connect your apps."
-    4.  The user is taken to the "Connected Apps" screen, which shows their previously connected apps but with a "Needs Re-authentication" status.
-    5.  The user taps each app to go through the quick OAuth login flow. Once re-authenticated, the syncs automatically become active again.
+## 4. Disaster Recovery Strategy (Backend)
 
-### 4.2. Manual Export/Import (Post-MVP)
+We define a "disaster" as a complete failure of our primary AWS region or the irreversible loss of data in our primary database.
 
-*   **Purpose:** To provide a manual, user-controlled backup method for users who disable cloud backups or want to share settings.
-*   **Export Flow:**
-    *   A user navigates to `Settings > Export Settings`.
-    *   The app generates the `syncwell_backup_v1.json` file.
-    *   The OS Share Sheet is presented, allowing the user to save the file to their device, cloud storage, or send it via email.
-*   **Import Flow:**
-    *   A user opens a `.json` backup file in another app (e.g., Files, email client) and uses "Open with..." to select SyncWell.
-    *   SyncWell parses the file, validates its schema version, and prompts the user: "Import settings from this file? This will overwrite your current configurations."
-    *   Upon confirmation, the settings are applied, and the user is guided to re-authenticate the necessary apps.
+*   **Recovery Time Objective (RTO):** < 24 hours. The time it takes to restore service after a disaster.
+*   **Recovery Point Objective (RPO):** < 5 minutes. The maximum amount of data loss, measured in time.
 
-## 5. Disaster Recovery Scenarios
+### Recovery Mechanisms:
 
-(This section remains largely the same but is included for completeness.)
+*   **Infrastructure:** The entire backend infrastructure is defined as code using **Terraform**. In the event of a full regional failure, we can redeploy the entire stack to a different AWS region from our version-controlled Terraform code.
+*   **Configuration Data (DynamoDB):**
+    *   **Point-in-Time Recovery (PITR):** We will enable PITR on our DynamoDB tables. This allows us to restore the table to any point in time in the preceding 35 days, with per-second precision. This protects against accidental data deletion or corruption. Our RPO of 5 minutes is easily met.
+    *   **Global Tables:** For a high-availability setup, we will use DynamoDB Global Tables, which provide a fully managed, multi-region, and multi-active database. This offers near-zero downtime for database-related issues.
+*   **Credentials (AWS Secrets Manager):**
+    *   Secrets Manager is a highly available, multi-AZ service by default.
+    *   For disaster recovery, we can replicate secrets to another region. When we redeploy our infrastructure, the new Lambdas will point to the secrets in the new region.
 
-| Scenario | Impact | Recovery Plan |
-| :--- | :--- | :--- |
-| **User gets a new phone.** | User needs to set up SyncWell on the new device without losing their configurations. | The automated cloud backup and restore flow is the primary solution. The user re-authenticates, and their setup is restored. |
-| **A bug corrupts local config data.** | User's settings are gone or the app crashes. | This is a code-level issue. A hotfix release is required. The manual import/export feature serves as a powerful recovery tool for affected users. |
-| **Cloud backup is disabled.** | User loses their phone and has no backup. | This is outside of SyncWell's control. The manual export feature provides a solution for these users to maintain their own backups. |
-
-## 6. Risk Analysis & Mitigation
-
-(This section remains largely the same but is included for completeness.)
+## 5. Risk Analysis & Mitigation
 
 | Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
 | :--- | :--- | :--- | :--- | :--- |
-| **R-52** | A change in the OS backup behavior breaks the automatic restore functionality. | Low | High | Stay up-to-date with the latest OS releases and developer documentation. Test the restore flow on new OS versions before they are publicly released. |
-| **R-105** | A user imports a malformed or malicious backup file, causing the app to crash or behave unexpectedly. | Medium | Medium | The import logic must perform strict validation on any imported file. It must check for the correct schema, data types, and version number. Any invalid file should be rejected with a user-friendly error message. |
-
-## 7. Optional Visuals / Diagram Placeholders
-
-*   **[Flowchart] New Device Restore UX:** A detailed flowchart illustrating the user experience described in section 4.1, from first launch to the "Welcome Back" screen to re-authentication.
-*   **[Diagram] Data Backup Scope:** A diagram visually separating what is backed up (Config JSON) from what is not (Keychain Tokens, Health Data).
-*   **[Code Snippet] Backup Schema:** A sample of the `syncwell_backup_v1.json` file structure.
-*   **[Wireframe] Manual Import/Export:** Wireframes for the "Export Settings" and "Import Confirmation" screens.
+| **R-50** | A bug in our code corrupts user configuration data in DynamoDB. | Low | High | Use DynamoDB Point-in-Time Recovery (PITR) to restore the database to a state before the corruption occurred. |
+| **R-51** | A full AWS regional outage makes our backend unavailable. | Low | Critical | Our Terraform scripts allow us to redeploy the entire infrastructure to a new region. Using DynamoDB Global Tables further mitigates this by providing live replicas in other regions. |
+| **R-52** | User loses access to their Apple/Google account. | Medium | Medium | This is largely outside of SyncWell's control. We must provide a clear path to contact support. We may need a support-driven process to re-associate a user's SyncWell data with a new Apple/Google account. |
+| **R-53** | A logic error causes us to accidentally delete a user's tokens from Secrets Manager. | Low | High | Access to delete secrets will be controlled by highly restrictive IAM policies. Deletion actions will trigger high-priority alerts. |
