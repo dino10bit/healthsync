@@ -25,47 +25,44 @@ This document serves as a blueprint for the **solo developer**, detailing the sp
 
 ## 2. Sync Engine Architecture
 
-The data synchronization engine will be a modular system composed of several key components that run on the user's device:
+The data synchronization engine is a server-side, event-driven system built on AWS, as defined in `06-technical-architecture.md`. This architecture is designed for massive scale and reliability.
 
-*   **`SyncScheduler`:** Responsible for scheduling background sync tasks with the operating system (using `WorkManager` on Android and `BGAppRefreshTask` on iOS). It will schedule tasks to run periodically (e.g., every 15 minutes) while respecting the OS's battery optimization policies.
-*   **`JobQueue`:** A persistent, on-device queue (using a local database like Realm or Hive) that stores all pending sync jobs. This ensures that sync requests are not lost if the app is closed or the device is restarted.
-*   **`SyncProcessor`:** The heart of the engine. It runs during a scheduled task, pulls jobs from the `JobQueue`, and orchestrates the synchronization process.
-*   **`DataProvider` (Interface):** A standardized interface that each third-party integration (Fitbit, Garmin, etc.) must implement. It defines the contract for methods like `fetchData(since:)` and `writeData()`.
-*   **`ConflictResolver`:** A module that implements the defined policies for handling data conflicts.
+*   **`API Gateway` + `Request Lambda`:** The public-facing entry point. The mobile app calls this endpoint to request a sync. The Lambda validates the request and places a job message into the SQS queue.
+*   **`SQS Queue`:** A durable, scalable queue that acts as a buffer between the request and the actual processing. This ensures that sync jobs are never lost.
+*   **`Worker Lambdas`:** The heart of the engine. A fleet of serverless functions that pull jobs from the queue and execute them. Each worker is responsible for the full lifecycle of a single sync job.
+*   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration (Fitbit, Garmin, etc.) must implement.
+*   **`Smart Conflict Resolution Engine`:** A core component within the worker lambda that analyzes data from the source and destination to intelligently resolve conflicts before writing.
+*   **`DynamoDB`:** Used to store essential state required for the sync process, such as `lastSyncTime` for each connection and user-defined conflict resolution rules.
 
-## 3. The Synchronization Algorithm (Delta Sync)
+## 3. The Synchronization Algorithm (Server-Side Delta Sync)
 
-The `SyncProcessor` will follow this algorithm to ensure efficient "delta" syncing (only fetching new data):
+The `Worker Lambda` will follow this algorithm for each job pulled from the SQS queue:
 
-1.  **Job Dequeue:** The processor pulls the next sync job from the queue (e.g., "Sync Steps from Fitbit to Google Fit").
-2.  **Get Last Sync Timestamp:** The processor retrieves the timestamp of the last successful sync for this specific job from local storage. Let's call this `lastSyncTime`. If it's the first sync, `lastSyncTime` is null.
-3.  **Fetch New Data:** It calls the `fetchData(since: lastSyncTime)` method on the source provider (e.g., `FitbitProvider`).
-4.  **Data Transformation:** The source provider returns data in the canonical format.
-5.  **Conflict Resolution:** For each data point, the `SyncProcessor` checks if there is overlapping data in the destination. If so, it consults the `ConflictResolver`.
-6.  **Write Data:** The `SyncProcessor` calls the `writeData()` method on the destination provider (e.g., `GoogleFitProvider`) with the processed, conflict-free data.
-7.  **Update Timestamp:** Upon successful completion of the entire job, the processor updates `lastSyncTime` for this job to the current time (`now()`).
-8.  **Job Complete:** The job is removed from the queue.
+1.  **Job Dequeue:** The worker receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
+2.  **Get State from DynamoDB:** The worker retrieves the `lastSyncTime` and the user's chosen `conflictResolutionStrategy` for this connection from DynamoDB.
+3.  **Fetch New Data:** It calls the `fetchData(since: lastSyncTime)` method on the source `DataProvider` (e.g., `FitbitProvider`).
+4.  **Fetch Destination Data:** To enable conflict resolution, it also fetches potentially overlapping data from the destination `DataProvider` for the same time period.
+5.  **Smart Conflict Resolution:** The `Smart Conflict Resolution Engine` is invoked. It compares the source and destination data and applies the user's chosen strategy (see below). It outputs a final, clean list of data points to be written.
+6.  **Write Data:** The worker calls the `writeData()` method on the destination provider with the conflict-free data.
+7.  **Update State in DynamoDB:** Upon successful completion, the worker updates the `lastSyncTime` for this connection in DynamoDB.
+8.  **Delete Job Message:** The worker deletes the job message from the SQS queue to mark it as complete.
 
-## 4. Data Conflict & Duplication Policy
+## 4. Smart Conflict Resolution Engine
 
-Handling data conflicts is critical for user trust.
+This engine is a core feature of SyncWell, designed to eliminate data duplication and loss. Pro users can choose from the following strategies:
 
-*   **Default Policy: "Source Priority"**
-    *   By default, SyncWell will operate on a "Source Priority" basis. If data for the same time period exists in both the source and destination, the data from the source will be written, potentially overwriting the destination's data if the destination API allows it. This is the simplest and most predictable behavior.
-*   **Duplicate Prevention:**
-    *   Before writing any data point, the `SyncProcessor` will make a best effort to query the destination provider for data points with an identical start time, end time, and data type.
-    *   If a seemingly identical data point is found, the write operation for that specific point will be skipped to prevent creating exact duplicates.
-*   **User-Configurable Strategy (Post-MVP):**
-    *   A future enhancement will be to allow users to choose their conflict resolution strategy on a per-sync basis:
-        *   `Prioritize Source` (Default)
-        *   `Prioritize Destination` (Never overwrite data in the destination)
-        *   `Merge` (For data types like activities, attempt to merge them. This is highly complex and a low priority).
+*   **`Prioritize Source`:** The default behavior. New data from the source platform will always overwrite any existing data in the destination for the same time period.
+*   **`Prioritize Destination`:** Never overwrite existing data. If a conflicting entry is found in the destination, the source entry is ignored.
+*   **`Merge Intelligently` (Activities Only):** This advanced strategy attempts to create a "superset" of the data.
+    *   **Rule 1 (Metadata):** It will use the start time and duration from the source entry.
+    *   **Rule 2 (Primary Metrics):** It will take the distance and calories from the source with the highest value (assuming more is better).
+    *   **Rule 3 (Rich Data):** It will merge detailed data streams. For example, it can take GPS data from a Garmin device and combine it with Heart Rate data from a Wahoo chest strap for the same activity, creating a single, more complete workout file.
 
 ## 5. Data Integrity
 
-*   **Transactional Queue:** The `JobQueue` will be transactional. A job will only be removed from the queue after the entire process, including updating the `lastSyncTime` timestamp, is successfully completed.
-*   **Data Validation:** The `DataProvider` for each service will be responsible for basic validation of the data it receives from the API. If the data is malformed or missing key fields, it should be rejected and an error should be logged.
-*   **Checksums (for critical data):** For highly sensitive data points, a simple checksum (e.g., an MD5 hash of the key data fields) can be computed before writing and stored with the sync log. This can help in debugging user-reported data discrepancy issues, but is likely out of scope for the MVP.
+*   **Durable Queueing:** By using SQS, we guarantee that a sync job will be processed "at-least-once". Our worker logic is idempotent (re-running the same job will not create duplicates) to handle rare cases of a message being delivered twice.
+*   **Transactional State:** State updates in DynamoDB are atomic. The `lastSyncTime` is only updated if the entire write operation to the destination platform succeeds.
+*   **Dead Letter Queue (DLQ):** If a job fails repeatedly (e.g., due to a persistent third-party API error), SQS will automatically move it to a DLQ. This allows for manual inspection and debugging without blocking the main queue.
 
 ## 6. Functional & Non-Functional Requirements
 
@@ -78,11 +75,13 @@ Handling data conflicts is critical for user trust.
 
 ### Non-Functional Requirements
 
-*   **Reliability:** Target a **>99.5%** sync success rate for all completed jobs.
-*   **Data Integrity:** Zero data corruption. Data must be transferred losslessly where the source and destination platforms have matching capabilities.
-*   **Performance:** P95 latency for a typical delta sync (e.g., one day's worth of steps) should be **under 30 seconds**.
-*   **API Rate Limiting Compliance:** The engine must gracefully handle 429 "Too Many Requests" errors by implementing an exponential backoff retry mechanism.
-*   **Security:** All data transfer must occur over HTTPS. Sensitive tokens must be stored in the Keychain/Keystore.
+*   **Reliability:** Target a **>99.9%** sync job success rate.
+*   **Data Integrity:** Zero data corruption. Data must be transferred losslessly.
+*   **Performance (Service Level Objectives):**
+    *   **P99 API Response Time:** The initial sync request to the API Gateway must respond in **<200ms**.
+    *   **P95 Job Completion Time:** A typical delta sync job must be fully processed and completed in **<15 seconds**.
+*   **API Rate Limiting Compliance:** Each `DataProvider` in the worker lambdas must implement a robust exponential backoff and retry mechanism to gracefully handle third-party rate limits.
+*   **Security:** All communication between the mobile app and the backend, and between the backend and third-party APIs, must use TLS 1.2+.
 
 ## 7. Risk Analysis & Mitigation
 
