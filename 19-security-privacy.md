@@ -36,6 +36,7 @@ We will proactively model potential threats and define specific countermeasures.
 | :--- | :--- | :--- |
 | **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** Use the most secure, hardware-backed storage for OAuth tokens. <br>- **Jailbreak/Root Detection:** The app will detect if it is running on a compromised device and may limit functionality or warn the user. |
 | **Man-in-the-Middle (MitM) Attack** | An attacker on the same network intercepts traffic between the app and an API. | - **TLS 1.2+:** All network traffic is encrypted. <br>- **Certificate Pinning:** For calls to our own minimal backend, we will implement certificate pinning to ensure the app is talking to our legitimate server, not an imposter. |
+| **OAuth CSRF Attack** | An attacker tricks a user into clicking a malicious link that initiates the OAuth flow, attempting to link the user's health data to an attacker-controlled account. | - **State Parameter:** Use a unique, unguessable `state` parameter in the OAuth 2.0 authorization request and validate it upon callback. This is a requirement for **US-02**. |
 | **Insecure Data Storage** | Sensitive data (tokens, settings) is stored insecurely on the device's file system. | - **Keychain/Keystore for Tokens.** <br>- **Database Encryption:** The local Realm database containing user settings will be encrypted. |
 | **Vulnerable Third-Party Dependency** | A library used by the app has a known security vulnerability. | - **Automated Dependency Scanning:** The CI/CD pipeline will use Snyk to automatically scan for and flag known vulnerabilities in our dependencies. <br>- **Minimize Dependencies:** Keep the number of third-party libraries to a minimum. |
 
@@ -50,10 +51,25 @@ To ensure clarity, we classify data into three categories:
     *   **Flow:** Received from provider -> Stored in Keychain/Keystore -> Used for API calls.
     *   **Storage:** Exclusively in the hardware-backed Keychain/Keystore.
 *   **Class 3: Configuration & Analytics Data:** User sync settings and anonymous analytics.
+    *   **Definition:** This includes sync configurations (source app, destination app, data types), user preferences (e.g., "run only while charging"), and anonymous analytics events (e.g., `onboarding_completed`, `sync_job_failed`).
     *   **Flow:** Settings are created by the user and stored locally. Analytics are sent to Firebase.
     *   **Storage:** Settings are stored in the encrypted on-device database. Analytics data is stored in Firebase.
 
-## 5. Privacy Impact Assessment (PIA) Process
+### 4.1. OAuth2 Security
+As detailed in **US-02**, the OAuth 2.0 implementation must follow best practices:
+*   The `state` parameter will be used to prevent Cross-Site Request Forgery (CSRF).
+*   The `redirect_uri` will be strictly validated against a whitelist of allowed URIs.
+*   The in-app browser used for the flow must be secure (e.g., `SFSafariViewController` on iOS) and not allow for credential snooping or script injection.
+
+## 5. Credential Lifecycle Management
+Per **US-13**, the lifecycle of user credentials must be managed securely.
+*   **Creation:** Tokens are acquired via the OAuth 2.0 flow.
+*   **Storage:** Tokens are stored exclusively in the hardware-backed `Keystore`/`Keychain`.
+*   **Deletion:** When a user de-authorizes an app, the app MUST:
+    1.  Make an API call to the service provider's `revoke` endpoint to invalidate the token on the server side.
+    2.  Perform a secure wipe of the access and refresh tokens from the local `Keystore`/`Keychain`. This action must be irreversible.
+
+## 6. Privacy Impact Assessment (PIA) Process
 
 Before any new feature that handles a new type of data is developed, a mini-PIA will be conducted by answering the following questions:
 1.  What new data is being collected/processed?
@@ -79,8 +95,9 @@ The following audit, based on the OWASP MASVS, will be performed before the MVP 
 
 ### Authentication & Authorization
 *   [ ] OAuth 2.0 with PKCE is used for all cloud-based integrations.
+*   [ ] The OAuth `state` parameter is used and validated correctly (**US-02**).
 *   [ ] The token refresh mechanism is secure.
-*   [ ] The de-authorization process securely and completely deletes all relevant tokens.
+*   [ ] The de-authorization process calls the provider's `revoke` endpoint and securely wipes local tokens (**US-13**).
 
 ### Code Quality & Build Settings
 *   [ ] The app is obfuscated in production builds.
@@ -92,3 +109,10 @@ The following audit, based on the OWASP MASVS, will be performed before the MVP 
 *   **[Diagram] Data Flow Diagram (DFD):** A detailed DFD showing the three classes of data and how they flow between the user, the mobile app, the secure storage, third-party APIs, and the minimal backend.
 *   **[Table] Threat Model:** A more detailed version of the table in Section 3, including risk ratings (Probability/Impact) for each threat.
 *   **[Checklist] Pre-Launch Security Audit:** A full, detailed checklist based on Section 6 that can be used to track the audit process.
+
+## 8. Backend and API Security (Future)
+While the MVP is designed to be client-only, future features like the Family Plan (**US-18**) will require a backend. This section will be expanded to include:
+*   API authentication and authorization (e.g., JWTs).
+*   Server hardening procedures.
+*   Database security.
+*   Protection against common web vulnerabilities (OWASP Top 10).

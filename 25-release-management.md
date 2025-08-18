@@ -74,7 +74,17 @@ The release process will be heavily automated using a CI/CD service like GitHub 
 | **In-App "What's New" Screen** | Highlights the top 1-3 new features, especially community-requested ones. | Appears on first launch after update. |
 | **Social Media / Blog** | A more detailed post celebrating the new release and thanking beta testers. | After the release is at 100% rollout. |
 
-## 7. Optional Visuals / Diagram Placeholders
+## 7. Feature Flagging & Remote Configuration
+
+In addition to the main app version release schedule, a **Remote Configuration** service (e.g., Firebase Remote Config) will be used to manage features and behavior at a more granular level. This allows for de-risking releases and testing new functionality without requiring a full app update.
+
+This approach is referenced in several user stories:
+*   **A/B Testing UI/UX:** The copy and imagery in the onboarding carousel (**US-01**) and the messaging in contextual upsells (**US-17**) will be managed via remote config to allow for A/B testing to optimize conversion funnels.
+*   **Staged Feature Rollouts:** New, complex integrations or data types can be rolled out progressively. For example, a new data type for sync (**US-04**) could be enabled for 1%, then 10%, then 100% of users, with performance monitored at each stage.
+*   **Dynamic Configuration:** The list of supported apps for connection (**US-02**) will be managed remotely. This allows us to add a new app to the list or temporarily disable a misbehaving integration without forcing users to update the app.
+*   **Kill Switches:** If a feature is discovered to have a critical bug in production, a "kill switch" in Remote Config can be used to disable it immediately for all users while a hotfix is prepared.
+
+## 8. Optional Visuals / Diagram Placeholders
 *   **[Diagram] GitFlow Branching Strategy:** A clear, visual diagram of the GitFlow model.
 *   **[Diagram] CI/CD Pipeline:** A detailed flowchart showing the stages and triggers for the different CI/CD jobs.
 *   **[Diagram] Release Train Schedule:** A visual calendar showing the "departure" dates for the next three release trains.

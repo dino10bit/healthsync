@@ -41,19 +41,27 @@ For any user story that involves UI changes, the following checklist must be com
 
 ### Perceivable
 *   [ ] **Labels:** All interactive elements (buttons, links, inputs) have a clear, descriptive accessibility label.
+    *   *Example from **US-02**: Each app logo in the connection grid must be labeled with the app's name, e.g., "Fitbit".*
 *   [ ] **Images:** All informative images have a text alternative (alt text). Decorative images are hidden from screen readers.
 *   [ ] **Color Contrast:** All text meets the minimum 4.5:1 contrast ratio against its background.
+    *   *Example from **US-07**: The red/orange color used for an error state on a Sync Card must still have a 4.5:1 contrast ratio with the text inside it.*
 *   [ ] **Resizable Text:** The UI layout does not break when the system font size is increased to 200%.
 
 ### Operable
 *   [ ] **Touch Targets:** All touch targets are at least 44x44px.
+    *   *Example from **US-02**: The tappable area for each app logo in the grid must meet this minimum size.*
 *   [ ] **Focus Order:** The navigation order for screen readers is logical and follows the visual flow of the screen.
+    *   *Example from **US-01**: In the onboarding carousel, the focus should move from the main text, to the page indicators, to the navigation buttons.*
 *   [ ] **No Keyboard Traps:** It is possible to navigate to and from all interactive elements using keyboard/switch controls.
+*   [ ] **Custom Gestures:** Gestures like pull-to-refresh (**US-06**) must have an alternative, such as a button in a menu, for users who cannot perform the gesture.
 
 ### Understandable
 *   [ ] **Clear Language:** The purpose of each screen and control is clear and easy to understand.
 *   [ ] **Consistent Navigation:** The app's navigation and key UI elements are used consistently across all screens.
-*   [ ] **Error States:** All error messages are clear, and the focus is moved to the element with the error.
+*   [ ] **Error States:** All error messages are clear, and the focus is moved to the element with the error. Screen readers must announce the error.
+    *   *Example from **US-02**: When an OAuth login fails, the "Authorization failed" message must be announced to the user.*
+*   [ ] **Complex Views:** For complex screens, ensure the information architecture is logical for screen reader users.
+    *   *Example from **US-15**: The side-by-side conflict resolution screen must be structured so a user can easily compare the two activities and navigate to the resolution buttons.*
 
 ### Robust
 *   [ ] **Screen Reader Test:** The feature has been manually tested with VoiceOver (iOS) and TalkBack (Android).

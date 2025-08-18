@@ -64,12 +64,21 @@ A detailed style guide will be created in the TMS to ensure consistency and qual
 *   **Screenshots & Context:** All strings will be uploaded to the TMS with associated screenshots, providing crucial context to the translators.
 
 ## 6. Scope of Localization
-The following assets will be localized for each target language:
-*   In-App UI Strings
-*   App Store Listings (Title, Description, Keywords, Release Notes)
-*   Localized App Store Screenshots
-*   Top 10-15 Help Center Articles
-*   Canned responses for email support.
+The following assets will be localized for each target language. The technical scope of all in-app content is defined in `26-internationalization.md`, Section 8. This list serves as the operational checklist for the localization manager.
+
+*   **In-App UI Strings:** This includes all text visible in the application.
+    *   Core UI (buttons, labels, titles).
+    *   Status and error messages (**US-07**).
+    *   Permission primer copy (**US-03**).
+    *   Paywall and upsell copy (**US-09**, **US-17**).
+    *   Confirmation dialogs (**US-08**).
+*   **App Store Presence:**
+    *   App Store Listings (Title, Description, Keywords, Release Notes).
+    *   Localized App Store Screenshots.
+*   **Support & Community:**
+    *   The top 10-15 most viewed Help Center articles (**US-12**).
+    *   Canned email responses for common support queries.
+    *   Release announcements for the blog or social media.
 
 ## 7. Optional Visuals / Diagram Placeholders
 *   **[Diagram] Automated l10n Workflow:** A flowchart showing the automated process from `git push`, to the TMS, and back to a new pull request.
