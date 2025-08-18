@@ -66,13 +66,13 @@ This level zooms into the system boundary to show the high-level technical conta
 
 ```mermaid
 graph TD
-    subgraph "AWS Cloud (Single Region)"
+    subgraph "AWS Cloud (Multi-Region)"
         APIGateway[API Gateway]
         ElastiCache[ElastiCache for Caching & Rate Limiting]
         RequestLambda[Request Lambda]
         SQSQueue[SQS Queue]
         WorkerLambda[Worker Lambdas]
-        DynamoDB[DynamoDB for Metadata]
+        DynamoDB[DynamoDB Global Table for Metadata]
         SecretsManager[Secrets Manager for Tokens]
         S3[S3 for DLQ]
         Observability["Monitoring & Observability (CloudWatch)"]
@@ -109,7 +109,7 @@ graph TD
 
 2.  **Scalable Serverless Backend (AWS)**
     *   **Description:** An event-driven, serverless backend on AWS that orchestrates all syncs. It does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
-    *   **Technology:** AWS Lambda, API Gateway, SQS, DynamoDB.
+    *   **Technology:** AWS Lambda, API Gateway, SQS, DynamoDB Global Tables.
     *   **Responsibilities:** Orchestrates sync jobs, executes cloud-to-cloud syncs, securely stores credentials, and stores user metadata.
 
 3.  **Distributed Cache (Amazon ElastiCache for Redis)**
@@ -179,17 +179,16 @@ graph TD
 
 To reliably serve 1 million Daily Active Users, the architecture incorporates specific strategies for high availability, performance, and scalability.
 
-### High Availability and Disaster Recovery (DR)
+### High Availability: Global Multi-Region Architecture
 
-For the initial launch and growth phase, a complex active-active multi-region architecture introduces excessive cost and operational risk. Instead, we will adopt a more pragmatic and cost-effective **single-region deployment with a robust disaster recovery (DR) plan** based on an **Active-Passive (Warm Standby)** model. This provides excellent availability for most scenarios while deferring the complexity of a fully active-active system until the scale and revenue justify it.
+Given the requirement for a global launch across 5 continents, a high-availability, active-active multi-region architecture is essential to provide low-latency access for users worldwide and ensure resilience against regional outages.
 
-*   **Primary Region:** The application will run in a single primary AWS region (e.g., `us-east-1`). All live user traffic is directed to this region.
-*   **Request Routing:** **Amazon Route 53** will manage DNS. In a disaster scenario, failover will be initiated to redirect traffic to the standby region.
-*   **Disaster Recovery (DR) Region:** A second AWS region (e.g., `us-west-2`) will act as a warm standby.
-    *   **Infrastructure:** The complete infrastructure is defined as code (IaC) via Terraform. Key, non-scalable components (like VPCs, IAM roles) may be pre-provisioned in the DR region to speed up recovery.
-    *   **Data Replication:** DynamoDB **Point-in-Time Recovery (PITR)** backups are automatically and continuously copied to the DR region. In a DR event, we can restore the database from the latest backup (RPO < 15 minutes).
-    *   **Credential Storage:** AWS Secrets Manager secrets from the primary region can be read cross-region by the restored services in the DR region.
-*   **DR Plan and Runbook:** A detailed DR runbook will be maintained, documenting the step-by-step process for failover and failback. This process will be **tested quarterly** in a non-production environment to ensure its effectiveness and to meet our Recovery Time Objective (RTO) of < 4 hours.
+*   **Deployment:** The entire backend infrastructure will be deployed in at least three geographically dispersed AWS regions (e.g., `us-east-1` for the Americas, `eu-west-1` for Europe/Africa, `ap-southeast-1` for Asia-Pacific). This can be expanded as the user base grows.
+*   **Request Routing:** **Amazon Route 53** will be configured with **Latency-Based Routing**. This will direct users to the AWS region that provides the lowest network latency, improving their application experience. Route 53 health checks will automatically detect if a region is unhealthy and redirect traffic to the next nearest healthy region.
+*   **Data Replication & Consistency:**
+    *   **DynamoDB Global Tables:** User metadata and sync configurations will be stored in a DynamoDB Global Table. This provides built-in, fully managed, multi-master replication across all deployed regions, ensuring that data written in one region is automatically propagated to others with low latency.
+    *   **Write Conflict Resolution:** By using a multi-master database, write conflicts can occur (e.g., if a user changes a setting in two regions simultaneously). Our application will be designed to be idempotent, and for configuration data, we will rely on DynamoDB's default "last writer wins" conflict resolution strategy. This is an acceptable trade-off for the types of non-transactional metadata we are storing.
+*   **Credential Storage:** **AWS Secrets Manager** secrets will be replicated to each active region. This ensures that worker Lambdas in any region can access the necessary third-party OAuth tokens to perform sync jobs.
 
 ### Performance & Scalability: Caching & Load Projections
 
@@ -228,7 +227,7 @@ Our primary data table will be named **`SyncWellMetadata`**. It will use a compo
     *   **Partition Key (PK):** `USER#{userId}` - All data for a given user is co-located in the same partition, enabling efficient retrieval of a user's entire profile with a single query.
     *   **Sort Key (SK):** A hierarchical string that defines the type of data and its relationships (e.g., `PROFILE`, `CONN#{connectionId}`).
 *   **Capacity Mode:** On-Demand. This is ideal for our unpredictable, spiky traffic patterns, automatically scaling capacity to meet load.
-*   **Backups and Recovery:** The table will be configured with **Point-in-Time Recovery (PITR)** enabled. This allows us to restore the table to any point in the last 35 days, providing robust protection against data loss and forming the core of our disaster recovery strategy.
+*   **Global Tables:** The table will be configured as a DynamoDB Global Table, providing active-active multi-region replication for high availability and low-latency reads for a global user base.
 
 ### Item Types & Schema
 
@@ -382,7 +381,7 @@ interface CanonicalSleepSession {
 | **Serverless Backend** | **AWS (Lambda, SQS, DynamoDB)** | **Massive Scalability & Reliability.** Event-driven architecture to meet our 1M DAU target with pay-per-use cost efficiency. |
 | **Distributed Cache** | **Amazon ElastiCache for Redis** | **Performance & Scalability.** Provides a high-throughput, low-latency in-memory cache for reducing database load and implementing distributed rate limiting. |
 | **AI & Machine Learning (Future)** | **Amazon SageMaker, Amazon Bedrock** | **Rationale for Future Use:** When we implement AI features, these managed services will allow us to scale without managing underlying infrastructure, reducing operational overhead and allowing focus on feature development. |
-| **Secure Credential Storage** | **AWS Secrets Manager** | **Security & Manageability.** Provides a secure, managed service for storing, rotating, and retrieving the OAuth tokens required by our backend workers. It supports our disaster recovery plan by allowing for secret replication or cross-region access. |
+| **Secure Credential Storage** | **AWS Secrets Manager** | **Security & Manageability.** Provides a secure, managed service for storing, rotating, and retrieving the OAuth tokens required by our backend workers. Replicated across regions for high availability. |
 | **Infrastructure as Code** | **Terraform** | **Reproducibility & Control.** Manages all cloud infrastructure as code, ensuring our setup is version-controlled and easily reproducible. |
 | **CI/CD**| **GitHub Actions** | **Automation & Quality.** Automates the build, test, and deployment of the mobile app and backend services, including security checks. |
 | **Monitoring & Observability** | **AWS CloudWatch, AWS X-Ray** | **Operational Excellence.** Provides a comprehensive suite for logging, metrics, tracing, and alerting, enabling proactive issue detection and performance analysis. |
@@ -399,6 +398,7 @@ The architecture is explicitly designed to be cost-effective while scaling to 1 
 3.  **Kotlin Multiplatform (KMP):** While primarily a development velocity benefit, KMP reduces costs by minimizing the need for separate, specialized engineering teams for each platform. A single team can manage the core logic across iOS, Android, and potentially a JVM backend.
 4.  **Managed AI Services:** Using Amazon SageMaker and Bedrock abstracts away the complexity and cost of managing GPU clusters for model training and inference. We pay for the API calls and endpoint hosting, which is more cost-effective than building and maintaining this infrastructure from scratch.
 5.  **Right-Sized Resources:** Infrastructure as Code (Terraform) allows us to define and manage resource allocation precisely. Lambda memory, DynamoDB capacity, and other resources can be fine-tuned based on real-world usage data from our monitoring systems, preventing over-provisioning.
+6.  **Monitoring Global Data Transfer Costs:** While the multi-region architecture provides significant performance and availability benefits, it introduces costs for cross-region data transfer. Every write to a DynamoDB Global Table incurs a data transfer cost. This will be a key metric to monitor, and we must factor it into our financial projections.
 
 ## 6. Security, Compliance & Observability
 
@@ -471,6 +471,7 @@ This section defines the key non-functional requirements for the SyncWell platfo
 | | Disaster Recovery RPO | Recovery Point Objective | < 15 minutes | Maximum acceptable data loss in a disaster recovery scenario. Governed by PITR backup frequency. |
 | **Performance** | Manual Sync Latency | P95 Latency | < 5 seconds | The 95th percentile for a user-initiated cloud-to-cloud sync to complete. |
 | | API Gateway Latency | P99 Latency | < 500ms | For all synchronous API endpoints, measured at the gateway. |
+| | Global User Read Latency | P95 Latency | < 200ms | For users accessing data from a local regional replica of the DynamoDB Global Table. |
 | | Concurrent Users | Peak Concurrent Lambdas | > 15,000 | Must be able to scale to handle peak load concurrency. Requires AWS limit increases. |
 | **Security** | Data Encryption | TLS Version | TLS 1.2+ | All traffic in transit must use modern, secure protocols. |
 | | Vulnerability Patching | Time to Patch Critical CVE | < 72 hours | Time from when a critical vulnerability in a dependency is identified to when it is patched in production. |
