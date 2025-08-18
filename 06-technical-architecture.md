@@ -150,7 +150,7 @@ graph TD
 
 *   **`API Gateway`:** A secure entry point for the service.
 *   **`Conflict Resolution Model`:** A custom-trained machine learning model hosted on a SageMaker endpoint. It takes two conflicting data entries and returns a suggested merged version.
-*   **`Troubleshooting LLM`:** A Lambda function that acts as a proxy to a foundational LLM (e.g., via Amazon Bedrock). It is primed with SyncWell's documentation to provide conversational support.
+*   **`Troubleshooting LLM`:** A sophisticated, stateful agent built using **LangGraph**. It guides users through a troubleshooting "graph," asking clarifying questions, running diagnostics, and providing step-by-step solutions. This is more powerful than a simple Q&A bot.
 *   **`Summary LLM`:** A Lambda function that takes a user's weekly data and uses an LLM to generate a human-readable, insightful summary.
 
 ## 3. Sync Models: A Hybrid Architecture
@@ -247,7 +247,7 @@ A robust observability strategy is critical for operating a reliable service at 
 | | **Terraform** | Infrastructure as Code tool. |
 | **AI/ML** | **Hugging Face Transformers** | For sourcing pre-trained models or fine-tuning. |
 | | **scikit-learn** | For building the initial conflict resolution model. |
-| | **LangChain** | Framework for developing LLM-powered applications. |
+| | **LangChain / LangGraph** | Frameworks for orchestrating LLM interactions. LangChain is used for simpler LLM calls (e.g., summaries), while LangGraph is used to build the complex, stateful graph for the AI Troubleshooter. |
 | **Testing** | **JUnit, XCTest, Turbine, MockK** | Standard libraries for testing Kotlin and Swift code. |
 | **CI/CD** | **GitHub Actions, Fastlane** | CI/CD platform and mobile release automation. |
 | **Monitoring** | **OpenTelemetry** | Vendor-neutral standard for instrumentation. |

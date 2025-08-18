@@ -28,13 +28,20 @@ For the **solo developer**, this document is a blueprint for building a scalable
 
 ### Tier 0: Self-Service (The First Line of Defense)
 
-*   **Channel 1: In-App Help Center:** A searchable database of articles, tutorials, and troubleshooting guides.
+*   **Channel 1: Interactive AI Troubleshooter:** This is the user's first stop for any problem. Powered by the `AI Insights Service` (see `06-technical-architecture.md`), this agent engages the user in a conversation to diagnose their issue.
+    *   **Technology:** Built with LangGraph to create a stateful, intelligent conversational flow.
+    *   **Capabilities:**
+        *   Asks clarifying questions to narrow down the problem.
+        *   Can be granted permission to run read-only "health checks" on the user's sync connections.
+        *   Provides step-by-step, interactive guidance to resolve the issue.
+        *   If unable to resolve, it intelligently summarizes the problem and the steps already taken, and seamlessly hands the user off to the best-next-step (a specific Help Center article or pre-filling a Tier 1 ticket).
+*   **Channel 2: In-App Help Center:** A searchable database of articles, tutorials, and troubleshooting guides. This serves as a secondary resource and a destination for users who prefer to read documentation.
     *   **Content Strategy:**
         *   **Troubleshooting Guides:** Step-by-step solutions for common errors (e.g., "How to Fix a Failing Sync").
         *   **How-To Guides:** Walkthroughs for key features (e.g., "How to Configure Historical Sync").
         *   **Conceptual Explainers:** Articles explaining *why* something works the way it does (e.g., "Understanding Garmin's API Limitations").
     *   **Process:** New articles will be prioritized based on the frequency of related support tickets. All articles will be reviewed quarterly for accuracy.
-*   **Channel 2: Public Feedback Portal (Canny.io):** Serves as a community forum where users can see that others may be having the same issue or have the same idea, reducing duplicate tickets.
+*   **Channel 3: Public Feedback Portal (Canny.io):** Serves as a community forum where users can see that others may be having the same issue or have the same idea, reducing duplicate tickets.
 
 ### Tier 1: Direct Assistance
 
@@ -51,8 +58,7 @@ To manage ticket volume efficiently, the following automation rules will be conf
 
 1.  **Ticket Creation:** When a ticket is created via the "Report a Problem" form, the attached metadata (app version, OS version) will be automatically added as ticket properties.
 2.  **Keyword-Based Tagging:** Tickets will be automatically tagged based on keywords in the subject or body (e.g., "Fitbit" -> `fitbit` tag, "payment" -> `billing` tag).
-3.  **Auto-Responder with Suggested Articles:** An auto-reply will be sent immediately, confirming receipt of the ticket. This email will also use the ticket's tags to suggest 1-2 relevant Help Center articles that might solve the user's problem before the developer even sees the ticket.
-4.  **Canned Responses:** A library of pre-written responses for the top 10-15 most common issues will be created to allow for rapid, consistent replies.
+3.  **Canned Responses:** A library of pre-written responses for the top 10-15 most common issues will be created to allow for rapid, consistent replies.
 
 ## 5. The "Report a Problem" Flow
 
@@ -62,7 +68,7 @@ This is the most critical workflow for efficient debugging.
 2.  A form is displayed asking for a subject and description. The user's email, app version, and OS version are pulled automatically.
 3.  A checkbox, **ticked by default**, states: "Attach anonymous debugging information to help us solve your problem faster."
 4.  When submitted, the Freshdesk API is called to create a ticket with all the metadata and the sanitized, PII-free JSON log file attached.
-5.  The user receives the automated email response with suggested articles.
+5.  The user receives a confirmation that their ticket has been received.
 
 ## 6. KPIs / Success Metrics
 
