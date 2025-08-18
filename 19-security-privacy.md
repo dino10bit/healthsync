@@ -39,6 +39,8 @@ We will proactively model potential threats and define specific countermeasures.
 | **OAuth CSRF Attack** | An attacker tricks a user into clicking a malicious link that initiates the OAuth flow, attempting to link the user's health data to an attacker-controlled account. | - **State Parameter:** Use a unique, unguessable `state` parameter in the OAuth 2.0 authorization request and validate it upon callback. This is a requirement for **US-02**. |
 | **Insecure Data Storage** | Sensitive data (tokens, settings) is stored insecurely on the device's file system. | - **Keychain/Keystore for Tokens.** <br>- **Database Encryption:** The local Realm database containing user settings will be encrypted. |
 | **Data Leakage via Export** | A user inadvertently shares a CSV export or cloud backup containing sensitive health data with an untrusted party. | - **Clear Warnings:** The UI must clearly warn the user about the sensitivity of the data they are exporting (**US-21**, **US-28**).<br>- **No Auto-Sharing:** The app must use the OS Share Sheet and not send the data anywhere automatically. The user is in full control of the destination. |
+| **Re-identification from Anonymized Data** | An attacker with external data could potentially re-identify a user from the aggregated community statistics. | - **Strong Anonymization:** Use k-anonymity techniques. Do not show statistics for any group with fewer than N (e.g., 100) users. <br>- **Data Perturbation:** Add a small amount of random noise to aggregated results to further prevent re-identification. This is critical for **US-36**. |
+| **Insecure Voice Integration** | Voice commands could be captured by a malicious app or on an insecure device. | - **On-Device Processing:** Use on-device speech recognition where possible.<br>- **Limited Actions:** Only allow non-destructive read-only commands via voice (e.g., "When did my last sync run?"). Do not allow de-authorization or deletion via voice (**US-34**). |
 | **Vulnerable Third-Party Dependency** | A library used by the app has a known security vulnerability. | - **Automated Dependency Scanning:** The CI/CD pipeline will use Snyk to automatically scan for and flag known vulnerabilities in our dependencies. <br>- **Minimize Dependencies:** Keep the number of third-party libraries to a minimum. |
 
 ## 4. Data Flow & Classification
@@ -59,8 +61,11 @@ To ensure clarity, we classify data into four categories:
     *   **Flow:** Settings are created by the user and stored locally. Analytics are sent to Firebase.
     *   **Storage:** Settings are stored in the encrypted on-device database. Analytics data is stored in Firebase.
 *   **Class 4: Health Data (In Notification):** Health data displayed in a push notification.
-    *   **Flow:** Data is read from the source, a summary is generated, and it is displayed in a local push notification (**US-24**).
+    *   **Flow:** Data is read from the source, a summary is generated, and it is displayed in a local push notification (**US-24**, **US-31**).
     *   **Storage:** The notification content may be stored temporarily by the operating system. Notifications should not contain highly sensitive data and should be cleared after being read.
+*   **Class 5: Anonymized & Aggregated Data:** Data used for community statistics.
+    *   **Flow:** Anonymized data points (e.g., "a sync happened") are sent to a secure backend. The backend aggregates this data. The app can then query the aggregated results.
+    *   **Storage:** The raw anonymized events are stored on the backend for a limited time for aggregation, then deleted. Only the final aggregated results are stored long-term. This is required for **US-36**.
 
 ### 4.1. OAuth2 Security
 As detailed in **US-02**, the OAuth 2.0 implementation must follow best practices:
@@ -106,6 +111,7 @@ The following audit, based on the OWASP MASVS, will be performed before the MVP 
 *   [ ] The token refresh mechanism is secure.
 *   [ ] The de-authorization process calls the provider's `revoke` endpoint and securely wipes local tokens (**US-13**).
 *   [ ] For integrations that require file access (e.g., Cloud Backup, **US-21**), the app requests the narrowest possible permission scope.
+*   [ ] Shared configuration templates (**US-35**) are stripped of all user-identifying information before being shared.
 
 ### Code Quality & Build Settings
 *   [ ] The app is obfuscated in production builds.
@@ -119,8 +125,9 @@ The following audit, based on the OWASP MASVS, will be performed before the MVP 
 *   **[Checklist] Pre-Launch Security Audit:** A full, detailed checklist based on Section 6 that can be used to track the audit process.
 
 ## 8. Backend and API Security (Future)
-While the MVP is designed to be client-only, future features like the Family Plan (**US-18**) will require a backend. This section will be expanded to include:
+While the MVP is designed to be client-only, future features like the Family Plan (**US-18**) and Community Statistics (**US-36**) will require a backend. This section will be expanded to include:
 *   API authentication and authorization (e.g., JWTs).
 *   Server hardening procedures.
-*   Database security.
+*   Database security and encryption at rest.
+*   Robust anonymization and aggregation pipeline design.
 *   Protection against common web vulnerabilities (OWASP Top 10).

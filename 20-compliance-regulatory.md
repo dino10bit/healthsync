@@ -40,6 +40,8 @@ This scorecard is a living document that will be reviewed quarterly to ensure on
 | **Apple App Store** | Guideline 3.1 (Payments) | Implemented | - |
 | **Google Play Store**| User Data Policy | Implemented | - |
 | **Google Play Store**| Health Data Permissions | Implemented | - |
+| **Voice Assistant Platforms**| Data Use Policies for Siri/Google Assistant | TBD. Requires review of platform-specific rules for handling health data via voice actions (**US-34**). | - |
+| **GDPR** | Anonymization & Aggregation | TBD. Requires clear user opt-in for community features (**US-36**) and a robust, documented anonymization strategy. | - |
 
 ## 4. Third-Party API Compliance
 
@@ -65,6 +67,7 @@ Consent will be obtained and logged at multiple, specific points in the user jou
 2.  **Platform Permissions:** For each OS-level permission (Notifications, HealthKit, etc.), the user is shown a pre-permission "priming" dialog explaining why access is needed (**US-03**). The user's choice to proceed or decline is logged.
 3.  **Analytics Consent:** For users in regions covered by GDPR, analytics tracking will be disabled by default. It will only be enabled if the user explicitly opts-in via a toggle in the Privacy & Security settings.
 4.  **Third-Party Data Access:** The consent screen presented by each third-party service (e.g., Fitbit's login page) serves as the user's explicit consent to share data from that platform with SyncWell (**US-02**). The grant of this access is logged.
+5.  **Community Feature Consent:** For features involving anonymized, aggregated data (**US-36**, **US-37**), users must be presented with a clear explanation of the feature and provide separate, explicit opt-in consent before any of their data is included.
 
 ### 5.2. Data Processing Agreements (DPAs)
 

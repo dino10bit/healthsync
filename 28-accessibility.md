@@ -68,6 +68,9 @@ For any user story that involves UI changes, the following checklist must be com
     *   *Example from **US-23**: The circular "data completeness" progress ring must announce its value, e.g., "Data completeness: 2 of 3 tracked".*
 
 ### Robust
+*   [ ] **Platform Integrations:** Features that integrate with the OS must follow platform-specific accessibility best practices.
+    *   *Example from **US-33**: Home screen widgets must be configurable and provide accessible labels for all content.
+    *   *Example from **US-34**: Voice assistant commands must have clear, predictable phrasing and provide audible feedback.
 *   [ ] **Screen Reader Test:** The feature has been manually tested with VoiceOver (iOS) and TalkBack (Android).
 *   [ ] **Automated Scan:** The new screen passes an automated accessibility scan with no critical errors.
 
