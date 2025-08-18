@@ -43,7 +43,7 @@ The `Worker Lambda` will follow this algorithm for each job pulled from the SQS 
 1.  **Job Dequeue:** The worker receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
 2.  **Get State from DynamoDB:** The worker performs a `GetItem` call on the `SyncWellMetadata` table to retrieve the `SyncConfig` item.
     *   **PK:** `USER#{userId}`
-    *   **SK:** `SYNCCONFIG#{sourceId}#to##{destId}##{dataType}`
+    *   **SK:** `SYNCCONFIG#{sourceId}#to#{destId}#{dataType}`
     *   This single read provides the `lastSyncTime` and the user's chosen `conflictResolutionStrategy`.
 3.  **Fetch New Data:** It calls the `fetchData(since: lastSyncTime)` method on the source `DataProvider` (e.g., `FitbitProvider`).
 4.  **Fetch Destination Data:** To enable conflict resolution, it also fetches potentially overlapping data from the destination `DataProvider` for the same time period.
@@ -72,26 +72,22 @@ This engine is a core feature of SyncWell, designed to eliminate data duplicatio
 
 ## 5a. Historical Data Sync (`cold-path`)
 
-Handling a user's request to sync several years of historical data (User Story **US-10**) presents a significant challenge. A single, long-running job is brittle and prone to failure. To address this, we will implement a robust "cold path" process.
+Handling a user's request to sync several years of historical data (User Story **US-10**) presents a significant challenge. A single, long-running job is brittle and prone to failure. To address this, we will use **AWS Step Functions**, a managed workflow orchestrator that aligns with our serverless-first architecture.
 
-1.  **Job Orchestration:** When a user requests a historical sync for a date range (e.g., Jan 1, 2020 to Dec 31, 2023), the `Request Lambda` does not create a single job. Instead, it acts as an orchestrator:
-    *   It creates a parent "Historical Sync Job" item in the `SyncWellMetadata` table. This item, defined in `06-technical-architecture.md`, tracks the overall progress of the historical sync.
-    *   It breaks the total date range into smaller, logical **chunks** (e.g., one-month intervals).
-    *   It then enqueues one message in the `cold-queue` for each chunk (e.g., "Sync Jan 2020", "Sync Feb 2020", etc.).
+1.  **Workflow Orchestration with AWS Step Functions:** When a user requests a historical sync, the `Request Lambda` initiates a new execution of a pre-defined Step Functions state machine. This approach provides superior reliability, state management, and observability compared to a manual orchestration solution.
 
-2.  **Chunked Execution:**
-    *   The `Cold-Path Worker Lambdas` are configured to poll the `cold-queue`. Each worker processes one chunk at a time.
-    *   This is inherently more resilient. If the job for "March 2021" fails, it does not impact the processing of "April 2021". The failed job can be retried independently.
+2.  **State Machine Logic:** The state machine, as detailed in `06-technical-architecture.md`, will perform the following steps:
+    *   **Initiate Sync Job:** A Lambda function prepares the sync, determining the total number of data chunks to be processed (e.g., one chunk per month of historical data).
+    *   **Map State for Parallel Processing:** The state machine will use a `Map` state to iterate over the array of chunks. This allows for parallel execution of the sync task for each chunk, dramatically improving performance.
+    *   **Process One Chunk:** For each chunk, a dedicated `Cold-Path Worker Lambda` is invoked. It fetches the data from the source, transforms it, and writes it to the destination.
+    *   **Built-in Error Handling & Retries:** Step Functions provides robust, configurable retry logic for transient errors. If a chunk fails repeatedly, it can be caught and logged to a Dead-Letter Queue without halting the entire workflow.
+    *   **Finalize Sync:** Once all chunks are processed, a final Lambda function updates the overall job status to `COMPLETED`.
 
-3.  **Progress Tracking & Resumability:**
-    *   As each chunk-job is successfully completed, the worker updates the parent Orchestration Record in DynamoDB.
-    *   This allows the mobile app to query the status of the overall historical sync and show meaningful progress to the user (e.g., "Synced 18 of 48 months...").
-    *   This design also means the entire process is pausable and resumable.
+3.  **Progress Tracking:** The Step Functions execution itself serves as the progress record. The mobile app can query a backend API that uses the `DescribeExecution` API call to get the current status, number of completed chunks, and overall progress of the historical sync.
 
-4.  **Rate Limiting & Throttling:**
-    *   The cold path workers are subject to the same third-party API rate limits. The separation of hot and cold queues helps ensure that a large historical sync does not consume the entire rate limit budget, preserving it for real-time syncs. The rate-limiting mechanism is detailed in `07-apis-integration.md`.
+4.  **Rate Limiting & Throttling:** The `Cold-Path Worker Lambdas` invoked by Step Functions are subject to the same third-party API rate limits. The rate-limiting service will prioritize `hot-path` (real-time) syncs over these `cold-path` jobs.
 
-*(Note: This section directly impacts `31-historical-data.md` and `16-performance-optimization.md`, which will need to be updated to reflect this chunking strategy.)*
+*(Note: This section directly impacts `31-historical-data.md` and `16-performance-optimization.md`, which will be updated to reflect this AWS Step Functions-based strategy.)*
 
 ## 6. Functional & Non-Functional Requirements
 *(Unchanged)*
@@ -197,16 +193,4 @@ As part of a research spike, we evaluated several tools to enhance the project's
     *   We recommend **LangGraph** for implementing the `Interactive AI Troubleshooter` feature, as specified in `06-technical-architecture.md` and `24-user-support.md`.
     *   **Rationale:** LangGraph's ability to model conversational flows as a graph is a perfect fit for a troubleshooting agent that needs to ask clarifying questions, remember context, and guide a user through a decision tree. This provides a more robust and powerful user experience than a simple, single-call LLM.
 
-## 10. Recommendations for Open-Source Adoption
-
-To further enhance the reliability and observability of the data sync engine, the following open-source tools are recommended. These align with the solutions proposed in the main technical architecture document.
-
-| Category | Recommended Tool | Strategic Benefit & Rationale for Data Sync |
-| :--- | :--- | :--- |
-| **Workflow Orchestration** | **Temporal.io** | **To Replace Manual Orchestration for Historical Syncs.** The current "cold path" design for historical syncs relies on a Lambda function to break down and enqueue jobs. This can be complex to manage and monitor. Temporal is purpose-built for such long-running, stateful workflows. Adopting it would make the historical sync process significantly more robust, automatically handle retries and failures of individual chunks, and provide deep visibility into the workflow's state. |
-| **MLOps** | **MLflow** | **To Improve the AI Conflict Resolution Workflow.** The `AI-Powered Merge` feature relies on a model in the AI Insights Service. MLflow would provide a structured way to manage the lifecycle of this model. It allows for tracking experiments with different merge strategies, versioning models to ensure reproducibility, and streamlining the process of deploying updated models, thereby improving the quality and reliability of the AI-powered sync features. |
-| **Observability** | **OpenTelemetry & Jaeger** | **For Deep Visibility into Sync Job Execution.** While CloudWatch provides essential logs and metrics, a combination of OpenTelemetry for instrumentation and Jaeger for distributed tracing would offer much deeper, vendor-neutral insights. It would allow engineers to trace a single sync job from the initial API request, through SQS, to the final worker execution, including its calls to third-party APIs and the AI service. This is invaluable for pinpointing performance bottlenecks and debugging complex failures in the sync pipeline. |
-| **Policy as Code** | **Open Policy Agent (OPA)** | **For Defining Complex Sync Rules.** As the sync engine grows, rules for conflict resolution, data routing, or even user-specific permissions can become complex. OPA allows these rules to be defined as code, separate from the main application logic. This makes the rules easier to manage, audit, and update without requiring a full redeployment of the sync workers. |
-| **DB Schema Migration** | **Flyway / Liquibase** | **For Managing Sync State Schema.** Even though DynamoDB is schemaless, the application's model of the data stored within it (e.g., the structure of the `Orchestration Record` for historical syncs) has a schema. These tools provide a version-controlled way to manage changes to these data structures, ensuring smooth deployments. |
-| **Real-time Pub/Sub** | **Socket.IO / Centrifugo** | **For Live Sync Progress Updates.** To enhance the user experience, these tools could be used to push live updates about sync status to the mobile app, providing immediate feedback to the user without them needing to pull-to-refresh. |
-| **Data Integration (ELT)** | **Airbyte / dbt** | **For Evolving into a Data Platform.** If the business decides to leverage the collected data for analytics, Airbyte could be used to pipe data to a central warehouse, and dbt could be used to transform it for analysis. This provides a clear path for evolving the sync engine into a more comprehensive data platform. |
+*(Section 10 has been removed to align with the decision to standardize on the AWS-native serverless architecture and avoid the operational complexity of a self-hosted open-source stack.)*

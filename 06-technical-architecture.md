@@ -96,7 +96,7 @@ graph TD
     WorkerLambda -- Gets credentials --> SecretsManager
     WorkerLambda -- Reads/Writes --> ElastiCache
     WorkerLambda -.-> AI_Service
-    SQSQueue -- Sends failed messages --> S3
+    SQSQueue -- Sends failed messages to DLQ --> S3
 
     RequestLambda -- Logs & Metrics --> Observability
     WorkerLambda -- Logs & Metrics --> Observability
@@ -154,7 +154,7 @@ To ensure reliability and accommodate platform constraints, SyncWell uses a hybr
 
 ### Model 1: Cloud-to-Cloud Sync
 
-*   **Use Case:** Syncing between two cloud-based services (e.g., Fitbit to Strava).
+*   **Use Case:** Syncing between two cloud-based services (e.g., Garmin to Strava).
 *   **Flow:**
     1.  Mobile app initiates the sync via API Gateway.
     2.  The backend worker lambda handles the entire process: it fetches data from the source API, applies a deterministic conflict resolution strategy (e.g., newest data wins), and writes data to the destination API.
@@ -239,7 +239,7 @@ Below are the different data entities, or "item types," that will be stored in t
 | **User Profile** | `USER#{userId}` | `PROFILE` | `SubscriptionLevel`, `CreatedAt`. Stores top-level user attributes. A user's profile is the root item for all their related data. |
 | **Connection** | `USER#{userId}` | `CONN#{connectionId}` | `Status` (`active`, `needs_reauth`), `CredentialArn`. Represents a user's authenticated link to a 3rd party (e.g., Fitbit). This is referred to as a "Connection". |
 | **Sync Config** | `USER#{userId}` | `SYNCCONFIG#{sourceId}#to#{destId}#to#{dataType}` | `LastSyncTime`, `ConflictStrategy`, `IsEnabled`. Defines a single data sync flow for a user. |
-| **Hist. Sync Job** | `USER#{userId}` | `HISTORICAL##{orchestrationId}` | `OverallStatus`, `TotalChunks`, `CompletedChunks`, `ExecutionArn`. Acts as the state-tracking object for an AWS Step Functions execution that orchestrates a large, chunked historical data sync. |
+| **Hist. Sync Job** | `USER#{userId}` | `HISTORICAL##{orchestrationId}` | `ExecutionArn`, `StartDate`, `Status`. Acts as a pointer to the AWS Step Functions execution that orchestrates a large historical data sync. The definitive status is stored in the state machine itself. |
 
 *Example `SYNCCONFIG` SK:* `SYNCCONFIG#fitbit#to#googlefit#steps` (Note: single `#` delimiters are used for clarity and parsing reliability).
 
@@ -286,11 +286,11 @@ graph TD
 ```
 
 *   **State Machine Logic:**
-    1.  **Initiate Sync Job:** A Lambda function prepares the sync, determining the total number of data chunks to be fetched (e.g., one chunk per month of historical data).
-    2.  **Fetch Job Chunks:** The orchestrator maps over the list of chunks.
-    3.  **Process One Chunk:** A dedicated Lambda function is invoked for each chunk. It fetches the data from the source, transforms it, and writes it to the destination.
-    4.  **Handle Error & Retry:** Step Functions' built-in retry logic will handle transient errors. If a chunk fails repeatedly, it will be logged for manual inspection.
-    5.  **Finalize Sync:** Once all chunks are processed, a final Lambda updates the overall job status to `COMPLETED`.
+    1.  **Initiate & Calculate Chunks:** The workflow is triggered, and a Lambda function calculates the date range, breaking it into an array of smaller, logical chunks.
+    2.  **Process in Parallel (`Map` State):** The state machine uses a `Map` state to iterate over the array of chunks, invoking a worker Lambda for each chunk in parallel. This dramatically improves performance.
+    3.  **Process One Chunk:** The worker Lambda is responsible for the core logic: fetching data for its assigned chunk, transforming it, and writing it to the destination platform.
+    4.  **Error Handling:** The state machine has a declarative `Retry` policy for transient errors. The `Map` state can also be configured with a `Catch` block to handle and log persistent failures for a specific chunk without halting the entire workflow.
+    5.  **Finalize Sync:** After the `Map` state completes, a final Lambda function is invoked to send a "success" push notification to the user.
 
 ## 3c. Core API Contracts
 
@@ -559,9 +559,7 @@ These are technologies that could be game-changers in the longer term. We should
 
 | Technology | Domain | Justification |
 | :--- | :--- | :--- |
-| **Temporal.io** | Workflow Orchestration | While AWS Step Functions is our 'Adopt' choice, Temporal offers potentially more power and flexibility. We will assess its progress and community for future complex workflows. |
-| **Apache Kafka / Redpanda**| Event Streaming | If our system evolves to require more complex event streaming or real-time analytics beyond what SQS provides, these platforms would be the next step to assess. |
-| **MLflow** | MLOps | When we begin developing the AI Insights features, MLflow is a tool we must assess for managing the end-to-end machine learning lifecycle. |
+| **MLflow** | MLOps | When we begin developing the AI Insights features, MLflow is a tool we must assess for managing the end-to-end machine learning lifecycle. It is compatible with our choice of Amazon SageMaker. |
 
 ### Hold
 
