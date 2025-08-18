@@ -29,42 +29,44 @@ The decision to pull an idea from this document into the official roadmap will b
 
 ## 3. Potential Future Enhancements (The "Idea Backlog")
 
-### Theme 1: Deeper Data Intelligence
+These ideas represent the long-term vision for SyncWell, building upon the foundation laid in the Year 1 Roadmap.
 
-*   **Idea:** **SyncWell Insights Engine**
-    *   **Description:** Move beyond simple data transfer to provide users with cross-platform insights. The app would analyze the user's (on-device) canonical data to find interesting correlations.
-    *   **Example:** "We noticed your average sleep duration is 30 minutes longer on days after you perform a running workout. Great job on your recovery!"
+### Theme 1: The Insights Layer (Post-Year 1)
+
+This theme builds on the **Q2: Intelligence & Insight** roadmap. Once SyncWell is the canonical source for a user's health data, we can build an intelligence layer on top of it.
+
+*   **Idea:** **Cross-Platform Insights Engine**
+    *   **Description:** Move beyond data management to provide proactive, cross-platform insights. The app would analyze the user's (on-device) canonical data to find interesting correlations.
+    *   **Example:** "Your sleep quality from Oura improves by an average of 15% on days you run more than 5k with Garmin. Keep it up!"
     *   **Strategic Goal:** Increase user engagement and "stickiness" by providing unique value that no single platform can offer.
-*   **Idea:** **Automated IFTTT-Style Rules Engine**
-    *   **Description:** Allow users to create "if this, then that" rules for their health data.
-    *   **Example:** "IF I finish a run in Strava, THEN log a 'Drank 500ml of water' entry in my nutrition app." or "IF my weight increases by 2kg in a week, THEN create a reminder to schedule a long workout."
-    *   **Strategic Goal:** Transform the app from a simple sync tool into a personalized health automation platform.
+*   **Idea:** **Health Automation Hub (IFTTT-style)**
+    *   **Description:** Allow users to create powerful "if this, then that" rules to automate their health life.
+    *   **Example:** "IF I log a workout > 60 mins on Strava, THEN add a 'Hydration Reminder' to my calendar 30 minutes later."
+    *   **Strategic Goal:** Transform the app from a sync tool into a personalized health automation platform, creating a powerful competitive moat.
 
-### Theme 2: Expanding the Ecosystem
+### Theme 2: SyncWell as a Platform (Post-Year 1)
+
+This theme builds on the **Q4: Scale & Optimize** roadmap, expanding SyncWell from a product into a platform.
 
 *   **Idea:** **SyncWell for Web**
-    *   **Description:** A subscription-based web dashboard for power users.
-    *   **Features:**
-        *   View and manage all sync configurations from a desktop browser.
-        *   Advanced data visualization and charting tools to explore all synced data.
-        *   Perform bulk data exports.
-    *   **Strategic Goal:** Create a new, high-margin recurring revenue stream targeting our most dedicated users.
-*   **Idea:** **SyncWell API for Developers**
-    *   **Description:** Offer a paid API that allows other developers (e.g., a small nutrition app) to access SyncWell's provider architecture.
-    *   **Value Prop:** Instead of building 10 different integrations themselves, a developer could build one integration with the SyncWell API and get access to all of our supported platforms.
-    *   **Strategic Goal:** Diversify revenue and transform SyncWell into a B2B/PaaS (Platform as a Service) company.
+    *   **Description:** A premium, subscription-based web dashboard for Pro users.
+    *   **Features:** View and manage syncs, advanced data visualization, and perform bulk data operations.
+    *   **Strategic Goal:** Create a new, high-margin recurring revenue stream targeting our most dedicated users and solidifying our "power user" positioning.
+*   **Idea:** **SyncWell Developer API**
+    *   **Description:** Offer a paid, public API that allows other developers to access SyncWell's powerful provider architecture.
+    *   **Value Prop:** A small nutrition app could, with one integration, read data from all 20+ services SyncWell supports.
+    *   **Strategic Goal:** Diversify revenue into B2B/PaaS and deeply embed SyncWell into the health-tech ecosystem.
 
-### Theme 3: New Verticals
+### Theme 3: New Business Verticals (Post-Year 1)
 
-*   **Idea:** **SyncWell for Medical**
-    *   **Description:** A separate, HIPAA-compliant version of SyncWell designed to sync data from consumer devices (Fitbit, Oura) to professional electronic health record (EHR) systems used by doctors.
-    *   **Challenges:** This would require a massive investment in security, legal compliance (HIPAA), and enterprise sales. It would likely require growing the company beyond a solo developer.
-    *   **Strategic Goal:** Enter the highly lucrative digital health / medical records market.
-*   **Idea:** **SyncWell for Family**
-    *   **Description:** An optional, privacy-centric version of the app that allows family members to share certain health data with each other.
-    *   **Example:** An adult child could monitor their elderly parent's daily step count as a proxy for well-being. A couple could share their workout data for motivation.
-    *   **Challenges:** Requires extremely careful design of the privacy and consent models.
-    *   **Strategic Goal:** Expand the app's use case from individual to family wellness.
+This theme builds on the introduction of the **Family Plan** in Q4, exploring new B2B and group-based business models.
+
+*   **Idea:** **SyncWell for Corporate Wellness**
+    *   **Description:** A B2B portal that allows companies to offer SyncWell Pro as a benefit to their employees. The portal would provide anonymized, aggregated data to the employer (e.g., "75% of employees met their weekly activity goal") while preserving individual privacy.
+    *   **Strategic Goal:** Enter the lucrative corporate wellness market with a privacy-first solution.
+*   **Idea:** **SyncWell for Health Coaches**
+    *   **Description:** A portal for certified health and fitness coaches to (with explicit user consent) view their clients' incoming data from various platforms in one unified dashboard.
+    *   **Strategic Goal:** Create a high-value B2B subscription tier and become an essential tool for the coaching industry.
 
 ## 4. Evaluation Framework
 When it comes time to consider one of these ideas for the official roadmap, it will be evaluated against a more formal framework:

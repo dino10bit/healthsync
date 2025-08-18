@@ -30,46 +30,49 @@ This is a living document that will be updated quarterly based on user feedback 
 
 ## 3. Themed Product Roadmap (Year 1)
 
-### Q1: Foundation & Launch
+This roadmap strategically rolls out the 10 core features to build a market-leading product over one year.
 
-*   **Theme:** **Achieve a Flawless Launch.** The singular focus is on launching a stable, reliable, and trustworthy MVP that perfectly executes the core sync function for the most important platforms.
+### Q1: Flawless Launch
+
+*   **Theme:** **Build the Most Reliable Sync Engine on the Market.** The focus is on launching an MVP that is exceptionally stable, trustworthy, and solves the single biggest pain point: the Apple vs. Google divide.
 *   **Key Features / Epics:**
-    *   Core Sync Engine (Must-Have)
-    *   Onboarding & Core UX (Must-Have)
-    *   Top 5 Platform Integrations (Must-Have)
-    *   IAP & Trial Logic (Must-Have)
-*   **Business Outcome:** Validate the core product-market fit.
-*   **KPIs:** Onboarding Completion Rate (>80%), Trial-to-Paid Conversion Rate (>10%), App Store Rating (>4.5 stars).
+    *   **The Bridge:** Seamless Apple Health & Google Fit Sync (Must-Have).
+    *   **Event-Driven Architecture:** Build the backend on scalable principles from day one (Must-Have).
+    *   **Sync Health Dashboard:** Provide radical transparency on sync status (Must-Have).
+    *   **The Holistic View:** Support for key wellness data, not just workouts (Must-Have).
+    *   **Transparent Monetization:** Launch with the new Freemium model (Standard & Pro Tiers) (Must-Have).
+*   **Business Outcome:** Establish SyncWell as the most reliable and trustworthy sync tool and validate the core value proposition.
+*   **KPIs:** Sync Success Rate (>99.9%), Backend API Uptime (>99.95%), App Store Rating (>4.7 Stars).
 
-### Q2: User-Driven Expansion
+### Q2: Intelligence & Insight
 
-*   **Theme:** **Listen and Respond.** The focus is on demonstrating responsiveness to the initial user base by adding the most highly-requested integrations and features.
+*   **Theme:** **Go Beyond Syncing to Intelligent Data Management.** The focus is on introducing smart features that actively solve data-quality problems for users, creating major differentiation.
 *   **Key Features / Epics:**
-    *   **Top 3 Voted Integrations:** Implement the top 3 integrations from the public feedback portal (e.g., Oura, Withings, Polar).
-    *   **Historical Data Sync:** Deliver this key premium feature.
-    *   **Subscription Option:** Add the 6-month subscription IAP.
-*   **Business Outcome:** Increase user base and build community trust.
-*   **KPIs:** User Growth Rate (20% MoM), Feature Adoption Rate (for new integrations), "Feedback-to-Feature" Cycle Time.
+    *   **Smart Conflict Resolution Engine:** Intelligently merge duplicate activities (Should-Have). This will be the flagship "Pro" feature for the quarter.
+    *   **The Recovery Sync:** Allow Pro users to import their complete history (Should-Have).
+    *   **Top Voted Integration:** Add the #1 most-requested new service from user feedback.
+*   **Business Outcome:** Drive conversion to the "Pro" tier by delivering features that provide immense and obvious value.
+*   **KPIs:** Free-to-Pro Conversion Rate, Adoption Rate of Conflict Resolution Feature, User CSAT.
 
-### Q3: Deepen the Experience
+### Q3: Automation & Control
 
-*   **Theme:** **Enhance Control and Utility.** The focus is on moving beyond basic sync to give power users more control and utility.
+*   **Theme:** **Give Power Users Unprecedented Control.** The focus is on building out the "Pro" feature set to cater to our most demanding and valuable users.
 *   **Key Features / Epics:**
-    *   **Activity Filtering:** Allow users to filter synced activities by type, duration, or distance.
-    *   **Data Export/Import:** Allow users to export and import their data in standard formats (FIT/GPX).
-    *   **Granular Notifications:** Add more user-configurable notification options.
-*   **Business Outcome:** Increase engagement and stickiness of the product.
-*   **KPIs:** DAU/MAU Ratio (>30%), Adoption of Power-User Features, Reduction in "How-To" Support Tickets.
+    *   **Pro-Tier Power User Tools:** Introduce advanced data editing and rule-based merging capabilities (Should-Have).
+    *   **Pre-Sync Preview:** Give users the option to approve changes before they happen, a huge trust-builder (Could-Have).
+    *   **Another Top Voted Integration:** Continue to expand the ecosystem based on user feedback.
+*   **Business Outcome:** Increase ARPU and reduce churn by making the Pro tier indispensable for power users.
+*   **KPIs:** Pro Tier Churn Rate (<2%), Adoption of Power User Tools, Increase in LTV.
 
-### Q4: Global Reach & Optimization
+### Q4: Scale & Optimize
 
-*   **Theme:** **Expand the Market.** The focus is on growing the user base beyond the initial English-speaking market and optimizing the monetization funnel.
+*   **Theme:** **Grow the User Base and Optimize for the Future.** With a mature and feature-rich product, the focus shifts to expanding the user base and ensuring long-term technical health.
 *   **Key Features / Epics:**
-    *   **Localization (Top 3 Languages):** Translate the app and store listings into the top 3 languages identified from user analytics.
-    *   **A/B Testing:** Run at least two A/B tests on the paywall (e.g., pricing, copy) to optimize conversion.
-    *   **Performance Polish:** Dedicate significant time to profiling and optimizing the app's performance and battery usage.
-*   **Business Outcome:** Grow revenue and expand the total addressable market.
-*   **KPIs:** International User Growth, Increase in Trial Conversion Rate, Improvement in key performance metrics (e.g., app launch time).
+    *   **Family Health Plan:** Introduce the family subscription model to grow the user base and revenue (Could-Have).
+    *   **Architectural Polish:** Dedicate a "hardening" sprint to pay down tech debt and conduct rigorous load testing to ensure the platform is ready for the next 10 million users.
+    *   **A/B Testing the Onboarding:** Run tests to optimize the flow for converting new free users into happy Pro customers.
+*   **Business Outcome:** Accelerate user growth and ensure the platform is robust and scalable for years to come.
+*   **KPIs:** Number of Active Family Plan subscriptions, Reduction in Average Sync Latency, Improvement in key Onboarding funnel metrics.
 
 ## 4. Resource Allocation (Time Management)
 

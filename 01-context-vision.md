@@ -18,7 +18,7 @@
 
 This document outlines the strategic context and product vision for **SyncWell**, a cross-platform health and fitness data synchronization application for Android and iOS. In the fragmented digital health market, users often invest in multiple devices and applications (e.g., a Garmin watch for running, an Oura ring for sleep, a Fitbit for daily tracking). This creates data silos, preventing users from seeing a holistic view of their health and forcing manual, error-prone data entry. SyncWell addresses this critical pain point by providing a secure, reliable, and user-friendly "digital bridge" between these services.
 
-Inspired by the proven market success of Health Sync, SyncWell aims to capture a significant market share by focusing on superior user experience, transparent privacy policies, and responsive, developer-led support.
+Inspired by the proven market success of Health Sync, SyncWell aims to capture a significant market share by focusing on superior user experience, transparent privacy policies, and responsive, developer-led support. It will achieve market leadership through a suite of unique, high-value features, including intelligent conflict resolution and historical data recovery, all designed for reliability at scale.
 
 The primary goal of this PRD is to provide a comprehensive, enterprise-grade roadmap. As the project will be executed by a **single engineer**, this document is structured to be highly actionable, with a strong focus on prioritization, risk mitigation, and phased implementation. It is also intended to be **investor-ready**, demonstrating a clear vision, a viable business model, and a well-defined execution strategy.
 
@@ -36,9 +36,9 @@ The primary goal of this PRD is to provide a comprehensive, enterprise-grade roa
 
 | Strategic Goal | Key Performance Indicators (KPIs) | Target (Year 1) |
 | :--- | :--- | :--- |
-| **Achieve Product-Market Fit** | - Onboarding Completion Rate<br>- Trial-to-Paid Conversion Rate<br>- App Store Rating | - >80%<br>- >15%<br>- 4.5+ Stars |
+| **Achieve Product-Market Fit** | - Onboarding Completion Rate<br>- Trial-to-Paid Conversion Rate<br>- App Store Rating<br>- **Feature Adoption Rate** | - >80%<br>- >15%<br>- 4.5+ Stars<br>- >30% for key features |
 | **Build a Sustainable Business** | - Monthly Recurring Revenue (MRR)<br>- Average Revenue Per User (ARPU)<br>- Churn Rate | - $5,000<br>- >$5<br>- <5% |
-| **Deliver Best-in-Class Reliability**| - Sync Success Rate<br>- Crash-Free User Rate<br>- User-Reported Sync Errors | - >99%<br>- >99.5%<br>- <0.1% of active users/month |
+| **Deliver Best-in-Class Reliability**| - Sync Success Rate<br>- **Average Sync Latency**<br>- **Backend API Uptime**<br>- Crash-Free User Rate | - >99%<br>- <5s<br>- >99.95%<br>- >99.5% |
 | **Establish a Loyal User Base**| - DAU/MAU Ratio<br>- Support Ticket CSAT<br>- Net Promoter Score (NPS) | - >30%<br>- >90%<br>- >50 |
 
 ## 5. Functional & Non-Functional Requirements
@@ -56,7 +56,7 @@ The primary goal of this PRD is to provide a comprehensive, enterprise-grade roa
 *   **Reliability:** The app must ensure >99% data integrity and sync reliability. Data loss or corruption is not acceptable.
 *   **Performance:** App launch time <2s. UI animations at 60fps. Background syncs must be battery-efficient and not appear on the OS's high-consumption list.
 *   **Security:** All data transfer over TLS 1.2+. Sensitive tokens stored exclusively in the platform's native Keychain/Keystore. No personal health data stored on company servers.
-*   **Scalability:** The architecture must be modular to support adding new integrations without degrading performance. Any backend services must be serverless and auto-scaling.
+*   **Scalability:** The backend architecture must support **1 million Daily Active Users (DAU)** with an average of 4 syncs per day per user, and handle peak loads of up to **10,000 requests per second (RPS)** without performance degradation. The system should adhere to serverless and event-driven principles (e.g., using services like AWS Lambda, DynamoDB, SQS) to ensure cost-efficiency, minimal operational overhead, and automatic scaling.
 *   **Usability:** The app must be intuitive enough for a non-technical user to configure their first sync within 2 minutes of completing onboarding.
 
 ## 6. Risk Analysis & Mitigation
@@ -69,15 +69,18 @@ The primary goal of this PRD is to provide a comprehensive, enterprise-grade roa
 | **R-02**| The app is rejected from the app stores due to policy violations. | Medium | High | Thoroughly review and adhere to all app store guidelines, particularly those related to health data and subscriptions. |
 | **R-03**| The solo developer becomes a single point of failure (e.g., due to illness). | Low | High | Maintain comprehensive documentation and consider establishing a contingency plan with a trusted third-party developer. |
 | **R-04**| The app fails to gain traction and attract a sufficient user base. | Medium | High | Focus on a core set of highly-requested integrations for the MVP. Implement a targeted marketing strategy and a generous free trial to encourage adoption. |
+| **R-05**| **Failure at Scale:** Backend services or third-party rate limits fail under the load of millions of users, causing cascading failures. | Medium | High | Rigorous load testing, designing for graceful degradation, and proactive rate limit management. |
+| **R-06**| **Feature Creep:** The 10 new features dilute focus from the core MVP. | High | Medium | A phased rollout strategy as defined in the `13-roadmap.md`, with clear go/no-go decisions for each feature based on MVP success. |
 
 
 ## 7. Execution Plan / Step-by-Step Implementation
 
 1.  **Phase 1: Foundation & Prototyping (4-6 weeks)**
-    *   **Task 1.1:** Finalize technology stack (cross-platform framework, state management, database).
+    *   **Task 1.1 (Tech Stack):** A critical early task is to select the primary mobile framework. The analysis will compare Flutter and Kotlin Multiplatform, focusing on background processing capabilities, developer ecosystem, and suitability for scaling to millions of users.
     *   **Task 1.2:** Develop a proof-of-concept for the core data sync engine, connecting Apple Health and Google Fit via their native APIs.
     *   **Task 1.3:** Develop a proof-of-concept for a single cloud-based API (e.g., Fitbit) to validate the OAuth flow.
     *   **Task 1.4:** Create detailed UX flow diagrams and wireframes for the core user journeys.
+    *   **Task 1.5 (New): Backend Architecture Design:** Design the scalable serverless backend architecture to meet the non-functional requirements for DAU and RPS.
 2.  **Phase 2: MVP Development (8-12 weeks)**
     *   **Task 2.1:** Build out the full provider architecture and implement the top 5-6 integrations.
     *   **Task 2.2:** Implement the full monetization flow (trial, IAP, subscription) and test with sandbox accounts.

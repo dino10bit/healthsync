@@ -28,35 +28,34 @@ The MVP for SyncWell is guided by the "depth over breadth" principle. Instead of
 
 ### Must-Have (Core MVP Requirements)
 
-*   **M1: Core Data Sync Engine:** The underlying system for reliably transferring data must be fully functional.
-*   **M2: Key Platform Integrations:** Full support for Google Fit (Android), Apple Health (iOS), Fitbit, Garmin (read-only), and Strava.
-*   **M3: Essential Data Types:** Synchronization of Steps, Activities, Sleep, Weight, and Heart Rate.
+*   **M1: Core Data Sync Engine:** The underlying system for reliably transferring data must be fully functional. This includes being built on a scalable, **Event-Driven Architecture** to ensure reliability from day one.
+*   **M2: The Bridge - Key Platform Integrations:** Full, bi-directional support for **Google Fit** and **Apple Health**. This is the primary market differentiator. Also includes support for other key platforms like Fitbit, Garmin (read-only), and Strava.
+*   **M3: The Holistic View - Essential Data Types:** Synchronization of a broad range of data beyond just workouts, including Steps, Activities, Sleep, Weight, and Heart Rate, to provide a complete health picture.
 *   **M4: User Onboarding:** A simple, guided flow to connect at least two apps and configure the first sync.
-*   **M5: Sync Configuration UI:** An intuitive interface to create, view, and delete sync connections.
-*   **M6: 7-Day Free Trial:** Automatic, no-credit-card-required free trial.
-*   **M7: Lifetime License IAP:** A functional one-time purchase option via native app store billing.
-*   **M8: Basic Help Center:** An in-app FAQ covering at least the top 10 anticipated issues.
+*   **M5: Sync Health Dashboard:** An intuitive interface to create, view, and delete sync connections, and which clearly displays the status and last sync time for each connection, building user trust.
+*   **M6: Transparent Monetization:** A clear, upfront pricing model with a 7-day free trial and a functional one-time purchase (Lifetime License) via native app store billing. No hidden fees or "bait-and-switch" tactics.
+*   **M7: Basic Help Center:** An in-app FAQ covering at least the top 10 anticipated issues.
 
 ### Should-Have (If Time Permits, High-Priority Post-MVP)
 
-*   **S1: Historical Data Sync:** The ability for premium users to backfill data. This is a key value proposition but is complex and can be deferred from the initial launch if necessary to meet timelines.
-*   **S2: Subscription Purchase Option:** Offering a 6-month subscription alongside the lifetime license.
-*   **S3: Additional Integrations:** Adding 1-2 more popular integrations like Oura or Suunto.
-*   **S4: In-App "What's New" Screen:** A changelog to show users upon app update.
+*   **S1: The Recovery Sync - Historical Data Import:** A key value proposition for stickiness. Allows premium users to backfill their complete data history from major platforms.
+*   **S2: Smart Conflict Resolution Engine:** A major differentiator. Intelligently detects duplicate entries and allows users to merge them or choose a "source of truth."
+*   **S3: Pro-Tier Power User Tools:** Introduce a subscription option that unlocks advanced features like manual data editing, advanced merging rules, and granular data export.
+*   **S4: Additional Integrations:** Adding 1-2 more popular integrations like Oura or Suunto based on user demand.
 
 ### Could-Have (Long-Term Enhancements)
 
-*   **C1: Advanced Activity Filtering:** Allowing users to filter syncs by activity type, duration, etc.
-*   **C2: Data Export/Import:** Features to export or import data using standard file formats (FIT, GPX).
-*   **C3: Analytics & Visualizations:** In-app charts and graphs showing user data trends.
+*   **C1: Pre-Sync Preview:** A trust-building feature that shows the user exactly what data will be changed before they approve the sync.
+*   **C2: Family Health Plan:** A subscription tier for families to share the benefits of the Pro-Tier under one bill.
+*   **C3: Advanced Activity Filtering:** Allowing users to filter syncs by activity type, duration, etc.
 *   **C4: Localization:** Translating the app into other languages.
 
 ### Won't-Have (Explicitly Out of Scope for Foreseeable Future)
 
 *   **W1: Social Features:** No friend lists, activity sharing, or leaderboards.
-*   **W2: Web Dashboard:** The product will be mobile-only.
-*   **W3: Direct User-to-User Data Sharing:** The app will not facilitate sharing data between users.
-*   **W4: Creating/Editing Health Data:** The app is a data conduit; it will not allow users to manually create or edit health entries.
+*   **W2: Web Dashboard:** The product will be mobile-only for the foreseeable future.
+*   **W3: Proprietary Data Visualization:** The app will not build its own charting or graphing libraries. It is a data conduit, not an analytics platform. Users should analyze their data in their destination app of choice.
+*   **W4: Creating/Editing Health Data (beyond conflict resolution):** The app will not allow users to manually create or edit health entries, except for the specific tools provided in the Smart Conflict Resolution feature.
 
 ## 4. User Personas
 
