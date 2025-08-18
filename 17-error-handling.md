@@ -17,39 +17,39 @@
 
 ## 1. Executive Summary
 
-This document specifies the comprehensive strategy for error handling, logging, and monitoring within the SyncWell application. The goal is to build a highly resilient and observable system that can gracefully handle unexpected issues, provide clear feedback to the user, and give the developer powerful tools to diagnose and resolve problems quickly.
+This document specifies the comprehensive strategy for error handling, logging, and monitoring for the entire SyncWell ecosystem, including both the **mobile application and the AWS backend**. The goal is to build a highly resilient and observable system that can gracefully handle unexpected issues, provide clear feedback to the user, and give the engineering team powerful tools to diagnose and resolve problems quickly.
 
-This enterprise-grade approach moves beyond simple `try/catch` blocks to a structured system with a centralized error handler, structured JSON logging, and actionable monitoring dashboards. For the **solo developer**, this investment in observability is critical for maintaining a high-quality service efficiently.
+This enterprise-grade approach uses structured logging, centralized error handling, and targeted alerting to ensure high service quality.
 
 ## 2. Error Handling Architecture
 
-A centralized `ErrorHandler` service will be the single point through which all application errors flow. This ensures that handling policies are applied consistently.
+### 2.1. Client-Side Error Handling
+A centralized `ErrorHandler` service on the mobile client will be the single point through which all application-level errors flow. This ensures consistent handling of UI errors, validation errors, and network errors when communicating with our backend.
 
-1.  **Error Occurs:** A caught exception or API failure occurs somewhere in the app.
-2.  **`ErrorHandler.handle(error, context)` is called:** The raw error object is passed to the central handler, along with contextual information (e.g., the name of the operation that failed).
-3.  **Triage & Classification:** The `ErrorHandler` inspects the error type and uses the **Error Code Dictionary** (see Section 3) to classify it as `USER_FACING`, `RECOVERABLE`, or `CRITICAL`.
-4.  **Action Dispatch:** Based on the classification, the handler dispatches the appropriate actions:
-    *   Show a user-facing message via a `NotificationService`.
-    *   Log the error to the local device log via a `LoggingService`.
-    *   Report the error to the remote monitoring service (Firebase Crashlytics).
+### 2.2. Backend Error Handling
+The backend's error handling is centered around the **SQS Dead-Letter Queue (DLQ)**.
 
-## 3. Error Code Dictionary
+1.  **Error Occurs:** A worker Lambda fails to process a sync job (e.g., due to a third-party API being down or returning malformed data).
+2.  **Automatic Retries:** SQS and Lambda have a built-in retry mechanism. The worker will attempt to process the job several times with exponential backoff.
+3.  **Move to DLQ:** If the job fails all retry attempts, SQS automatically moves the job message to a pre-configured Dead-Letter Queue.
+4.  **Alerting:** A CloudWatch Alarm is configured to monitor the DLQ. When the number of messages in the DLQ is greater than zero, an alert is sent to the engineering team.
+5.  **Isolation:** This mechanism is critical because it isolates the failing job, allowing the rest of the queue to continue processing normally. The failed job can be inspected and analyzed without halting the entire system.
 
-An internal, version-controlled dictionary (e.g., a JSON or TypeScript file) will map internal error types to handling policies. This creates a single source of truth.
+## 3. Unified Error Code Dictionary
+
+A version-controlled dictionary will be the single source of truth for error definitions, shared between the backend and client. When the backend encounters a specific, known error (e.g., an expired token), it will update the sync status in DynamoDB with a specific error code. The client reads this code and uses the dictionary to display the correct localized message and recovery action to the user.
 
 **Example Entry:**
 ```json
 {
   "FITBIT_TOKEN_EXPIRED": {
     "logLevel": "WARN",
-    "isCritical": false,
-    "userMessage": "Your connection to Fitbit has expired. Please tap here to sign in again.",
+    "userMessageKey": "error_fitbit_token_expired",
     "userAction": "NAVIGATE_TO_REAUTH_FITBIT"
   },
-  "DATABASE_CORRUPTION": {
+  "GARMIN_API_UNAVAILABLE": {
     "logLevel": "ERROR",
-    "isCritical": true,
-    "userMessage": "SyncWell has encountered a problem with its local database. Please try restarting the app or contact support.",
+    "userMessageKey": "error_service_unavailable_garmin",
     "userAction": "SHOW_SUPPORT_CONTACT"
   }
 }
@@ -57,62 +57,58 @@ An internal, version-controlled dictionary (e.g., a JSON or TypeScript file) wil
 
 ## 4. Structured Logging Strategy
 
-All local logs will be written as structured JSON objects to enable easier parsing and analysis.
+### 4.1. Client-Side Logging
+The mobile app will maintain a local, rotating log file with structured JSON entries for targeted debugging of device-specific issues.
 
-*   **Log Format:** Each log entry will be a JSON object with the following schema:
-    ```json
-    {
-      "timestamp": "2023-10-27T14:30:00.123Z", // ISO 8601
-      "level": "INFO", // DEBUG, INFO, WARN, ERROR
-      "message": "Sync job completed",
-      "context": {
-        "jobId": "xyz-123",
-        "source": "fitbit",
-        "destination": "googlefit",
-        "durationMs": 15234
-      },
-      "error": { // Optional, only for ERROR level
-        "name": "FitbitApiError",
-        "statusCode": 429
-      }
-    }
-    ```
-*   **PII Scrubbing:** A utility will be used to automatically scrub all log objects for anything that resembles an email address, user ID, or other PII before it is written to the log file.
-*   **Log Rotation:** The on-device `LoggingService` will manage log files, keeping a maximum of 5 files of 5MB each, automatically deleting the oldest file.
+### 4.2. Backend Logging
+All backend Lambda functions will output structured JSON logs to **AWS CloudWatch Logs**. This is the primary source of information for debugging backend processes. The log schema will be consistent with the client-side schema.
 
-## 5. Monitoring & Alerting Dashboards
+**Example Log Entry (CloudWatch):**
+```json
+{
+  "timestamp": "2023-10-27T14:30:00.123Z",
+  "level": "ERROR",
+  "message": "Sync job failed: Unhandled exception from provider.",
+  "context": {
+    "jobId": "xyz-123",
+    "source": "garmin",
+    "userId": "abc-456"
+  },
+  "error": {
+    "name": "GarminApiError",
+    "statusCode": 503,
+    "message": "Service Unavailable"
+  }
+}
+```
+*   **PII Scrubbing:** No sensitive data like OAuth tokens will ever be logged. User IDs are logged to allow tracing a user's journey through the system.
 
-The developer will configure specific dashboards in Firebase to provide at-a-glance system observability.
+## 5. Monitoring & Alerting
 
-### Primary Firebase Dashboard Widgets:
+### 5.1. Client-Side (Firebase)
+*   **Dashboard:** Focuses on crashes and UI performance (see `39-performance-metrics.md`).
+*   **Alerts:**
+    *   New crash detected.
+    *   Crash-free user rate drops below 99.9%.
 
-*   **Crash-Free Users (Last 24h):** The main KPI.
-*   **Top 5 Crashes by Occurrence:** Shows where to focus debugging efforts.
-*   **App Version Adoption:** Tracks the rollout of new releases.
-*   **API Error Rate by Provider:** A custom chart tracking logged errors (non-crashes) for each third-party API (e.g., `FitbitApiError`, `GarminApiError`). This is a critical early warning system for partner outages.
-*   **Payment Failure Rate:** Tracks errors related to IAP processing.
+### 5.2. Backend-Side (AWS CloudWatch)
+*   **Dashboard:** Focuses on API health, Lambda performance, and queue depth (see `39-performance-metrics.md`).
+*   **Alerts (High Priority - PagerDuty/Slack):**
+    *   **Messages in the Dead-Letter Queue.** This is our most critical alert.
+    *   Significant spike in Lambda errors or 5xx errors on API Gateway.
+    *   SQS queue depth growing for a sustained period.
+    *   DynamoDB table is being throttled.
 
-### Alerting Rules:
+## 6. Visual Diagrams
 
-Alerts will be configured in Firebase to trigger emails to the developer:
-*   **High Priority:**
-    *   When any new type of crash is detected.
-    *   When the crash-free user rate drops below 99.5% for an hour.
-*   **Medium Priority:**
-    *   When there is a significant spike (>200%) in a specific, non-fatal logged error (e.g., `FITBIT_TOKEN_EXPIRED`).
-
-## 6. Risk Analysis & Mitigation
-
-(This section remains largely the same but is included for completeness.)
-
-| Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
-| :--- | :--- | :--- | :--- | :--- |
-| **R-49** | Logs contain sensitive user data, leading to a privacy violation. | Low | High | The structured logging format and the PII scrubbing utility provide a strong defense. This must be a key item in the pre-launch security audit. |
-| **R-50** | Excessive logging impacts application performance. | Medium | Medium | Use an asynchronous logging library. The `LoggingService` will batch writes to the file system instead of writing on every single log call. |
-| **R-51** | The developer is overwhelmed by the volume of error alerts ("alert fatigue"). | Medium | Medium | The alerting rules are designed to be specific. Fine-tuning these rules based on real-world noise levels will be an ongoing task. |
-
-## 7. Optional Visuals / Diagram Placeholders
-*   **[Diagram] Error Handling Architecture:** A flowchart showing how an error is passed to the central `ErrorHandler` and then dispatched to the logging, notification, and monitoring services.
-*   **[Code Snippet] Structured Log Example:** A formatted JSON snippet showing a real-world example of a log entry.
-*   **[Mockup] Monitoring Dashboard:** A mockup of the proposed Firebase dashboard, showing the layout of the key charts and metrics defined in Section 5.
-*   **[Table] Error Code Dictionary:** A sample of the error code dictionary, showing several error types and their associated handling policies.
+### Backend Error Handling Flow (DLQ)
+```mermaid
+graph TD
+    A[SQS Job Queue] --> B{Worker Lambda};
+    B -- Success --> C[Delete Job];
+    B -- Failure --> D{Retry?};
+    D -- Yes --> B;
+    D -- No (Max Retries) --> E[Move to Dead-Letter Queue];
+    E --> F[CloudWatch Alarm];
+    F --> G[Alert Engineering Team];
+```

@@ -16,65 +16,68 @@
 
 ## 1. Executive Summary
 
-This document provides the detailed technical and functional specification for the **Data Import** feature in SyncWell. This feature allows users to import activity files (FIT, TCX, GPX) from their device, enabling them to bring in data from unsupported devices or migrate their workout history. This positions SyncWell as a true central hub for health data.
+This document provides the detailed specification for the **Data Import** feature. This feature allows users to import activity files (FIT, TCX, GPX), enabling them to bring in data from unsupported devices.
 
-The architecture is designed to be a natural extension of the existing sync engine, reusing the canonical data model. This specification details the parsing architecture, the user experience for handling data mapping and duplicates, and the validation process.
+To ensure reliability and consistency with the rest of our ecosystem, the import process is built on an **asynchronous, backend-driven architecture**. This specification details the process of uploading the file, having the backend parse and validate it, and then prompting the user for a final review before syncing.
 
-## 2. Data Import Architecture
+## 2. Data Import Architecture (Backend-Driven)
 
-The import feature will be built on a modular `Parser` architecture.
-
-*   **`ImportManager`:** The high-level service that is invoked when the OS passes a file to the app. It identifies the file type and delegates the parsing to the appropriate `Parser` module.
-*   **`Parser` (Interface):** A standardized interface for all file parsers.
-    ```typescript
-    interface Parser {
-      // Returns a list of file extensions it supports (e.g., ["fit"])
-      getSupportedExtensions(): string[];
-
-      // Parses a file into an array of canonical data objects
-      // (An activity file might contain multiple activities)
-      parseFile(filePath: string): Promise<CanonicalData[]>;
-    }
-    ```
-*   **Concrete Implementations:** `FitFileParser`, `TcxParser`, `GpxParser`. Each will encapsulate the logic and any third-party libraries needed to parse its specific format into the `CanonicalActivity` model.
+1.  **Initiation & Upload (Mobile):** A user selects a file (e.g., `.fit`) and uses "Open with SyncWell." The mobile app uploads this file to a secure, temporary folder in our **S3 bucket**.
+2.  **Job Request (Mobile -> Backend):** The app sends a request to a new `/import` endpoint, providing the S3 URL of the uploaded file.
+3.  **Queueing (Backend):** The backend creates an import job in a DynamoDB table and places a message in a dedicated **`import-queue` in SQS**.
+4.  **Parsing & Validation (Backend):** An **`import-worker` (Lambda)** picks up the job. It downloads the file from S3 and uses a modular `Parser` to convert it into our `CanonicalActivity` model.
+5.  **Duplicate Check (Backend):** The worker then queries the destination APIs to check for existing activities with a similar start time.
+6.  **Ready for Review (Backend -> Mobile):** The worker saves the parsed data, along with any issues found (e.g., `duplicate_found`, `mapping_needed`), to the DynamoDB job table. It then sends a **push notification** to the user: *"Your imported file is ready for review."*
+7.  **User Confirmation (Mobile):** The user taps the notification. The app fetches the preview data from the backend, and the user resolves any issues (e.g., chooses to "Import Anyway" on a duplicate).
+8.  **Final Sync (Mobile -> Backend):** The user's confirmation is sent to the backend, which then places the final, approved sync job into the main `hot-queue` for processing.
 
 ## 3. User Experience & Workflow
 
-1.  **Initiation:** A user selects a `.fit`, `.tcx`, or `.gpx` file in an external app (e.g., Files) and chooses "Open with SyncWell."
-2.  **Parsing & Validation:** The `ImportManager` receives the file and invokes the correct `Parser`. The parser validates the file; if it's corrupt, an error message is shown ("This file appears to be corrupt and cannot be read.").
-3.  **Preview & Configure Screen:**
-    *   The app displays a summary of the parsed activity (e.g., "Running, 5.2 miles").
-    *   **Data Mapping:** If the activity type is unrecognized (e.g., "Kitesurfing"), a dropdown will appear: "Map 'Kitesurfing' to a known activity type." The user can then map it to a canonical type like `OTHER`. The app will remember this mapping for future imports.
-    *   **Destination Selection:** The user selects one or more destination apps to sync the activity to. Invalid destinations (like Garmin) are disabled.
-4.  **Duplicate Check:**
-    *   Before queueing the sync, the `ImportManager` queries the destination app(s) for activities with a similar start time (+/- 2 minutes).
-    *   If a potential duplicate is found, a new screen appears showing the imported activity and the existing activity side-by-side. The user is presented with two options: "Import Anyway" or "Skip Import."
-5.  **Queueing:** If there are no duplicates (or the user chooses to import anyway), the `CanonicalActivity` object is added to the `P0_REALTIME_QUEUE` for syncing. The user is shown a confirmation message.
+1.  **Initiation:** User opens a file with SyncWell.
+2.  **Upload:** The app shows a status: *"Uploading file..."*
+3.  **Processing:** The status updates: *"We're processing your file. We will notify you when it's ready for review."* The user can safely close the app.
+4.  **Review Notification:** The user receives a push notification.
+5.  **Preview & Configure Screen:** Tapping the notification opens a screen showing a summary of the parsed activity. Here, the user can:
+    *   Map any unrecognized activity types.
+    *   Select the destination(s).
+    *   Resolve any potential duplicates that the backend has flagged.
+6.  **Confirmation:** The user taps "Confirm Import." The data is then queued for syncing, and a confirmation message is shown.
 
 ## 4. Import Limitations & User Communication
 
-*   **Activities Only:** The feature is exclusively for activity files. The app will show an error if the user attempts to open an unsupported file type (e.g., a `.csv`).
-*   **Data Completeness:** The Preview screen must clearly indicate what data was found in the file. If a GPX file is imported, the UI will show the GPS map but will have labels like "Heart Rate: Not available in file."
-*   **Destination Limitations:** The destination selection UI will be identical to the main sync configuration UI, meaning read-only platforms like Garmin will be automatically disabled.
+*   **Activities Only:** The feature is exclusively for activity files (FIT, TCX, GPX).
+*   **Data Completeness:** The Preview screen must clearly indicate what data was found in the file.
+*   **Destination Limitations:** The destination selection UI will disable read-only platforms like Garmin.
 
 ## 5. Validation & Error Handling
 
-*   **File Corrupt:** If a parser throws an exception because the file is malformed, the user is shown a "File Corrupt or Unreadable" error.
-*   **Missing Key Data:** If a file is parsed successfully but is missing data required to create a valid `CanonicalActivity` (e.g., a start time), the user is shown an error: "This file is missing key information (like a start time) and cannot be imported."
-*   **Parser Unit Tests:** Each `Parser` module must have a comprehensive suite of unit tests that use a "golden set" of sample files to verify that they are parsed into the correct canonical representation. This is the primary defense against parsing regressions.
+*   **Backend Validation:** The `import-worker` is responsible for all validation.
+*   **File Corrupt:** If the `Parser` fails, the worker sets the job status to `FAILED` in DynamoDB with the error `FILE_CORRUPT`. The user is notified.
+*   **Missing Key Data:** If the file is missing required data (e.g., a start time), the job status is set to `FAILED` with the error `MISSING_DATA`.
+*   **Parser Unit Tests:** Each `Parser` module on the backend must have a comprehensive suite of unit tests in the CI/CD pipeline to prevent parsing regressions.
 
-## 6. Risk Analysis & Mitigation
+## 6. Visual Diagrams
 
-(This section remains largely the same but is included for completeness.)
+### Backend-Driven Import Architecture
+```mermaid
+graph TD
+    subgraph Mobile App
+        A[Open File]
+        B[Upload to S3]
+        C[Send Job to Backend]
+        F[Review & Confirm]
+    end
+    subgraph AWS Backend
+        D[SQS Import Queue]
+        E[Import Worker (Lambda)]
+        G[SQS Hot Queue]
+    end
 
-| Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
-| :--- | :--- | :--- | :--- | :--- |
-| **R-94** | A user tries to import a malformed file, causing the app to crash. | **Low** | **High** | The `ImportManager` will wrap all calls to the `Parser` modules in a top-level try/catch block. A failure at any point in the parsing process will result in a user-friendly error message, not a crash. |
-| **R-95** | The imported data appears incorrectly in the destination app due to a flaw in the parser. | **Medium** | **Medium** | The unit tests for the parsers, using a wide variety of real-world sample files, are the key mitigation. The Preview screen also allows the user to sanity-check the data before it's synced. |
-| **R-96**| The duplicate detection logic is either too aggressive or not aggressive enough. | **Medium** | **Low** | The side-by-side duplicate comparison screen is the mitigation. It empowers the user to make the final call, preventing the app from making an incorrect decision on their behalf. |
-
-## 7. Optional Visuals / Diagram Placeholders
-*   **[Diagram] Import Architecture:** A component diagram showing the `ImportManager` and the different `Parser` interface implementations.
-*   **[User Flow Diagram] Data Import Journey:** A detailed flowchart showing the entire import process, including the file parsing, preview screen, user-guided mapping, duplicate check, and final queueing.
-*   **[Mockup] Import Preview Screen:** A mockup of the preview screen, showing the activity summary and the destination app selection.
-*   **[Mockup] Duplicate Resolution UI:** A mockup of the side-by-side comparison screen for resolving potential duplicates.
+    A --> B
+    B --> C
+    C --> D
+    D -- Polls --> D
+    E -- Parses, Validates, Checks Duplicates --> E
+    E -- Sends 'Ready for Review' Push --> F
+    F -- Sends Confirmation --> G
+```

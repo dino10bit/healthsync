@@ -17,127 +17,95 @@
 
 ## 1. Executive Summary
 
-This document provides the definitive technical specification for SyncWell's data mapping and transformation engine. This engine is the core of SyncWell's intellectual property and is responsible for accurately translating health data between disparate platform-specific formats. The system is built around a **versioned, canonical data model** that serves as a universal intermediary.
+This document provides the definitive technical specification for SyncWell's data mapping and transformation engine. This engine is the core of SyncWell's intellectual property, responsible for accurately translating health data between disparate formats. The system is built around a **versioned, canonical data model** that serves as a universal intermediary.
 
-This specification is a critical blueprint for the **solo developer**. It details the precise structure of the canonical models and provides a "cookbook" of rules and patterns for handling the complex nuances of data mapping. A robust and well-tested mapping engine is the foundation of a reliable product and user trust.
+This specification is a critical blueprint for the **engineering team**. It details the canonical models and provides rules for handling data mapping. This engine runs in two places depending on the sync type: on the **backend workers** for cloud-to-cloud syncs, and on the **mobile client** for device-native syncs (e.g., HealthKit).
 
 ## 2. The Canonical Data Schema (v1)
 
-All data moving through the SyncWell engine is converted to and from this standardized schema. All timestamps are in ISO 8601 format and are normalized to UTC.
+All data moving through the SyncWell engine is converted to and from this standardized schema. All timestamps are in ISO 8601 format and are normalized to UTC. The schema will be implemented as a set of `serializable` data classes in the **Kotlin Multiplatform (KMP) shared module**, allowing the exact same models to be used on the client and the backend.
 
-```typescript
-// All models are versioned for future migrations.
-const SCHEMA_VERSION = 1;
-
-// Base interface for all data points
-interface CanonicalBase {
-  type: 'ACTIVITY' | 'SLEEP' | 'WEIGHT' | 'HEART_RATE_SUMMARY';
-  // A unique hash of the source data to help prevent duplicates
-  sourceDataHash: string;
-}
-
-// --- ACTIVITY ---
-enum ActivityType { RUNNING, CYCLING, WALKING, SWIMMING, STRENGTH, OTHER }
-interface GpsPoint { lat: number; lon: number; elevation?: number; timestamp: string; }
-interface Activity extends CanonicalBase {
-  type: 'ACTIVITY';
-  startTime: string;
-  endTime: string;
-  durationActiveSeconds: number;
-  activityType: ActivityType;
-  distanceMeters?: number;
-  caloriesKcal?: number;
-  averageHeartRate?: number;
-  maxHeartRate?: number;
-  gpsRoute?: GpsPoint[];
-}
-
-// --- SLEEP ---
-enum SleepStage { AWAKE, LIGHT, DEEP, REM, UNKNOWN }
-interface SleepSegment { stage: SleepStage; startTime: string; endTime: string; }
-interface Sleep extends CanonicalBase {
-  type: 'SLEEP';
-  startTime: string;
-  endTime: string;
-  totalDurationSeconds: number;
-  durationInBedSeconds: number;
-  durationAsleepSeconds: number;
-  segments: SleepSegment[];
-}
-
-// --- WEIGHT ---
-interface Weight extends CanonicalBase {
-  type: 'WEIGHT';
-  timestamp: string;
-  weightKg: number;
-  fatPercentage?: number;
-  bmi?: number;
-}
-
-// And so on for all other supported data types...
+```kotlin
+// Example of the Kotlin implementation in the KMP module
+@Serializable
+data class Activity(
+    val type: String = "ACTIVITY",
+    val sourceDataHash: String,
+    val startTime: String,
+    val endTime: String,
+    // ... and so on
+)
 ```
 
 ## 3. The Data Mapping Cookbook
 
-Each `DataProvider` must implement `mapToCanonical()` and `mapFromCanonical()` methods. These methods will contain the complex business logic for transformation.
+Each `DataProvider` implementation contains the business logic for transformation.
 
 ### Example 1: Normalizing Activity Enums
-
-The `mapToCanonical()` function in a provider must contain a mapping of the source platform's activity types to the canonical `ActivityType` enum.
-
-```typescript
-// Pseudo-code within a GarminProvider
-function mapGarminActivity(garminType: string): ActivityType {
-  switch (garminType.toLowerCase()) {
-    case 'running': return ActivityType.RUNNING;
-    case 'street_running': return ActivityType.RUNNING;
-    case 'cycling': return ActivityType.CYCLING;
-    case 'lap_swimming': return ActivityType.SWIMMING;
-    default: return ActivityType.OTHER;
-  }
-}
-```
-
-### Example 2: Reconciling Sleep Stages
-
-The `mapFromCanonical()` function must gracefully handle cases where the destination supports fewer sleep stages than the source.
-
-```typescript
-// Pseudo-code within a provider for a simple destination app
-function mapSleepToSimpleDevice(canonicalSleep: Sleep): SimpleSleep {
-  let asleepSeconds = 0;
-  for (const segment of canonicalSleep.segments) {
-    if (segment.stage !== SleepStage.AWAKE) {
-      asleepSeconds += (new Date(segment.endTime) - new Date(segment.startTime)) / 1000;
+A provider must map the source platform's activity types to the canonical `ActivityType` enum.
+```kotlin
+// Pseudo-code within a GarminProvider (in Kotlin)
+private fun mapGarminActivity(garminType: String): CanonicalActivityType {
+    return when (garminType.lowercase()) {
+        "running", "street_running" -> CanonicalActivityType.RUNNING
+        "cycling" -> CanonicalActivityType.CYCLING
+        "lap_swimming" -> CanonicalActivityType.SWIMMING
+        else -> CanonicalActivityType.OTHER
     }
-  }
-  return { startTime: canonicalSleep.startTime, totalTimeAsleep: asleepSeconds };
 }
 ```
 
-### Example 3: Timezone Normalization
-
-All providers **must** convert source data timestamps to UTC before creating the canonical model. The canonical model is always in UTC. When writing to a destination, the `mapFromCanonical()` function is responsible for providing the timestamp in the format expected by the destination API (which may or may not include timezone offsets).
+### Example 2: Timezone Normalization
+All providers **must** convert source data timestamps to UTC before creating the canonical model. The canonical model is always in UTC.
 
 ## 4. Mapper Unit Testing
 
-*   **Requirement:** Every `mapToCanonical` and `mapFromCanonical` function in every provider **must** have a corresponding suite of unit tests.
-*   **Fixtures:** The tests will use static `.json` files stored in the repository. These files will be real-world, anonymized API responses from the third-party platforms.
-*   **Process:** The unit test will load the JSON fixture, pass it to the mapping function, and then assert that the resulting canonical model (or destination model) has the correct structure and values.
-*   **Benefit:** This creates a powerful regression suite. If a provider's API changes its response format, these unit tests will fail immediately, pinpointing the exact location of the required change.
+*   **Requirement:** Every data mapping function in every provider **must** have a corresponding suite of unit tests.
+*   **Fixtures:** Tests will use static `.json` files representing real-world, anonymized API responses.
+*   **CI/CD Integration:** This test suite will be a required check in the **backend's CI/CD pipeline** in GitHub Actions. No code change that breaks a data mapping test will be deployed.
+*   **Benefit:** This creates a powerful regression suite. If a provider's API changes its response format, these unit tests will fail immediately, pinpointing the problem.
 
 ## 5. Schema Versioning & Migration
 
-The canonical schema itself is versioned. This is critical for long-term maintenance.
-*   **Scenario:** In v2.0 of SyncWell, we decide to add `restingHeartRate` to the `Sleep` model.
-*   **Process:**
-    1.  The `Sleep` interface is updated with the new optional field.
-    2.  The `SCHEMA_VERSION` constant is incremented to `2`.
-    3.  The app's data loading logic will now check the version of any stored data. If it finds `v1` data, it will apply a simple migration function (e.g., `migrateV1toV2(data)`) before using it.
-    4.  This prevents new versions of the app from crashing when encountering old data structures.
+The canonical schema itself is versioned to ensure long-term maintainability.
+*   **Backend Robustness:** The backend workers must always inspect the `schema_version` of any data sent from a mobile client. If the version is old, the data may be rejected or passed through a migration function to prevent the backend from crashing.
+*   **Client Migration:** When a new version of the app restores settings from an old backup, it must check the `schema_version` and run a migration function to update the data structure before applying it.
 
-## 6. Optional Visuals / Diagram Placeholders
-*   **[Diagram] Complete Canonical Schema:** A class diagram or ERD showing all canonical data models and their relationships.
-*   **[Diagram] Mapping Flow with Unit Tests:** A flowchart showing a source API response being fed into a mapping function, with the output being validated against a set of unit test assertions.
-*   **[Table] Cross-Platform Activity Mapping:** A detailed table showing how activity types from all supported platforms (Fitbit, Garmin, Strava, etc.) map to the canonical `ActivityType` enum.
-*   **[Code Snippet] Mapper Test Case:** A complete, working example of a Jest test case for a data mapping function, including loading the JSON fixture.
+## 6. Visual Diagrams
+
+### Canonical Schema (High Level)
+```mermaid
+classDiagram
+    class CanonicalBase {
+        <<interface>>
+        type: String
+        sourceDataHash: String
+    }
+    class Activity {
+        startTime: String
+        endTime: String
+        activityType: ActivityType
+    }
+    class Sleep {
+        startTime: String
+        endTime: String
+        segments: SleepSegment[]
+    }
+    class Weight {
+        timestamp: String
+        weightKg: Float
+    }
+    CanonicalBase <|-- Activity
+    CanonicalBase <|-- Sleep
+    CanonicalBase <|-- Weight
+```
+
+### Mapping and Testing Flow
+```mermaid
+graph TD
+    A[Raw JSON from 3rd Party API] --> B[Mapping Function (e.g., mapFromFitbit)];
+    B --> C[Canonical Model Instance];
+    C --> D[Unit Test Assertions];
+    E[Test Fixture (Stored JSON)] --> B;
+    D -- Pass/Fail --> F[CI/CD Gate];
+```
