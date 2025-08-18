@@ -65,7 +65,7 @@ A robust sync engine must intelligently handle the wide variety of errors that c
 
 | HTTP Status Code | Error Type | System Action | User Impact |
 | :--- | :--- | :--- | :--- |
-| `401 Unauthorized` / `403 Forbidden` | **Permanent Auth Error** | The sync job is immediately failed. The connection is marked as `needs_reauth` in DynamoDB. | User is notified in the app that they need to reconnect the service. |
+| `401 Unauthorized` / `403 Forbidden` | **Permanent Auth Error** | The sync job is immediately failed. The connection is marked as `needs_reauth` in the `SyncWellMetadata` table via an `UpdateItem` call on the Connection item. | User is notified in the app that they need to reconnect the service. |
 | `429 Too Many Requests` | **Rate Limit Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff). The global rate limiter is notified to slow down requests for this provider. | Syncs for this provider may be delayed. This is handled automatically. |
 | `500`, `502`, `503`, `504` | **Transient Server Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff). | Syncs may be delayed. The system will automatically retry. |
 | `400 Bad Request` | **Permanent Request Error** | The job is failed and moved to the Dead-Letter Queue (DLQ) for manual inspection. An alarm is triggered. | The specific sync fails. An engineer is alerted to a potential bug in our `DataProvider` or an unexpected API change. |

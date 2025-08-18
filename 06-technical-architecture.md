@@ -230,6 +230,57 @@ A single-region deployment introduces a significant risk of a complete service o
     *   **DynamoDB:**
         *   We will use **On-Demand Capacity Mode**. This is more cost-effective for spiky, unpredictable workloads than provisioned throughput. It automatically scales to handle the required read/write operations, although we must monitor for throttling if traffic patterns become extreme.
 
+## 3b. DynamoDB Data Modeling & Access Patterns
+
+To support the application's data storage needs efficiently and scalably, we will use a **single-table design** in DynamoDB. This modern approach to NoSQL data modeling minimizes operational overhead, reduces costs by optimizing read/write operations, and allows for complex access patterns with a single table.
+
+Our primary data table will be named **`SyncWellMetadata`**. It will use a composite primary key and a Global Secondary Index (GSI) to serve all required access patterns.
+
+### Table Definition: `SyncWellMetadata`
+
+*   **Primary Key:**
+    *   **Partition Key (PK):** `USER#{userId}` - All data for a given user is co-located in the same partition, enabling efficient retrieval of a user's entire profile with a single query.
+    *   **Sort Key (SK):** A hierarchical string that defines the type of data and its relationships (e.g., `PROFILE`, `CONN#{connectionId}`).
+*   **Capacity Mode:** On-Demand. This is ideal for our unpredictable, spiky traffic patterns, automatically scaling capacity to meet load.
+*   **Global Tables:** The table will be configured as a DynamoDB Global Table, providing active-active multi-region replication for high availability and low-latency reads for a global user base.
+
+### Item Types & Schema
+
+Below are the different data entities, or "item types," that will be stored in the `SyncWellMetadata` table.
+
+| Entity | PK (Partition Key) | SK (Sort Key) | Key Attributes & Purpose |
+| :--- | :--- | :--- | :--- |
+| **User Profile** | `USER#{userId}` | `PROFILE` | `SubscriptionLevel`, `CreatedAt`. Stores top-level user attributes. |
+| **Connection** | `USER#{userId}` | `CONN#{connectionId}` | `Status` (`active`, `needs_reauth`), `CredentialArn`. Represents a user's authenticated link to a 3rd party (e.g., Fitbit). |
+| **Sync Config** | `USER#{userId}` | `SYNCCONFIG#{sourceId}#to##{destId}##{dataType}` | `LastSyncTime`, `ConflictStrategy`, `IsEnabled`. Defines a single data sync flow for a user. |
+| **Hist. Sync Job** | `USER#{userId}` | `HISTORICAL##{orchestrationId}` | `OverallStatus`, `TotalChunks`, `CompletedChunks`. Tracks the state of a large, chunked historical data sync. |
+
+*Example `SYNCCONFIG` SK:* `SYNCCONFIG#fitbit#to#googlefit#steps`
+
+### Global Secondary Index (GSI)
+
+To support access patterns that are not based on the `userId`, we will define one GSI.
+
+*   **GSI1: `Status-by-User-Index`**
+    *   **GSI1PK:** `Status` (e.g., `needs_reauth`)
+    *   **GSI1SK:** `USER#{userId}`
+    *   **Purpose:** Allows us to efficiently query for all users whose connections have a specific status. This is critical for operational tasks, such as finding all users who need to re-authenticate a connection and sending them a notification. Note: `Status` is a low-cardinality attribute, but for this background operational task, this is an acceptable and cost-effective design.
+
+### Core Access Patterns Supported
+
+This single-table design efficiently serves the following critical access patterns:
+
+| Use Case | Access Pattern | DynamoDB Operation | Efficiency |
+| :--- | :--- | :--- | :--- |
+| **Get all settings for a user** | Fetch all records for a given user. | `Query` on `PK = USER#{userId}` | **High** |
+| **Get state for a single sync job** | Fetch the `LastSyncTime` and `ConflictStrategy`. | `GetItem` with `PK` and `SK = SYNCCONFIG#{...}` | **Very High** |
+| **Update `lastSyncTime` after sync** | Update a single sync configuration. | `UpdateItem` with `PK` and `SK = SYNCCONFIG#{...}` | **Very High** |
+| **Mark a connection as invalid** | Update a connection's status to `needs_reauth`. | `UpdateItem` with `PK` and `SK = CONN#{...}` | **Very High** |
+| **Get progress of a historical sync** | Fetch the orchestration record for a user. | `GetItem` with `PK` and `SK = HISTORICAL#{...}` | **Very High** |
+| **Find all users to notify for re-auth**| Find all connections with status `needs_reauth`. | `Query` on `GSI1PK = needs_reauth` | **High** |
+
+This structure provides a flexible and scalable foundation for our application's metadata needs.
+
 ## 4. Technology Stack & Rationale
 
 | Component | Technology | Rationale |
