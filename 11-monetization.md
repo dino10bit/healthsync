@@ -29,29 +29,29 @@ This investor-ready document details the path to profitability, including specif
 | **Unfair Advantage** | **Channels** | **Customer Segments** | **Cost Structure** |
 | - Solo developer agility and low overhead.<br>- Direct relationship with users.<br>- Deep focus on UX and reliability over feature quantity. | - Apple App Store<br>- Google Play Store<br>- Content Marketing (Blog, Social Media)<br>- Word of Mouth | - **Data-Driven Athletes:** Multi-device owners who want to consolidate performance data.<br>- **Health-Conscious Professionals:** Busy individuals who want a simple way to manage their wellness data. | - App Store Commissions (15-30%)<br>- Third-Party Services (Help Desk, Analytics, Canny)<br>- Legal & Marketing (Initial & Ongoing) |
 | **Revenue Streams** |
-| - One-time "Lifetime License" In-App Purchase.<br>- Auto-renewing 6-month subscriptions.<br>- (Future) Tiered subscriptions for premium integrations. |
+| - **SyncWell Pro (Subscription):** Auto-renewing yearly subscriptions.<br>- **SyncWell Pro (Lifetime):** One-time "Lifetime License" In-App Purchase.<br>- **SyncWell Family Plan:** A higher-tier subscription for multiple users. |
 
-## 3. Pricing Model & Rationale
+## 3. Pricing Tiers & Rationale
 
-The pricing model is designed to maximize both user adoption and long-term revenue.
+The pricing model is built on a "freemium" base to maximize user acquisition, with a compelling, high-value "Pro" tier that drives revenue.
 
-| Product | Price (USD) | Rationale |
+| Tier | Price (USD) | Features & Rationale |
 | :--- | :--- | :--- |
-| **7-Day Free Trial** | $0 | Lowers the barrier to entry, allowing the app's value and reliability to sell itself. Automatic start (no credit card) maximizes adoption. |
-| **Lifetime License** | **$7.99** (One-Time) | Caters to users with "subscription fatigue." The price is a psychological "sweet spot"—less than two coffees, for a utility they will use daily. It provides an upfront cash injection to fund development. |
-| **6-Month Subscription**| **$3.49** | Provides a lower upfront cost, appealing to more cautious buyers. Creates a recurring revenue stream (MRR) which is attractive for business valuation and predictable cash flow. |
-| **Withings Subscription**| **$2.99 / Year** | This will be a separate, add-on subscription. The rationale is to pass on the direct, per-user API costs that some platforms (like Withings) charge, without raising the price for all users. |
+| **SyncWell Standard** | **Free** | **Includes:** Basic sync between 2 services, Sync Health Dashboard.<br>**Rationale:** A generous free tier is our most powerful marketing tool. It allows users to experience SyncWell's core reliability and solves a basic problem at no cost, building immense trust and a large user base for potential upsell. |
+| **SyncWell Pro** | **$24.99 / year**<br>or<br>**$49.99 / lifetime** | **Unlocks:**<br>- Unlimited connected services.<br>- **The Recovery Sync** (Historical Import).<br>- **Smart Conflict Resolution**.<br>- **Pro-Tier Power User Tools**.<br>**Rationale:** This tier captures the high-value users (our target personas). The price is significantly higher than the old model, reflecting the immense value of these unique features. It positions SyncWell as a premium, professional-grade tool. |
+| **SyncWell Family** | **$39.99 / year** | **Unlocks:** SyncWell Pro features for up to 5 family members.<br>**Rationale:** This provides a simple, cost-effective way for families to manage their health data together, filling a clear gap in the market and increasing the potential LTV of a single conversion. |
 
 ## 4. Financial Projections (High-Level)
 
-These projections are based on assumptions of modest but steady user growth and conversion rates.
+These projections are updated to reflect the new, value-based pricing model and a focus on converting free users to the Pro tier.
 
 | Metric | Year 1 Target | Year 2 Target | Assumptions |
 | :--- | :--- | :--- | :--- |
-| **Active Paying Users** | 5,000 | 15,000 | Assumes steady organic growth and a 15% trial conversion rate. |
-| **Revenue Mix** | 60% Lifetime, 40% Subscription | 50% Lifetime, 50% Subscription | Expect more early adopters to choose the lifetime deal. |
-| **Gross Revenue** | ~$30,000 | ~$85,000 | Based on active users and revenue mix. |
-| **Net Revenue** | ~$24,000 | ~$68,000 | After accounting for ~20% average app store commission. |
+| **Active Pro Users** | 7,500 | 25,000 | Assumes larger top-of-funnel from the free tier and a 10% conversion rate to Pro. |
+| **Revenue Mix** | 70% Yearly Sub, 30% Lifetime | 60% Yearly Sub, 40% Lifetime | Subscriptions become the primary revenue driver over time. |
+| **Average Revenue Per Pro User (ARPU)** | ~$32 | ~$35 | Weighted average of subscription and lifetime purchases. |
+| **Gross Revenue** | ~$240,000 | ~$875,000 | Based on active Pro users and the higher ARPU. |
+| **Net Revenue** | ~$192,000 | ~$700,000 | After accounting for ~20% average app store commission. |
 
 ## 5. Entitlement & Billing Architecture
 
