@@ -189,6 +189,7 @@ Given the requirement for a global launch across 5 continents, a high-availabili
     *   **DynamoDB Global Tables:** User metadata and sync configurations will be stored in a DynamoDB Global Table. This provides built-in, fully managed, multi-master replication across all deployed regions, ensuring that data written in one region is automatically propagated to others with low latency.
     *   **Write Conflict Resolution:** By using a multi-master database, write conflicts can occur (e.g., if a user changes a setting in two regions simultaneously). Our application will be designed to be idempotent, and for configuration data, we will rely on DynamoDB's default "last writer wins" conflict resolution strategy. This is an acceptable trade-off for the types of non-transactional metadata we are storing.
 *   **Credential Storage:** **AWS Secrets Manager** secrets will be replicated to each active region. This ensures that worker Lambdas in any region can access the necessary third-party OAuth tokens to perform sync jobs.
+*   **Resilience Testing (Chaos Engineering):** To proactively validate our multi-region high availability, we will practice chaos engineering. We will use the **AWS Fault Injection Simulator (FIS)** to inject faults into our pre-production environments. Example experiments include terminating Lambda functions, introducing latency between services, or simulating the failure of an entire AWS region. This practice is critical for building confidence in our system's ability to withstand turbulent conditions in production.
 
 ### Performance & Scalability: Caching & Load Projections
 
@@ -238,7 +239,7 @@ Below are the different data entities, or "item types," that will be stored in t
 | **User Profile** | `USER#{userId}` | `PROFILE` | `SubscriptionLevel`, `CreatedAt`. Stores top-level user attributes. A user's profile is the root item for all their related data. |
 | **Connection** | `USER#{userId}` | `CONN#{connectionId}` | `Status` (`active`, `needs_reauth`), `CredentialArn`. Represents a user's authenticated link to a 3rd party (e.g., Fitbit). This is referred to as a "Connection". |
 | **Sync Config** | `USER#{userId}` | `SYNCCONFIG#{sourceId}#to#{destId}#to#{dataType}` | `LastSyncTime`, `ConflictStrategy`, `IsEnabled`. Defines a single data sync flow for a user. |
-| **Hist. Sync Job** | `USER#{userId}` | `HISTORICAL##{orchestrationId}` | `OverallStatus`, `TotalChunks`, `CompletedChunks`. Tracks the state of a large, chunked historical data sync. |
+| **Hist. Sync Job** | `USER#{userId}` | `HISTORICAL##{orchestrationId}` | `OverallStatus`, `TotalChunks`, `CompletedChunks`, `ExecutionArn`. Acts as the state-tracking object for an AWS Step Functions execution that orchestrates a large, chunked historical data sync. |
 
 *Example `SYNCCONFIG` SK:* `SYNCCONFIG#fitbit#to#googlefit#steps` (Note: single `#` delimiters are used for clarity and parsing reliability).
 
@@ -264,6 +265,32 @@ This single-table design efficiently serves the following critical access patter
 | **Find all users to notify for re-auth**| Find all connections with status `needs_reauth`. | `Scan` operation (run as a low-priority, background job). | **Low (by design)** |
 
 This structure provides a flexible and scalable foundation for our application's metadata needs.
+
+### Level 4: Historical Sync Workflow
+
+To handle long-running, complex, and potentially error-prone processes like a user's historical data sync, we will use a dedicated workflow orchestrator. **AWS Step Functions** is the ideal choice as it is a fully managed service that aligns with our serverless-first approach, providing excellent reliability, state management, and observability out of the box.
+
+The following diagram illustrates the state machine for a historical sync job.
+
+```mermaid
+graph TD
+    A[Start] --> B{Initiate Sync Job};
+    B --> C[Fetch Job Chunks];
+    C --> D{Are there more chunks?};
+    D -- Yes --> E[Process One Chunk];
+    E --> C;
+    D -- No --> F[Finalize Sync];
+    F --> G[End];
+    E -- On Error --> H[Handle Error & Retry];
+    H --> C;
+```
+
+*   **State Machine Logic:**
+    1.  **Initiate Sync Job:** A Lambda function prepares the sync, determining the total number of data chunks to be fetched (e.g., one chunk per month of historical data).
+    2.  **Fetch Job Chunks:** The orchestrator maps over the list of chunks.
+    3.  **Process One Chunk:** A dedicated Lambda function is invoked for each chunk. It fetches the data from the source, transforms it, and writes it to the destination.
+    4.  **Handle Error & Retry:** Step Functions' built-in retry logic will handle transient errors. If a chunk fails repeatedly, it will be logged for manual inspection.
+    5.  **Finalize Sync:** Once all chunks are processed, a final Lambda updates the overall job status to `COMPLETED`.
 
 ## 3c. Core API Contracts
 
@@ -488,11 +515,60 @@ To ensure high development velocity and code quality, we will establish a stream
 *   **Testing Strategy:** We will employ a multi-layered testing strategy:
     *   **Unit Tests:** To test individual functions and classes in isolation. Mocking frameworks like MockK will be used.
     *   **Integration Tests:** To test the interaction between components, such as a Lambda function's interaction with a DynamoDB table (running against LocalStack).
+    *   **Contract Tests:** To ensure the mobile app and backend APIs can evolve independently without breaking each other, we will use **Pact**. The backend will publish its API contract, and the mobile client will test against this contract in its CI pipeline.
     *   **End-to-End (E2E) Tests:** To test complete user flows. For the mobile app, this will involve UI automation frameworks like Espresso and XCUITest.
     *   **Load Tests:** To validate performance and scalability, using `k6` to script and execute tests against a dedicated staging environment.
 *   **Continuous Integration & Delivery (CI/CD):** Our CI/CD pipeline, managed with **GitHub Actions**, will automate the following:
     *   **On every commit:** Run linters, static analysis tools (Detekt, SwiftLint), and all unit tests.
-    *   **On every pull request:** Run all integration tests and security scans (Snyk).
-    *   **On merge to `main`:** Automatically deploy the backend services to the staging environment and trigger E2E tests.
+    *   **On every pull request:** Run all integration tests and Static Application Security Testing (SAST) scans (Snyk).
+    *   **On merge to `main`:**
+        *   Automatically deploy the backend services to the staging environment.
+        *   Trigger E2E tests against the staging environment.
+        *   Run Dynamic Application Security Testing (DAST) scans against the staging API using **OWASP ZAP**.
     *   **On release tag:** Automate the deployment of backend services to production and the mobile app release process to the app stores (using Fastlane).
 
+## Appendix A: Technology Radar
+
+To provide context on our technology choices and guide future evolution, we maintain a technology radar. This helps us track technologies we are adopting, exploring, or have decided to put on hold. It is a living document, expected to change as we learn and the technology landscape evolves.
+
+### Adopt
+
+These are technologies we have chosen as the foundation for the SyncWell platform. They are the standard choice for their respective domains.
+
+| Technology | Domain | Justification |
+| :--- | :--- | :--- |
+| **Kotlin Multiplatform** | Cross-Platform Logic | Core strategy for code reuse between mobile clients. |
+| **AWS Lambda, SQS, DynamoDB** | Backend Platform | Core of our scalable, serverless-first architecture. |
+| **Terraform** | Infrastructure as Code | Standard for provisioning and managing our cloud infrastructure. |
+| **LocalStack** | Local Development | Essential for providing a high-fidelity local development loop. |
+| **Pact** | Contract Testing | Critical for ensuring API stability between the client and backend. |
+
+### Trial
+
+These are technologies we believe have high potential and should be actively prototyped on non-critical projects or features to evaluate their fit.
+
+| Technology | Domain | Justification |
+| :--- | :--- | :--- |
+| **Metabase / Superset** | Business Intelligence | To empower product and business teams with self-service analytics without engineering effort. A trial is needed to select the best fit for our needs. |
+| **Unleash** | Feature Flagging | We have identified the need for feature flagging; Unleash is a strong open-source candidate to trial for this capability. |
+| **Docusaurus** | Documentation | As our API and developer ecosystem grows, a dedicated documentation portal will be invaluable. Docusaurus is a leading candidate to trial. |
+
+### Assess
+
+These are technologies that could be game-changers in the longer term. We should invest time to research and understand them, but we are not yet committed to using them.
+
+| Technology | Domain | Justification |
+| :--- | :--- | :--- |
+| **Temporal.io** | Workflow Orchestration | While AWS Step Functions is our 'Adopt' choice, Temporal offers potentially more power and flexibility. We will assess its progress and community for future complex workflows. |
+| **Apache Kafka / Redpanda**| Event Streaming | If our system evolves to require more complex event streaming or real-time analytics beyond what SQS provides, these platforms would be the next step to assess. |
+| **MLflow** | MLOps | When we begin developing the AI Insights features, MLflow is a tool we must assess for managing the end-to-end machine learning lifecycle. |
+
+### Hold
+
+These are technologies that we have considered but have decided not to use at this time. They may be revisited later if our architectural needs change significantly.
+
+| Technology | Domain | Justification |
+| :--- | :--- | :--- |
+| **Kubernetes** | Container Orchestration | Our serverless-first approach means we have no current need for a complex container orchestrator. We will hold on this unless we develop a large suite of auxiliary services that require it. |
+| **ScyllaDB / Cassandra** | NoSQL Database | DynamoDB meets all of our current and projected needs for metadata storage. We will not consider alternative NoSQL databases unless we hit a specific, insurmountable limitation with DynamoDB. |
+| **Service Mesh (Linkerd, etc.)**| Service-to-Service | A service mesh is a solution for managing a large and complex microservices architecture. Our current architecture is too simple to justify this complexity. We will put this on hold indefinitely. |
