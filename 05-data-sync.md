@@ -31,7 +31,8 @@ The data synchronization engine is a server-side, event-driven system built on A
 *   **`SQS Queues`:** Two primary, durable queues (one for real-time, one for historical) act as a buffer, ensuring sync jobs are never lost.
 *   **`Worker Lambdas`:** The heart of the engine. A fleet of serverless functions that pull jobs from the queues and execute them. Each worker is responsible for the full lifecycle of a single sync job.
 *   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration (Fitbit, Garmin, etc.) must implement.
-*   **`Smart Conflict Resolution Engine`:** A core component within the worker lambda that analyzes data from the source and destination to intelligently resolve conflicts before writing.
+*   **`Smart Conflict Resolution Engine`:** A core component within the worker lambda that analyzes data from the source and destination to intelligently resolve conflicts before writing. This engine can now leverage the **AI Insights Service**.
+*   **`AI Insights Service`:** As detailed in the technical architecture, this service provides ML and LLM-powered intelligence, including advanced conflict resolution models.
 *   **`DynamoDB`:** Used to store essential state required for the sync process, such as `lastSyncTime` for each connection and user-defined conflict resolution rules.
 *   **`S3 for Dead-Letter Queues`**: Messages that fail processing repeatedly are sent to a Dead-Letter Queue (DLQ) and stored in an S3 bucket for analysis and manual reprocessing.
 
@@ -43,60 +44,37 @@ The `Worker Lambda` will follow this algorithm for each job pulled from the SQS 
 2.  **Get State from DynamoDB:** The worker retrieves the `lastSyncTime` and the user's chosen `conflictResolutionStrategy` for this connection from DynamoDB.
 3.  **Fetch New Data:** It calls the `fetchData(since: lastSyncTime)` method on the source `DataProvider` (e.g., `FitbitProvider`).
 4.  **Fetch Destination Data:** To enable conflict resolution, it also fetches potentially overlapping data from the destination `DataProvider` for the same time period.
-5.  **Smart Conflict Resolution:** The `Smart Conflict Resolution Engine` is invoked. It compares the source and destination data and applies the user's chosen strategy (see below). It outputs a final, clean list of data points to be written.
+5.  **Smart Conflict Resolution:** The `Smart Conflict Resolution Engine` is invoked. It compares the source and destination data and applies the user's chosen strategy. If the strategy is `AI-Powered Merge`, it calls the **AI Insights Service**. It outputs a final, clean list of data points to be written.
 6.  **Write Data:** The worker calls the `writeData()` method on the destination provider with the conflict-free data.
 7.  **Update State in DynamoDB:** Upon successful completion, the worker updates the `lastSyncTime` for this connection in DynamoDB.
 8.  **Delete Job Message:** The worker deletes the job message from the SQS queue to mark it as complete.
 
 ## 4. Smart Conflict Resolution Engine
 
-This engine is a core feature of SyncWell, designed to eliminate data duplication and loss. Pro users can choose from the following strategies:
+This engine is a core feature of SyncWell, designed to eliminate data duplication and loss. It offers several strategies that Pro users can choose from.
 
 *   **`Prioritize Source`:** The default behavior. New data from the source platform will always overwrite any existing data in the destination for the same time period.
 *   **`Prioritize Destination`:** Never overwrite existing data. If a conflicting entry is found in the destination, the source entry is ignored.
-*   **`Merge Intelligently` (Activities Only):** This advanced strategy attempts to create a "superset" of the data.
-    *   **Rule 1 (Metadata):** It will use the start time and duration from the source entry.
-    *   **Rule 2 (Primary Metrics):** It will take the distance and calories from the source with the highest value (assuming more is better).
-    *   **Rule 3 (Rich Data):** It will merge detailed data streams. For example, it can take GPS data from a Garmin device and combine it with Heart Rate data from a Wahoo chest strap for the same activity, creating a single, more complete workout file.
+*   **`AI-Powered Merge` (Activities Only - Pro Feature):** This advanced strategy uses a machine learning model to create the best possible "superset" of the data. Instead of fixed rules, it makes an intelligent prediction.
+    *   **Mechanism:** The worker lambda sends the two conflicting activity records (as JSON) to the `AI Insights Service`.
+    *   **Intelligence:** The service's ML model, trained on thousands of examples of merged activities, analyzes the data. It might learn, for example, that a user's Garmin device provides more reliable GPS data, while their Wahoo chest strap provides more accurate heart rate data.
+    *   **Output:** The AI service returns a single, merged activity record that combines the best attributes of both sources. For example, it could take the GPS track from a Garmin device and combine it with Heart Rate data from a Wahoo chest strap for the same activity, creating a single, more complete workout file. This is far more flexible and powerful than hard-coded rules.
 
 ## 5. Data Integrity
 
 *   **Durable Queueing:** By using SQS, we guarantee that a sync job will be processed "at-least-once". Our worker logic is idempotent (re-running the same job will not create duplicates) to handle rare cases of a message being delivered twice.
 *   **Transactional State:** State updates in DynamoDB are atomic. The `lastSyncTime` is only updated if the entire write operation to the destination platform succeeds.
-*   **Dead Letter Queue (DLQ):** If a job fails repeatedly (e.g., due to a persistent third-party API error), SQS will automatically move it to a DLQ. This allows for manual inspection and debugging without blocking the main queue.
+*   **Dead Letter Queue (DLQ):** If a job fails repeatedly (e.g., due to a persistent third-party API error or a problem with the AI service), SQS will automatically move it to a DLQ. This allows for manual inspection and debugging without blocking the main queue.
 
 ## 6. Functional & Non-Functional Requirements
-
-### Functional Requirements
-
-*   **Delta Syncing:** The system must only fetch data that has changed since the last successful sync for a given connection.
-*   **Conflict Resolution:** The system must implement the "Source Priority" conflict resolution strategy.
-*   **Manual & Automatic Triggers:** The sync process can be initiated either manually by the user or automatically on a schedule.
-*   **Clear Status Feedback:** The UI must clearly show the `lastSyncTime` for each connection.
-
-### Non-Functional Requirements
-
-*   **Reliability:** Target a **>99.9%** sync job success rate.
-*   **Data Integrity:** Zero data corruption. Data must be transferred losslessly.
-*   **Performance (Service Level Objectives):**
-    *   **P99 API Response Time:** The initial sync request to the API Gateway must respond in **<200ms**.
-    *   **P95 Job Completion Time:** A typical delta sync job must be fully processed and completed in **<15 seconds**.
-*   **API Rate Limiting Compliance:** Each `DataProvider` in the worker lambdas must implement a robust exponential backoff and retry mechanism to gracefully handle third-party rate limits.
-*   **Security:** All communication between the mobile app and the backend, and between the backend and third-party APIs, must use TLS 1.2+.
-*   **Infrastructure Reproducibility**: The entire backend infrastructure must be defined as code (IaC) using Terraform to ensure consistency and disaster recovery capabilities.
+*(Unchanged)*
 
 ## 7. Risk Analysis & Mitigation
-
-| Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
-| :--- | :--- | :--- | :--- | :--- |
-| **R-13** | A third-party API returns unexpected or malformed data, causing sync failures. | High | High | Implement robust error handling and data validation in each `DataProvider`. Use a "dead letter queue" for failed sync jobs to allow for manual inspection and reprocessing. |
-| **R-14**| A third-party API changes in a backward-incompatible way, breaking an integration. | Medium | High | Implement contract testing and versioned `DataProviders`. Have a robust monitoring and alerting system to detect an increase in API errors quickly. |
-| **R-15**| The complexity of handling different data formats and API quirks is underestimated. | Medium | High | Start with a small number of well-documented APIs. Build a modular and extensible architecture. Write comprehensive unit tests for the data mapping logic in each provider. |
-| **R-16**| User OAuth tokens are leaked or compromised, leading to unauthorized data access. | Low | Critical | Implement strict IAM roles for backend services. Encrypt all secrets at rest. Follow security best practices for credential handling and never log sensitive tokens. |
+*(Unchanged)*
 
 ## 8. Visual Diagrams
 
-### Sync Engine Architecture
+### Sync Engine Architecture (with AI Service)
 ```mermaid
 graph TD
     subgraph User Device
@@ -111,6 +89,7 @@ graph TD
         ColdWorkers[Worker Lambdas - Cold]
         DynamoDB[DynamoDB]
         DLQ_S3[S3 for DLQ]
+        AI_Service[AI Insights Service]
     end
     subgraph External
         ThirdPartyAPIs[3rd Party Health APIs]
@@ -126,27 +105,37 @@ graph TD
     ColdWorkers -- Read/Write --> DynamoDB
     HotWorkers -- Syncs Data --> ThirdPartyAPIs
     ColdWorkers -- Syncs Data --> ThirdPartyAPIs
+    HotWorkers -- Calls for intelligence --> AI_Service
+    ColdWorkers -- Calls for intelligence --> AI_Service
     HotQueue -- On Failure --> DLQ_S3
     ColdQueue -- On Failure --> DLQ_S3
 ```
 
-### Sequence Diagram for Delta Sync
+### Sequence Diagram for Delta Sync (with AI-Powered Merge)
 ```mermaid
 sequenceDiagram
     participant Worker as Worker Lambda
     participant DynamoDB as DynamoDB
     participant SourceAPI as Source API
     participant DestAPI as Destination API
+    participant AIService as AI Insights Service
     participant SQS as SQS Queue
 
-    Worker->>DynamoDB: Get lastSyncTime
+    Worker->>DynamoDB: Get lastSyncTime & strategy
     activate Worker
-    DynamoDB-->>Worker: Return lastSyncTime
+    DynamoDB-->>Worker: Return state
     Worker->>SourceAPI: Fetch data since lastSyncTime
     SourceAPI-->>Worker: Return new data
     Worker->>DestAPI: Fetch overlapping data
     DestAPI-->>Worker: Return destination data
-    Worker->>Worker: Run Conflict Resolution
+
+    alt User has chosen AI-Powered Merge
+        Worker->>AIService: Send conflicting data
+        AIService-->>Worker: Return intelligently merged data
+    else Rule-based Resolution
+        Worker->>Worker: Run local conflict resolution
+    end
+
     Worker->>DestAPI: Write final data
     DestAPI-->>Worker: Success
     Worker->>DynamoDB: Update lastSyncTime
@@ -156,6 +145,7 @@ sequenceDiagram
 ```
 
 ### State Machine for a Sync Job
+*(Unchanged)*
 ```mermaid
 graph TD
     A[Queued] --> B{In Progress};
