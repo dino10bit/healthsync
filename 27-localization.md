@@ -67,11 +67,12 @@ A detailed style guide will be created in the TMS to ensure consistency and qual
 The following assets will be localized for each target language. The technical scope of all in-app content is defined in `26-internationalization.md`, Section 8. This list serves as the operational checklist for the localization manager.
 
 *   **In-App UI Strings:** This includes all text visible in the application.
-    *   Core UI (buttons, labels, titles).
+    *   Core UI (buttons, labels, titles, chart elements).
     *   Status and error messages (**US-07**).
     *   Permission primer copy (**US-03**).
     *   Paywall and upsell copy (**US-09**, **US-17**).
     *   Confirmation dialogs (**US-08**).
+    *   Push Notification Content (**US-24**).
 *   **App Store Presence:**
     *   App Store Listings (Title, Description, Keywords, Release Notes).
     *   Localized App Store Screenshots.
