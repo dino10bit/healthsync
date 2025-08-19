@@ -24,11 +24,14 @@ This document defines the performance, scalability, and reliability requirements
 ### 2.1. Client-Side Performance Budget
 *(Unchanged)*
 
-| Metric | Target (P90) | Tool for Measurement |
+| Metric | Target | Tool for Measurement |
 | :--- | :--- | :--- |
-| **Cold App Start Time** | < 2.0 seconds | Firebase Performance |
-| **Dashboard Load Time** | < 1.0 second | Firebase Performance |
+| **Cold App Start Time (P90)** | < 2.0 seconds | Firebase Performance |
+| **Dashboard Load Time (Online, P90)**| < 1.0 second | Firebase Performance |
+| **Dashboard Load Time (Offline, P90)**| < 500 ms | Firebase Performance |
 | **Slow Frames Rate** | < 1% | Firebase Performance |
+| **Crash-Free Session Rate** | > 99.9% | Firebase Crashlytics |
+| **App Binary Size (iOS / Android)**| < 50 MB / < 20 MB | App Store Connect / Google Play Console |
 | **Memory Usage (Heap)** | < 150 MB | Android Studio / Xcode |
 | **Energy Impact (24h)** | < 5% | Xcode / Battery Historian|
 
@@ -136,4 +139,4 @@ The SyncWell architecture is designed from the ground up for massive, automatic 
         Worker->>Worker: Continue processing with config...
     ```
 *   **Job Chunking Flow:**
-    *   *A visual representation of how a large historical sync request is broken into multiple jobs that are placed on the SQS queue for processing by the Lambda service. [Placeholder - Diagram to be created]*
+    *   *A visual representation of how a large historical sync request is broken into multiple jobs. [Note: To be created in the Design Specification document.]*

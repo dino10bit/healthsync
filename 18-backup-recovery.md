@@ -47,7 +47,7 @@ This strategy yields different recovery objectives depending on the nature of th
 | Failure Scenario | Recovery Time Objective (RTO) | Recovery Point Objective (RPO) | Mechanism |
 | :--- | :--- | :--- | :--- |
 | **Full Regional Outage** | **< 5 minutes** | **< 2 seconds** | **Automated Failover.** Amazon Route 53 health checks detect the failure and automatically redirect traffic to a healthy region. The RPO is governed by the replication lag of DynamoDB Global Tables. |
-| **Cache Cluster Failure** | **< 60 minutes** | **< 1 minute** | **Manual Promotion.** An on-call engineer promotes a secondary ElastiCache replica to primary. The RPO is governed by the ElastiCache Global Datastore replication lag. |
+| **Cache Cluster Failure** | **< 5 minutes** | **N/A** | **Automatic Failover.** The ElastiCache for Redis cluster is deployed in a Multi-AZ configuration. Failover to a replica is automatic and transparent to the application, consistent with the RTO defined in `06-technical-architecture.md`. |
 | **Data Corruption Event** (e.g., bad code deployment) | **< 4 hours** | **< 5 minutes** | **Manual Restore.** An engineer initiates a DynamoDB Point-in-Time Recovery (PITR) and uses AWS AppConfig to redirect traffic to the restored table. RPO is governed by the continuous backup window of PITR. See the detailed runbook below. |
 
 ### Recovery Mechanisms:
@@ -119,15 +119,17 @@ This is a last-resort, high-risk manual procedure to be followed in the event of
 6.  **Post-Mortem:** A full post-mortem analysis is conducted to understand the root cause and prevent recurrence.
 
 ### Runbook: Manual Account Recovery
-This process is for the rare case where a user permanently loses access to their social sign-in account and needs to link their SyncWell data to a new social account. This has significant security implications and must be handled with extreme care.
 
-1.  **User Verification:** The user must contact support and provide sufficient proof of identity. This includes:
-    *   A receipt of their Pro subscription purchase.
-    *   Answering specific questions about their sync configurations that only the true user would know.
-2.  **Engineering Ticket:** Once support has verified the user's identity to a high degree of confidence, they will create a high-priority engineering ticket with all verification details.
-3.  **Manual Data Migration:** An authorized engineer will run a peer-reviewed, version-controlled script that performs the following actions:
-    *   This is a delicate and dangerous operation. Because a partition key cannot be updated in place, the script must perform a multi-step migration:
-        1.  Query all items belonging to the old `USER#{userId}` partition.
-        2.  For each item, create a new item with the new `USER#{userId}` partition key.
-        3.  After successful validation, delete all the original items from the old partition.
-4.  **Confirmation:** The engineer confirms with the support team that the migration is complete, and the user is notified.
+**CRITICAL RISK ADVISORY:** The process of manually migrating user data from one identity to another is exceptionally high-risk and is a prime vector for catastrophic human error, social engineering attacks, and permanent data loss. A manually executed, script-based process for this operation is **unacceptable** for a production system at scale.
+
+*   **MVP Stance:** For the MVP, this feature **is considered unsupported**. If a user permanently loses access to their sign-in provider (e.g., their Google account), they will lose access to their SyncWell data. This is a deliberate product decision to avoid the immense security and operational risks of a manual process.
+
+*   **Future Implementation Requirements:** If this feature is prioritized in the future, it **must not** be implemented as a manual script run by an engineer. It must be built as a dedicated, secure, and audited internal tool with multiple safety checks and a robust approval workflow.
+
+*   **Required Safety Features for a Future Tool:**
+    1.  **MFA-Gated Execution:** The tool must require the executing engineer to re-authenticate with MFA.
+    2.  **Two-Person Rule:** The operation must require approval from a second authorized engineer, who also authenticates with MFA (a "two-person rule").
+    3.  **Soft Deletes:** The old data must not be immediately deleted. It should be "soft-deleted" (e.g., flagged for deletion with a 30-day TTL) to allow for a rollback in case of error.
+    4.  **Comprehensive Auditing:** Every step of the process must be logged to an immutable audit trail.
+
+A simple peer review of a script is insufficient for an operation of this magnitude. The process described in the previous version of this document is a recipe for disaster and **must not be implemented**.

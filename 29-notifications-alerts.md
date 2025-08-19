@@ -55,8 +55,8 @@ This AWS -> Firebase cross-cloud architecture was chosen deliberately to leverag
 
 | ID | Name | Type | Trigger | Default | Content (Title / Body) | Deep Link | User Control Setting |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **N-01**| Sync Error | Push | The `DLQAnalyzer` service (see `17-error-handling.md`) determines that a sync job has failed persistently and requires user action (e.g., re-authentication). The analyzer then publishes an event to trigger this notification. This ensures notifications are not sent for transient errors that the system can automatically recover from. | On | **Sync Error** / Could not sync {{dataType}} from {{source}}. Please tap to fix. | The specific sync configuration screen that has the error. | Sync Alerts |
-| **N-02**| Trial Ending | Push | **Primary Trigger:** Scheduled locally on the client to fire 24 hours before the trial ends. <br> **Backend Fallback:** To mitigate the risk of the user uninstalling/reinstalling the app, a backend-driven daily job will run to find any users whose trials are expiring within 24 hours and who have not yet seen the trial ending notification. For these users, a fallback push notification will be sent from the backend. | On | **Trial Ending Soon** / Your SyncWell free trial ends tomorrow. Don't lose your syncs! | The Paywall screen. | App Reminders |
+| **N-01**| Sync Error | Push | The `DLQAnalyzer` service determines that a sync job has failed persistently due to a non-auth-related issue. This is for persistent, non-recoverable errors. | On | **Sync Error** / Could not sync {{dataType}} from {{source}}. Please tap for details. | A sync history/status screen. | Sync Alerts |
+| **N-02**| Trial Ending | Push | **Client-Side Only.** Scheduled locally on the client to fire 24 hours before the trial ends. The complex and unreliable backend fallback mechanism has been removed to simplify the logic. | On | **Trial Ending Soon** / Your SyncWell free trial ends tomorrow. Don't lose your syncs! | The Paywall screen. | App Reminders |
 | **N-03**| New Feature | Push | Manually triggered by developer via backend. | On | **New Integration!** / SyncWell now supports {{newPlatform}}! Tap to connect. | The "Connected Apps" screen. | News & Updates |
 | **N-04**| Sync Success| Push | A background sync completes successfully. | **Off**| **Sync Complete** / Your {{dataType}} data was successfully synced. | The app's main dashboard. | Sync Alerts |
 | **A-01**| Needs Re-auth| In-App Banner | App launch detects an invalid refresh token for a connected app. | N/A | "Your connection to {{appName}} has expired. Tap here to sign in again." | The "Connected Apps" screen. | N/A |
@@ -65,6 +65,7 @@ This AWS -> Firebase cross-cloud architecture was chosen deliberately to leverag
 | **N-06**| Hist. Sync Failed | Push | A historical sync job (Step Functions) fails. | On | **Historical Sync Failed** / There was a problem syncing your historical data from {{source}}. Please tap to review. | A sync history/status screen. | Sync Alerts |
 | **N-07**| Export Ready | Push | A data export job completes and the file is ready. | On | **Export Ready** / Your data export is ready to download. | The download screen in the app. | App Reminders |
 | **N-08**| Import Ready for Review | Push | An imported file has been processed and is ready for the user's review. | On | **Import Ready** / Your imported file is ready for review. Tap to continue. | The import confirmation screen. | App Reminders |
+| **N-09**| Re-auth Needed| Push | A worker receives a 401/403 error and publishes an immediate `ReAuthenticationNeeded` event. | On | **Action Required** / Your connection to {{source}} has expired. Please tap to sign in again. | The specific sync configuration screen that has the error. | Sync Alerts |
 
 ## 5. User-Facing Notification Settings
 
@@ -95,8 +96,8 @@ The "Notification Settings" screen within the app will provide users with granul
 
 ## 7. Optional Visuals / Diagram Placeholders
 *   **Notification Data Flow:**
-    *   *A sequence diagram showing the flow for both a client-scheduled notification (Trial Ending) and a server-triggered notification (Sync Error). [Placeholder - Diagram to be created]*
+    *   *A sequence diagram showing the flow for both a client-scheduled notification (Trial Ending) and a server-triggered notification (Sync Error). [Note: To be created in the Design Specification document.]*
 *   **Notification Settings Screen:**
-    *   *A high-fidelity mockup of the settings screen described in Section 5. [Placeholder - Mockup to be created]*
+    *   *A high-fidelity mockup of the settings screen described in Section 5. [Note: To be created in the Design Specification document.]*
 *   **Notification Banner Styles:**
-    *   *Mockups of the different in-app banners (e.g., Offline, Needs Re-auth). [Placeholder - Mockup to be created]*
+    *   *Mockups of the different in-app banners (e.g., Offline, Needs Re-auth). [Note: To be created in the Design Specification document.]*

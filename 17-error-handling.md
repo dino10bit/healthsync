@@ -56,9 +56,11 @@ Messages in a Dead-Letter Queue (DLQ) represent persistent failures that could n
 
 *   **Automated Triage Logic:** The `DLQAnalyzer` inspects the message's error metadata and attempts to identify specific, well-understood failure patterns:
     *   **Known Transient Third-Party Errors:** If an error matches a known pattern of a temporary third-party API issue (e.g., a specific `503` error from a partner API that is known to be flaky), the `DLQAnalyzer` will automatically redrive the message back to the main queue after a much longer delay (e.g., 1 hour), without paging the on-call engineer.
-    *   **Known "Bad Data" Formats:** If an error is due to a known, unrecoverable data format issue from a specific provider, the analyzer will automatically archive the message to a specific S3 bucket prefix for that provider and purge it from the DLQ. This will trigger a low-priority ticket for later analysis.
+    *   **Unrecoverable Data Formats:** If an error is due to a data format that is genuinely unrecoverable (e.g., fundamentally corrupt), the analyzer will archive the message and trigger a low-priority ticket. However, the primary mitigation for known "bad data" formats from a provider is defensive coding within the `DataProvider` itself to handle such cases gracefully before they cause a crash. The DLQ should be for truly unexpected errors.
 
 *   **Alerting for Unknown Failures:** If a message's error does not match any of the known patterns, it is considered a true unknown. Only in this case will the `DLQAnalyzer` trigger a high-priority alert (via PagerDuty) to the on-call engineer for manual investigation.
+
+*   **Operational Overhead:** It must be acknowledged that maintaining the `DLQAnalyzer`'s error patterns creates an ongoing operational burden. The long-term strategy should be to make the `DataProviders` themselves more resilient to reduce reliance on this backstop mechanism.
 
 This semi-automated strategy ensures that engineers are only alerted for novel and critical failures that require human intelligence.
 
@@ -118,9 +120,9 @@ All backend Lambda functions will output structured JSON logs to **AWS CloudWatc
   "timestamp": "2023-10-27T14:30:00.123Z",
   "level": "ERROR",
   "message": "Sync job failed: Unhandled exception from provider.",
-  "service": "SyncWorker",
+  "service": "WorkerLambda",
   "correlationId": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
-  "jobId": "xyz-123",
+  "idempotencyKey": "client-generated-uuid-123",
   "source": "garmin",
   "error": {
     "name": "GarminApiError",
@@ -129,7 +131,9 @@ All backend Lambda functions will output structured JSON logs to **AWS CloudWatc
   }
 }
 ```
-*   **PII Scrubbing & Traceability:** No sensitive data (e.g., OAuth tokens, raw health data) will ever be logged. To enforce our strict privacy policy, permanent identifiers like `userId` **must not be written to general application logs**. Instead, the mandated Powertools library will automatically inject a temporary `correlationId` into all log entries. This ensures full request traceability for debugging without directly exposing user identities in logs.
+*   **PII Scrubbing & Traceability:** No sensitive data will ever be logged. To enforce our strict privacy policy, `userId` **must not be written to logs**. Instead, the following identifiers will be used for traceability:
+    *   **`correlationId` (Source of Truth for Tracing):** This ID is generated at the very beginning of the request lifecycle (e.g., by the Powertools library in the `AuthorizerLambda` or API Gateway) and is automatically injected into all subsequent log entries for a given request. This is the primary ID used to trace a request's journey.
+    *   **`idempotencyKey` (Client-provided Job ID):** The client-provided `Idempotency-Key` (previously referred to as `jobId`) must also be logged to link backend processes to a specific client-initiated operation.
     For the rare but critical cases where debugging a specific user's issue is required, a secure, audited "break-glass" procedure must be followed. This procedure, detailed in `19-security-privacy.md`, uses the purpose-built `SyncWellBreakGlassIndex` to temporarily map a `correlationId` back to a `userId` under strict audit controls. This provides a necessary escape hatch for support while maintaining a high standard of privacy by default.
 
 ## 5. Monitoring & Alerting Strategy
@@ -149,6 +153,8 @@ The comprehensive observability strategy, including the full tooling stack (Clou
 *   **Alerting Flow:** High-priority alerts are routed via **CloudWatch Alarms → Amazon SNS → PagerDuty** to notify the on-call team immediately.
 *   **High-Priority Alert Triggers:**
     *   **Dead-Letter Queue (DLQ):** Any message arriving in a DLQ is a critical alert, as it signifies a persistent failure.
+    *   **Idempotency Key Collisions (CRITICAL):** A custom CloudWatch metric **must** be created to monitor the rate of idempotency key "hits" (i.e., duplicate requests being suppressed). A sudden spike in this metric is a critical alert, as it likely indicates a bug in the client's key generation logic that could cause silent failures for users.
+    *   **Regional Failover Event:** While the architecture is currently single-region, the monitoring plan must include an alert for any Route 53 health check changes that would signify a regional failover in the future multi-region architecture. A failover is a major event, and the on-call team must be notified even if it is successful.
     *   **Function & API Errors:** A significant spike in Lambda invocation errors or 5xx-level errors from API Gateway.
     *   **Queue Health:** The `ApproximateAgeOfOldestMessage` for the main SQS queue exceeds 5 minutes, indicating a processing backlog.
     *   **Database Throttling:** Sustained throttling events on the DynamoDB table, indicating a performance bottleneck.
