@@ -463,6 +463,13 @@ Given the requirement for a global launch across 5 continents, a high-availabili
 
     This diagram shows how a user is first directed by **Amazon Route 53** to the AWS region with the lowest latency. Each region contains a full deployment of the application's stateless services, including API Gateway and AWS Lambda. The core stateful services, **DynamoDB Global Tables** and **AWS Secrets Manager**, are replicated across all regions. This ensures that no matter which region a user is routed to, the compute services have low-latency access to a consistent, up-to-date copy of the user's metadata and credentials, providing a seamless global experience and high availability.
 
+    The flow of a user request in this multi-region setup is as follows:
+    1.  A user's mobile app makes a request to the SyncWell API.
+    2.  **Amazon Route 53**, using latency-based routing, directs the request to the API Gateway endpoint in the AWS region with the lowest network latency for that user.
+    3.  The stateless compute layer (API Gateway, Lambda) in that region handles the request.
+    4.  The services access a local replica of the user's data from **DynamoDB Global Tables** and **AWS Secrets Manager**, ensuring low-latency reads and writes.
+    5.  In the event of a full regional outage, Route 53 health checks will fail, and traffic will automatically be re-routed to the next nearest healthy region, providing high availability.
+
 *   **Request Routing:** **Amazon Route 53** will be configured with **Latency-Based Routing**. This will direct users to the AWS region that provides the lowest network latency, improving their application experience. Route 53 health checks will automatically detect if a region is unhealthy and redirect traffic to the next nearest healthy region.
 *   **Data Replication & Consistency:**
     *   **DynamoDB Global Tables:** User metadata and sync configurations will be stored in a DynamoDB Global Table. This provides built-in, fully managed, multi-master replication across all deployed regions, ensuring that data written in one region is automatically propagated to others with low latency.
@@ -514,6 +521,12 @@ sequenceDiagram
 ```
 
 This sequence diagram shows a **Worker Lambda** needing to make an external API call. Before doing so, it first interacts with the **ElastiCache for Redis** cluster, which acts as the distributed rate limiter. The worker makes a single, atomic call (typically using a Lua script) to check and decrement the token bucket for the specific third-party service. If the script returns `OK`, a token was available, and the worker proceeds to call the **Third-Party API**. If the script returns `FAIL`, it means the rate limit has been exceeded. In this case, the worker must abort the attempt and retry the entire job later, ensuring the system respects the external API's limits.
+
+The workflow for the distributed rate limiter is as follows:
+1.  The **Worker Lambda** is about to make an API call to a third-party service.
+2.  Before making the external call, it first makes a single, atomic call to the **ElastiCache for Redis** cluster. This call (typically using a Lua script for atomicity) checks if a token is available in the bucket for that specific third-party service and, if so, decrements the token count.
+3.  **If a token was available**, the Redis script returns `OK`. The worker then proceeds to make the outbound API call to the **Third-Party API**.
+4.  **If a token was not available** (the rate limit has been exceeded), the Redis script returns `FAIL`. The worker **must not** make the external API call. Instead, it should abort the current task and allow the job to be retried later, ensuring the system respects the external API's limits.
 
 *   **Load Projections & Resource Estimation:**
     *   **Assumptions (Bottom-Up Estimation):**

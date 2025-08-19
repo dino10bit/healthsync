@@ -79,6 +79,15 @@ graph TD
     D -- Syncs Data with --> G
 ```
 
+The following workflow describes the secure process of acquiring and using credentials for a third-party service:
+1.  The user initiates the authentication flow from the **Mobile App**, which directs them to the third-party service's login page.
+2.  After successful authentication, the third-party service redirects back to the app with a short-lived authorization code.
+3.  The Mobile App sends this authorization code to the SyncWell backend via the secure **API Gateway**.
+4.  A **Worker Lambda** receives the code.
+5.  The Worker Lambda makes a backend call to the third-party service's API, exchanging the authorization code for a long-lived refresh token and a short-lived access token.
+6.  These tokens are immediately stored securely in **AWS Secrets Manager**, encrypted at rest. The `CredentialArn` is stored in DynamoDB.
+7.  For subsequent sync jobs, the Worker Lambda retrieves the required tokens from Secrets Manager using its IAM role to communicate with the **3rd Party APIs** on the user's behalf.
+
 ## 5. Credential Lifecycle Management
 
 The lifecycle of user credentials is managed by the backend to maximize security.
@@ -97,7 +106,9 @@ The lifecycle of user credentials is managed by the backend to maximize security
 The backend is a core component and must be secured accordingly.
 
 *   **Authentication:** Communication between the mobile app and our backend API Gateway will be authenticated using short-lived JSON Web Tokens (JWTs) or a similar standard.
+*   **Secure JWT Validation:** The Lambda Authorizer is a security-critical component. To avoid common pitfalls in security implementation ("don't roll your own crypto"), the authorizer **must** use a well-vetted, open-source library for JWT validation. A library like **AWS Lambda Powertools** will be used to handle the complexities of fetching the JWKS, validating the signature, and checking standard claims (`iss`, `aud`, `exp`).
 *   **Authorization:** All backend compute services (API Gateway and Lambda functions) will use strict IAM roles, adhering to the principle of least privilege. A worker for Fitbit should not have access to Garmin tokens.
+*   **Authorizer Policy Caching:** The architecture uses API Gateway's built-in authorizer caching to improve performance. From a security perspective, the Time-to-Live (TTL) of this cache represents a window during which a user's permissions might be stale. For example, if a user's access is revoked, they may retain access until the cached policy expires. The TTL will be set to a short duration (e.g., 5 minutes) as a balance between performance and security responsiveness.
 *   **Network Security:** Services are isolated in a Virtual Private Cloud (VPC). To ensure traffic between our backend Lambda functions and other AWS services (like DynamoDB, SQS, and Secrets Manager) does not traverse the public internet, we use **VPC Endpoints**. This creates a private, secure connection to these services from within our VPC, reducing the attack surface and preventing potential data exposure. Access to databases and secret stores is restricted to services within the VPC via security groups and network ACLs. Furthermore, to control outbound traffic from the VPC to third-party APIs, an **AWS Network Firewall** will be implemented. This acts as an egress filter, configured with an allow-list of the specific domain names of our required partners (e.g., Fitbit, Strava). This enforces the principle of least privilege at the network layer and provides a critical defense-in-depth measure against potential data exfiltration or communication with malicious domains in the event of a compromised worker.
 *   **Logging & Monitoring:** All API calls and backend activity will be logged and monitored for anomalous behavior using services like AWS CloudTrail and CloudWatch. All logs will be scrubbed of sensitive data before being persisted.
 

@@ -64,6 +64,7 @@ This register categorizes and assesses the top risks to the project.
 | R-65 | **Human Resources** | The solo developer is a single point of failure for on-call incident response, creating a significant operational risk. | **High** | **High** | **High** |
 | R-66 | **Strategic** | The deep integration with AWS-specific managed services creates a high degree of vendor lock-in, making a future migration to another cloud provider difficult and expensive. | **Low** | **Medium** | **Low** |
 | R-67 | **Architecture** | The move to a container-based model with Fargate, while necessary for scale, introduces additional operational overhead compared to a purely serverless Lambda approach. | **Medium** | **Low** | **Low** |
+| R-68 | **Architecture** | A single "viral user" generates extremely high traffic, causing their own requests to be throttled by DynamoDB due to a hot partition. | **Low** | **Medium** | **Low** |
 
 ## 4. Detailed Mitigation & Contingency Plans
 
@@ -76,6 +77,7 @@ This register categorizes and assesses the top risks to the project.
 | **Developer Burnout (R-37)** | - Adhere to a sustainable pace.<br>- Automate repetitive tasks (testing, CI/CD).<br>- Take scheduled time off. | - Temporarily halt new feature development.<br>- Focus only on critical bug fixes and support.<br>- Communicate a development slowdown to users if necessary. | Developer consistently misses sprint goals for more than two consecutive sprints due to exhaustion. |
 | **Security Breach (R-55)** | - Adhere strictly to security best practices (Keychain, etc.).<br>- Commission a pre-launch third-party security audit. | - Immediately force-logout all users of the affected integration.<br>- Deploy a hotfix to patch the vulnerability.<br>- Transparently communicate the nature of the breach and the remediation steps to all users. | Discovery of a critical vulnerability, either internally or via external report. |
 | **Market Failure (R-04)**| - Launch with a focused MVP.<br>- Use a public feedback portal to build what users want. | - Analyze user feedback and analytics to identify the biggest gaps.<br>- Pivot the product roadmap to address these gaps.<br>- If still no traction, consider open-sourcing the project or initiating a shutdown. | Paid user growth is flat for more than three consecutive months post-launch. |
+| **DynamoDB Hot Partition (R-68)** | - The primary mitigation is the **"hot table" strategy**. A viral user can be flagged, and their data will be moved to a dedicated DynamoDB table with higher provisioned throughput. This isolates their traffic and avoids read-side complexity.<br>- Application logic will check the user's flag and route DB queries to the correct table. | - If the "hot table" strategy is insufficient, the more complex **write-sharding** strategy can be implemented for that user. | A single user's API requests experience sustained DynamoDB throttling errors, confirmed via CloudWatch metrics. |
 
 ## 5. Execution Plan
 Risk management is a continuous process integrated into the agile development cycle.
