@@ -47,7 +47,7 @@ This strategy yields different recovery objectives depending on the nature of th
 | Failure Scenario | Recovery Time Objective (RTO) | Recovery Point Objective (RPO) | Mechanism |
 | :--- | :--- | :--- | :--- |
 | **Full Regional Outage** | **< 5 minutes** | **< 2 seconds** | **Automated Failover.** Amazon Route 53 health checks detect the failure and automatically redirect traffic to a healthy region. The RPO is governed by the replication lag of DynamoDB Global Tables. |
-| **Cache Cluster Failure** | **< 15 minutes** | **< 1 minute** | **Manual Promotion.** An on-call engineer promotes a secondary ElastiCache replica to primary. The RPO is governed by the ElastiCache Global Datastore replication lag. |
+| **Cache Cluster Failure** | **< 60 minutes** | **< 1 minute** | **Manual Promotion.** An on-call engineer promotes a secondary ElastiCache replica to primary. The RPO is governed by the ElastiCache Global Datastore replication lag. |
 | **Data Corruption Event** (e.g., bad code deployment) | **< 4 hours** | **< 5 minutes** | **Manual Restore.** An engineer initiates a DynamoDB Point-in-Time Recovery (PITR) to restore the table to a state before the corruption. RPO is governed by the continuous backup window of PITR. This is a last-resort, manual process. |
 
 ### Recovery Mechanisms:

@@ -114,7 +114,7 @@ Handling a user's request to sync several years of historical data (User Story *
 2.  **State Machine Logic:** The state machine, as detailed in `06-technical-architecture.md`, will perform the following steps:
     *   **Initiate Sync Job:** A Lambda function prepares the sync, determining the total number of data chunks to be processed (e.g., one chunk per month of historical data).
     *   **Map State for Parallel Processing:** The state machine will use a `Map` state to iterate over the array of chunks. This allows for parallel execution of the sync task for each chunk, dramatically improving performance.
-    *   **Process One Chunk:** For each chunk, a dedicated `Cold-Path Worker Task` (on Fargate) is invoked. It fetches the data from the source, transforms it, and writes it to the destination.
+    *   **Process One Chunk:** For each chunk, a dedicated `Worker Lambda` function is invoked. It fetches the data from the source, transforms it, and writes it to the destination. This use of Lambda is ideal for the highly parallel, on-demand nature of this task.
     *   **Built-in Error Handling & Retries:** Step Functions provides robust, configurable retry logic for transient errors. If a chunk fails repeatedly, it can be caught and logged to a Dead-Letter Queue without halting the entire workflow.
     *   **Finalize Sync:** Once all chunks are processed, a final Lambda function updates the overall job status to `COMPLETED`.
 
