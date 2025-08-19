@@ -31,9 +31,9 @@ The backend's error handling strategy is designed for maximum resilience and mes
 
 1.  **Guaranteed Delivery & Message Durability:** When a sync job is accepted, it is first published as an event to EventBridge, which then forwards it to a durable **Amazon SQS queue**. SQS guarantees that the message is stored redundantly across multiple availability zones until a worker successfully processes it. This ensures that even if the entire worker fleet is down, no sync jobs are lost.
 
-2.  **Handling Transient Failures with Retries:** A worker Lambda may fail for transient reasons, such as a temporary network issue, a brief third-party API outage, or being throttled. The system handles this gracefully:
-    *   The SQS message remains on the queue and becomes visible again after its "visibility timeout" expires.
-    *   Lambda is configured with a retry policy (typically 3-5 attempts with exponential backoff). This built-in mechanism automatically re-invokes the function, giving the transient issue time to resolve itself without any custom code.
+2.  **Handling Transient Failures with Retries:** A worker task (Fargate or Lambda) may fail for transient reasons, such as a temporary network issue, a brief third-party API outage, or being throttled. The system handles this gracefully:
+    *   For SQS-triggered Fargate tasks, the SQS message remains on the queue and becomes visible again after its "visibility timeout" expires, causing the service to retry the job.
+    *   For Step Functions-triggered Lambda tasks, the state machine itself is configured with a retry policy (typically 3-5 attempts with exponential backoff). This built-in mechanism automatically re-invokes the function, giving the transient issue time to resolve itself without any custom code.
 
 3.  **Isolating Persistent Failures with a Dead-Letter Queue (DLQ):** If a job fails all of its retry attempts, it is considered a persistent failure (e.g., due to a bug in the code, malformed data that causes a crash, or a permanent issue with a third-party API).
     *   To prevent this single bad message from blocking the queue and being retried indefinitely, SQS automatically moves it to a pre-configured **Dead-Letter Queue (DLQ)**.
@@ -42,6 +42,23 @@ The backend's error handling strategy is designed for maximum resilience and mes
 4.  **Alerting and Analysis:** A CloudWatch Alarm continuously monitors the DLQ. If the number of messages rises above zero, it triggers a high-priority alert to the on-call engineering team. The failed job message, which is stored in the DLQ, contains the full context of the job, allowing engineers to diagnose and resolve the root cause.
 
 5.  **EventBridge Durability:** To provide an additional layer of durability, the EventBridge rule that targets the SQS queue will also be configured with its own DLQ. This ensures that if an event fails to be delivered to the SQS queue for any reason (e.g., a misconfiguration or temporary unavailability), the event is captured and can be reprocessed, preventing data loss.
+
+### 2.3. DLQ Management and Re-processing
+
+Messages in a Dead-Letter Queue (DLQ) represent persistent failures that could not be resolved by automatic retries. A manual, operator-driven process is required to handle these messages to ensure no data is lost. The following runbook outlines the procedure for an on-call engineer.
+
+**Runbook for DLQ Message Handling:**
+
+1.  **Alerting:** A CloudWatch Alarm triggers when the `ApproximateNumberOfMessagesVisible` metric for any DLQ is greater than zero for a sustained period (e.g., 15 minutes). The on-call engineer is paged.
+2.  **Inspection:** The engineer navigates to the SQS console in AWS to view the messages in the DLQ. The message body and attributes are inspected to understand the job context and the reason for failure (often available in the `ErrorMessage` attribute added by Lambda).
+3.  **Diagnosis:** The engineer uses the `correlationId` from the message to query CloudWatch Logs Insights for all related logs. This provides the full context of the failure, allowing the engineer to diagnose the root cause (e.g., a bug in the worker, a breaking change in a third-party API, unexpected data format).
+4.  **Archiving:** Before taking any action, all messages in the DLQ **must be archived** to a dedicated S3 bucket for long-term analysis and auditing. This can be done using a small, purpose-built Lambda function or a script.
+5.  **Decision and Action:**
+    *   **If the error is due to a transient issue that has since been resolved (e.g., a temporary third-party API outage):** The engineer can use the "Start DLQ redrive" feature in the SQS console to move the messages back to the main source queue for reprocessing.
+    *   **If the error is due to a bug in the worker code:** A high-priority ticket is created. Once a fix is deployed, the messages can be redriven from the DLQ.
+    *   **If the error is due to malformed data or a permanent, unrecoverable issue:** The messages are left in the archive S3 bucket, and the issue is logged for product/engineering review. The messages are then purged from the DLQ.
+
+This manual-first approach ensures that an operator carefully considers each failure case, preventing potential infinite failure loops and providing a high degree of safety.
 
 ## 3. Unified Error Code Dictionary
 

@@ -45,11 +45,27 @@ To enforce this separation of concerns, every provider must implement the `DataP
 
 ```kotlin
 // Simplified for documentation purposes.
+
+/**
+ * Defines the capabilities of a given DataProvider, such as reading or writing data.
+ * This allows the sync engine to dynamically adapt to each provider's functionality.
+ */
+enum class Capability {
+    READ, WRITE
+}
+
 interface DataProvider {
     /**
      * A unique, machine-readable key for the provider (e.g., "strava", "fitbit").
      */
     val providerKey: String
+
+    /**
+     * The set of capabilities supported by this provider. The core sync engine will
+     * check this set before attempting operations like writing data. For example, a
+     * read-only provider like Garmin would return `setOf(Capability.READ)`.
+     */
+    val capabilities: Set<Capability>
 
     /**
      * Handles the initial OAuth 2.0 authorization flow to acquire tokens.
@@ -70,6 +86,10 @@ interface DataProvider {
     /**
      * Pushes a list of canonical data models to the provider's API, transforming them into the
      * provider-specific format required by the destination service.
+     *
+     * **IMPORTANT:** This method should only be called if the provider's `capabilities` set
+     * contains `Capability.WRITE`. Calling this on a read-only provider will result
+     * in a `NotImplementedError` or a similar exception.
      */
     suspend fun pushData(tokens: ProviderTokens, data: List<CanonicalData>): PushResult
 }
@@ -95,6 +115,8 @@ To ensure that all `DataProvider` implementations use a consistent set of tools 
 *   **Packaging:** The SDK, which is part of the KMP shared module, will be packaged as a private Maven package.
 *   **Versioning:** The SDK will follow Semantic Versioning (SemVer). All worker tasks will declare a dependency on a specific version of the SDK.
 *   **Distribution:** The package will be hosted in a private artifact repository (e.g., AWS CodeArtifact or a private GitHub Packages repository). The CI/CD pipeline for the backend services will be configured to pull the specified version of the SDK during the build process.
+
+This approach ensures that updates to the core SDK logic can be rolled out in a controlled and predictable manner, and it prevents individual `DataProvider` implementations from falling out of sync with the core framework.
 
 This approach ensures that updates to the core SDK logic can be rolled out in a controlled and predictable manner, and it prevents individual `DataProvider` implementations from falling out of sync with the core framework.
 

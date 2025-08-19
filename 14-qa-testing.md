@@ -69,8 +69,29 @@ Our testing strategy follows the principles of the classic testing pyramid.
     *   **Edge Cases:** Using invalid inputs, rapidly tapping buttons, testing on devices with unusual screen sizes or settings.
     *   **Usability:** Assessing the overall feel and flow of the app, looking for confusing UI or awkward workflows.
 
+### Consumer-Driven Contract Testing (Pact)
+*   **Objective:** To ensure that the mobile client (the "Consumer") and the backend API (the "Provider") can evolve independently without introducing breaking changes. This prevents a common class of bugs where a backend change unexpectedly breaks an older version of the mobile app.
+*   **Tooling:** **Pact**.
+*   **Methodology:** The testing process follows the standard consumer-driven contract workflow:
+    1.  **Consumer-Side:** In the mobile app's test suite, integration tests are written that define the expectations of the backend API. These tests mock the API requests and define the exact responses the client expects to receive.
+    2.  **Contract Generation:** When these tests run, Pact generates a "contract" file (a JSON document) that describes these expectations.
+    3.  **Contract Publication:** The generated contract is published to a central "Pact Broker".
+    4.  **Provider-Side Verification:** In the backend's CI/CD pipeline, a verification step is triggered. The backend fetches the contract from the Pact Broker and replays the requests against the live API. It then verifies that the actual responses match the expectations defined in the contract.
+*   **CI/CD Integration:**
+    *   The mobile client's CI pipeline is configured to automatically publish new versions of the contract to the Pact Broker whenever a change is made to an API integration test.
+    *   The backend's CI pipeline is configured to fail if the API verification step fails. This acts as a crucial quality gate, preventing the deployment of any backend change that would break the contract with the mobile client.
+*   **Success Criteria:** A backend deployment can only proceed if it successfully verifies against all relevant contracts in the Pact Broker.
+
+### Staging & Test Data Strategy
+*   **Objective:** To provide development, staging, and local environments with realistic, but fully anonymized, data for testing purposes. Under no circumstances will real production user data be used in non-production environments.
+*   **Methodology:** A dedicated, scheduled process will be created to generate a sanitized data set.
+    1.  **Data Source:** The process will use a curated, internal set of sample raw data that mirrors the structure of production data but contains no real user information.
+    2.  **Anonymization Pipeline:** This sample data will be processed through the same `Anonymization Pipeline` defined in `19-security-privacy.md`. This ensures that our test data adheres to the same privacy standards as our analytics data.
+    3.  **Data Loading:** The resulting anonymized data will be loaded into the DynamoDB tables and other data stores in the staging and local (LocalStack) environments.
+*   **Process:** This data generation process will be automated and run as part of the environment setup and refresh scripts. This ensures that developers always have access to a fresh, realistic, and safe set of data for testing.
+
 ### Load Testing
-*   **Objective:** To formally verify that the backend system can handle the peak load of **10,000 requests per second (RPS)** as defined in the non-functional requirements, and to identify and eliminate performance bottlenecks before they impact users.
+*   **Objective:** To formally verify that the backend system can handle the peak load of **3,000 requests per second (RPS)** as defined in the non-functional requirements, and to identify and eliminate performance bottlenecks before they impact users.
 *   **Tooling:** **k6 (by Grafana Labs)** will be used for scripting and executing load tests. k6 is chosen for its developer-friendly, scriptable API (using JavaScript) and its high performance.
 *   **Environment:** Load tests will be run against a dedicated, production-scale staging environment. This environment will be a mirror of the production environment, with the same infrastructure configuration, to ensure that test results are representative.
 *   **Test Scenarios:** The load test suite will include a variety of scenarios to simulate realistic user behavior and stress the system in different ways:

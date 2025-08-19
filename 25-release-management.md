@@ -89,6 +89,24 @@ To minimize the risk of production incidents, all backend services are deployed 
 *   **Monitoring:** The canary is closely monitored for any increase in error rates or latency.
 *   **Rollout/Rollback:** If the canary is stable, traffic is gradually shifted until it serves 100% of requests. If issues are detected, traffic is immediately routed back to the stable version.
 
+### 4b. Canary Releases for Event-Driven Fargate Workers
+
+Canary releasing for a synchronous, user-facing service like an API is straightforward (e.g., using weighted traffic routing in API Gateway). However, for an asynchronous, event-driven service like the Fargate worker fleet that consumes jobs from an SQS queue, a different pattern is required.
+
+We will use a **feature flag-driven, consumer-side canary** pattern, which is controlled by AWS AppConfig.
+
+**Deployment & Canary Process:**
+
+1.  **Deployment of New Version:** The CI/CD pipeline deploys a new version of the Fargate service. Critically, this deployment **does not** immediately replace the old version. Instead, both the old and new versions of the Fargate tasks run concurrently, consuming messages from the same SQS queue.
+2.  **Canary Logic in Code:** The application code within the Fargate task contains the logic for both the old and new features/behaviors. A feature flag retrieved from AWS AppConfig at runtime controls which logic path is executed.
+3.  **Initial Canary Configuration:** The feature flag in AppConfig is initially configured to be `false` or to have a `canary` value for a very small percentage of invocations (e.g., 1%). This means that even though the new code is deployed, it is not active for the vast majority of jobs.
+4.  **Monitoring:** The new code path is instrumented with specific metrics (e.g., a CloudWatch metric with a `version` dimension). We monitor the error rate and performance of only the canary invocations.
+5.  **Gradual Rollout:** If the canary proves stable, the configuration in AppConfig is updated to gradually increase the percentage of jobs that use the new logic path (e.g., 1% -> 10% -> 50% -> 100%). This requires no new deployment; it is purely a configuration change.
+6.  **Rollback:** If the canary shows any issues, the AppConfig configuration is instantly changed back to 0%, disabling the new logic path for all tasks. This provides an immediate and safe rollback without needing to re-deploy the previous version of the service.
+7.  **Code Cleanup:** Once the feature is fully rolled out and stable, the old logic path and the feature flag are removed from the code in a subsequent release, as per the Feature Flag Lifecycle defined in this document.
+
+This approach provides a high degree of safety and control for releasing changes to our most critical asynchronous service.
+
 ## 5. The Release Process & Checklist
 
 ### 5.1. Minor Release (The Monthly Train)
