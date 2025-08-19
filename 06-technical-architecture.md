@@ -223,6 +223,8 @@ interface DataProvider {
 
     /**
      * Refreshes an expired access token using a refresh token.
+     *
+     * @throws PermanentAuthError if the refresh token is invalid or has been revoked.
      */
     suspend fun refreshAccessToken(refreshToken: String): ProviderTokens
 
