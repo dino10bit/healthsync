@@ -28,11 +28,24 @@ The data import process is a multi-step workflow that includes waiting for user 
 2.  **Start Execution (Mobile -> Backend):** The app calls an API endpoint that triggers a new execution of the `DataImport` state machine, providing the S3 URL of the uploaded file.
 3.  **State Machine Execution (Backend):**
     *   **a. Parse & Validate:** A Lambda function downloads the file from S3 and uses a `Parser` to validate it and convert it into our `CanonicalActivity` model. If the file is corrupt, the state machine transitions to a `FAILED` state.
-    *   **b. Duplicate Check:** A second Lambda queries destination APIs to check for potential duplicates.
+    *   **b. Duplicate Check:** A second Lambda queries destination APIs to check for potential duplicates. See section 2.1 for details on the logic.
     *   **c. Wait for User Review:** The state machine saves the parsed data and enters a "wait" state using a **task token**. This token represents the paused workflow. The machine then publishes an event to SNS to trigger the `N-08` "Ready for Review" push notification.
     *   **d. User Confirmation (Mobile):** The user reviews the import in the app. When they confirm, the app sends the confirmation choices and the **task token** to a backend API.
     *   **e. Resume Execution:** The backend API calls the `SendTaskSuccess` Step Functions API action with the task token and the user's choices as output. This resumes the state machine execution.
     *   **f. Final Sync:** The final state in the machine places the approved sync job into the main `hot-queue` for processing by the standard sync workers.
+
+### 2.1. Duplicate Check Logic
+
+A key step in the import workflow is checking for potential duplicates to avoid corrupting the user's data. The `Check Duplicates` Lambda function will implement the following logic:
+
+1.  **Extract Key Identifiers:** The function will first extract the key identifiers from the parsed `CanonicalActivity` that was uploaded:
+    *   `activityType` (e.g., "RUNNING", "CYCLING")
+    *   `startTimestamp`
+    *   `endTimestamp`
+2.  **Query Destination Platforms:** For each potential destination platform the user might sync to, the function will call that platform's `DataProvider`.
+3.  **Time-based Query:** The `DataProvider` will be queried for any existing activities of the same `activityType` within a specific time window. The query range will be `[startTimestamp - 5 minutes, endTimestamp + 5 minutes]`. This 5-minute buffer accounts for small discrepancies in how different devices record start and end times.
+4.  **Flag Potential Duplicates:** If the `DataProvider` returns any activities within this time window, they will be flagged as potential duplicates.
+5.  **Pass to UI for Resolution:** The list of potential duplicates will be passed back to the Step Functions workflow and ultimately to the mobile client. The "Preview & Configure" screen will then display these potential duplicates to the user, allowing them to decide whether to skip the import or proceed. This "human-in-the-loop" approach is the safest way to handle potential data conflicts.
 
 This architecture provides a robust way to handle the human-in-the-loop part of the workflow, with built-in support for timeouts (e.g., after 7 days) if the user never confirms the import.
 
@@ -90,3 +103,12 @@ graph TD
     C -- Resumes --> H
     H --> I
 ```
+
+## 7. Security of Uploaded Files
+
+To ensure the confidentiality and integrity of user-uploaded data, all files handled by the import feature are subject to the following security policies:
+
+*   **Secure Transport:** All files are uploaded from the mobile client to S3 over HTTPS (TLS 1.2+).
+*   **Encryption at Rest:** All files are stored in a dedicated, private S3 bucket. Server-Side Encryption with Amazon S3-Managed Keys (SSE-S3) is enabled on this bucket, so all objects are automatically encrypted at rest.
+*   **Strict Access Control:** The S3 bucket is configured to block all public access. Access is granted only to specific, authorized principals via IAM policies. The `Parse & Validate` Lambda function has a narrowly-scoped IAM role that grants it temporary, read-only access to the specific object it needs to process. No other services have access to the bucket.
+*   **Automatic Deletion (Lifecycle Policy):** A short-lived S3 lifecycle policy is configured on the bucket. This policy will automatically and permanently delete all uploaded files **24 hours** after they are created. This ensures that user data is not stored any longer than is absolutely necessary to complete the import process, adhering to the principle of data minimization.

@@ -63,7 +63,7 @@ The E2E tests will be made more reliable through data seeding.
 
 *   **Sample Scenario: "Import Fitbit Activity to Google Fit"**
     1.  **Setup (Script):** A pre-test script runs, using the Fitbit API to delete any old test activities and then `POST` a new, specific workout (e.g., "Running, 5km, 30 mins") to the `syncwell-test` Fitbit account.
-    2.  **Test Execution (Detox/Patrol):**
+    *   **Test Execution (Maestro):**
         *   The E2E test launches the SyncWell app.
         *   It navigates through the UI to configure and trigger a sync from Fitbit to Google Fit.
     3.  **Verification (Script):** A post-test script calls the Google Fit API directly to verify that a "Running, 5km, 30 mins" workout now exists in the `syncwell-test` Google Fit account.
@@ -91,3 +91,28 @@ The manual test plan will use a formal test case format.
 *   **[Diagram] E2E Test Architecture:** A diagram illustrating the E2E test scenario, including the pre-test seeding script, the UI automation, and the post-test verification script.
 *   **[Table] Manual Test Suite:** A sample of the manual test plan in a table format, showing several test cases with their detailed steps and expected results.
 *   **[Diagram] CI/CD Testing Stages:** A flowchart showing which test suites are run at which stage of the CI/CD pipeline.
+
+## 5. Backend Integration Testing Strategy
+
+While the strategies above focus on testing the `DataProvider` modules, it is equally critical to test the integrations *between our own backend services*. This section outlines the strategy for testing the serverless backend itself.
+
+*   **Objective:** To verify that the different components of the serverless backend (API Gateway, Lambda, SQS, DynamoDB, Step Functions) interact correctly and that data flows through the system as expected.
+*   **Local Testing with LocalStack:**
+    *   **Framework:** The primary tool for local backend testing will be **LocalStack**. This allows the entire AWS cloud stack to be emulated on a local machine, enabling fast and efficient testing without incurring AWS costs.
+    *   **Process:** Developers will write integration tests (e.g., using JUnit for the JVM backend code) that run against the local LocalStack environment. These tests will be executed locally during development to provide rapid feedback.
+    *   **Example Test Case:**
+        1.  The test starts a local LocalStack instance.
+        2.  It programmatically creates the necessary resources (e.g., an SQS queue, a DynamoDB table).
+        3.  It invokes the `RequestLambda`'s handler function directly with a mock API Gateway event.
+        4.  The test then asserts that a message was correctly published to the SQS queue and that the appropriate item was written to the DynamoDB table.
+*   **Staging Environment Testing:**
+    *   **Environment:** A dedicated staging environment, which is a 1:1 mirror of the production environment, will be used for running a full suite of backend integration tests.
+    *   **Process:** As part of the CI/CD pipeline (on every merge to `develop`), a test runner will execute a suite of integration tests against the live staging environment.
+    *   **Example Test Case (Step Functions):**
+        1.  The test triggers a `Historical Sync` Step Functions execution via an API call to the staging API Gateway.
+        2.  It then polls the Step Functions API until the execution is complete.
+        3.  Finally, it asserts that the execution succeeded and that the expected data was written to the destination service (by calling the third-party service's API with test account credentials).
+*   **Scope:** This strategy covers testing the core backend flows, including:
+    *   The "hot path" real-time sync (API Gateway -> Lambda -> EventBridge -> SQS -> Lambda).
+    *   The "cold path" historical sync (Step Functions orchestration).
+    *   The data import and export flows (Step Functions orchestration).

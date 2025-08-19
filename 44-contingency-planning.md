@@ -86,3 +86,24 @@ The purpose of this document is to enable a calm, rational, and rapid response u
     4.  If necessary, use backend scripts to invalidate all stored OAuth tokens in Secrets Manager across all regions, forcing users to re-authenticate.
     5.  Communicate transparently with users.
     6.  Conduct a full postmortem and security audit.
+
+### Plan F: Backend Deployment Rollback
+
+*   **Trigger:** The canary release of a new backend version shows a critical issue (e.g., high error rate, increased latency), or a critical bug is discovered after the new version has been fully rolled out.
+*   **Objective:** To quickly and safely revert the backend services to the last known stable version, minimizing user impact.
+*   **Strategy:** The rollback strategy relies on the versioning capabilities of AWS Lambda and API Gateway, and is designed to be automated.
+*   **Automated Rollback (During Canary Deployment):**
+    1.  **Detection:** CloudWatch Alarms, configured to monitor the canary version, trigger due to an anomaly (e.g., error rate > 1%).
+    2.  **Automated Action:** The CI/CD pipeline (or a dedicated Lambda function triggered by the alarm) will automatically shift 100% of traffic back to the stable, previous version.
+    3.  **Notification:** The on-call engineer is notified that an automatic rollback has occurred.
+*   **Manual Rollback (Post-Full Deployment):**
+    1.  **Decision:** The on-call engineer, after identifying a critical bug in the new version, makes the decision to roll back.
+    2.  **Lambda Rollback:**
+        *   The CI/CD pipeline will have a dedicated "rollback" job.
+        *   This job will take a version number as input.
+        *   It will use the AWS CLI or SDK to update the Lambda function aliases (e.g., the `live` alias) to point to the previous stable function version. AWS Lambda automatically keeps previous versions of the code, making this a fast and safe operation.
+    3.  **API Gateway Rollback:**
+        *   If the API Gateway stage was updated, the rollback job will redeploy the previous stable stage from its deployment history.
+    4.  **Verification:** After the rollback job is complete, the engineer will manually verify that the backend is functioning correctly and that the critical bug is no longer present.
+    5.  **Communication:** The public status page will be updated to inform users of the issue and the successful rollback.
+*   **Testing:** The manual rollback procedure will be tested in the staging environment on a regular basis (e.g., quarterly) to ensure it works as expected and that the on-call team is familiar with the process.

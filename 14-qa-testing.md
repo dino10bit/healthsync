@@ -44,7 +44,7 @@ Our testing strategy follows the principles of the classic testing pyramid.
 *   **Level 3: End-to-End (E2E) Tests (10% of tests)**
     *   **Purpose:** To test a full "happy path" user journey through the application's UI.
     *   **Scope:** The critical user flows: onboarding, configuring a sync, upgrading to Pro, restoring a purchase.
-    *   **Tools:** Maestro, Appium, or similar cross-platform E2E framework.
+    *   **Tools:** **Maestro**. It is chosen for its simplicity, fast setup, and reliability. Its declarative YAML-based syntax makes tests easy to write and maintain, which is a significant advantage for a solo developer or a small team.
 
 ## 4. Specialized Test Plans
 
