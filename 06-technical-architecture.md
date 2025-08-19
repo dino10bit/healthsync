@@ -79,6 +79,7 @@ graph TD
     end
 
     subgraph "AWS Cloud (Multi-Region)"
+        WAF[AWS WAF]
         APIGateway[API Gateway]
         AuthorizerLambda[Lambda Authorizer]
         HotPathEventBus[EventBridge Event Bus]
@@ -106,7 +107,8 @@ graph TD
     end
 
     MobileApp -- "Signs up / signs in with" --> FirebaseAuth
-    MobileApp -- "HTTPS Request (with Firebase JWT)" --> APIGateway
+    MobileApp -- "HTTPS Request (with Firebase JWT)" --> WAF
+    WAF -- "Filters traffic to" --> APIGateway
 
     APIGateway -- "Validates JWT with" --> AuthorizerLambda
     AuthorizerLambda -- "Caches and validates against Google's public keys" --> FirebaseAuth
@@ -591,8 +593,10 @@ This structure provides a flexible and scalable foundation for our application's
 The recommended primary strategy is to isolate the hot user's data into a separate, dedicated DynamoDB table. This provides complete performance isolation with minimal architectural complexity.
 
 *   **Identification and Flagging:**
-    *   A user is identified as "hot" through monitoring and operational alerts that detect sustained throttling on a specific partition key (`USER#{userId}`).
-    *   For the MVP, flagging a user will be a **manual operational procedure**. An authorized engineer will set a boolean attribute, `isHot`, to `true` on the user's `PROFILE` item in the main `SyncWellMetadata` table.
+    *   A user is identified as "hot" through a specific, automated monitoring and alerting strategy. A CloudWatch Alarm **must** be configured to detect sustained throttling for a specific partition key.
+    *   **Metric:** The alarm will monitor the `ThrottledRequests` metric for the `SyncWellMetadata` DynamoDB table.
+    *   **Threshold:** It will trigger if the sum of throttled requests for a single partition key exceeds a defined threshold (e.g., >100 throttled read/write events over a 15-minute period). The `userId` causing the throttling will be extracted from the logs or metrics for investigation.
+    *   For the MVP, flagging a user will remain a **manual operational procedure** based on this alert. An authorized engineer will set a boolean attribute, `isHot`, to `true` on the user's `PROFILE` item in the main `SyncWellMetadata` table.
 
 *   **Application Logic:**
     *   A centralized data access layer in the application code will be responsible for all interactions with the `SyncWellMetadata` table(s).
@@ -996,6 +1000,7 @@ This strategy ensures that the app remains responsive and that user actions are 
 | **Secure Credential Storage** | **AWS Secrets Manager** | **Security & Manageability.** Provides a secure, managed service for storing, rotating, and retrieving the OAuth tokens required by our backend workers. Replicated across regions for high availability. |
 | **Configuration Management & Feature Flagging** | **AWS AppConfig** | **Operational Agility & Safety.** We will adopt AWS AppConfig for managing dynamic operational configurations (like log levels or API timeouts) and feature flags. This allows for safe, audited changes without requiring a full code deployment, significantly improving operational agility and reducing release risk. |
 | **Infrastructure as Code** | **Terraform** | **Reproducibility & Control.** Manages all cloud infrastructure as code, ensuring our setup is version-controlled and easily reproducible. |
+| **Web Application Firewall** | **AWS WAF** | **Protection Against Common Exploits.** A foundational security layer that sits in front of API Gateway to protect against common web exploits like SQL injection, cross-site scripting, and bot traffic. |
 | **CI/CD**| **GitHub Actions** | **Automation & Quality.** Automates the build, test, and deployment of the mobile app and backend services, including security checks. |
 | **Monitoring & Observability** | **AWS CloudWatch, AWS X-Ray** | **Operational Excellence.** Provides a comprehensive suite for logging, metrics, tracing, and alerting, enabling proactive issue detection and performance analysis. |
 | **Local Development** | **LocalStack** | **High-Fidelity Local Testing.** Allows engineers to run and test the entire AWS serverless backend on their local machine, drastically improving the development and debugging feedback loop. |
@@ -1069,10 +1074,21 @@ For features like the AI-Powered Merge, which require a synchronous, real-time r
     *   **Expected Overhead:** The P99 latency for the `AnonymizerProxy` Lambda itself (excluding the downstream call to the AI service) is expected to be **under 50ms**.
     *   **SLO Consideration:** This additional latency is factored into the overall end-to-end sync time SLO. The performance of this proxy will be closely monitored with its own CloudWatch alarms.
 
-*   **PII Stripping Strategy:** The anonymization process is designed to remove personally identifiable information without losing the essential semantic context required for the AI model to make an intelligent merge decision.
-    *   **Direct Identifiers:** Fields containing direct PII, such as `title` or `notes` on a workout, are completely removed.
-    *   **Indirect Identifiers:** Fields that could indirectly identify a user, such as precise GPS coordinates, are generalized. For example, a full GPS track might be replaced by a simple bounding box or removed entirely, depending on the model's requirements.
-    *   **Hashing/Tokenization:** Stable but non-personal identifiers (e.g., `sourceId`) may be kept to allow the AI service to detect patterns related to data sources, but they cannot be reverse-engineered to identify a user.
+*   **PII Stripping Strategy:** The anonymization process must be explicit and auditable. The following table defines the specific action that the `AnonymizerProxy` **must** take for each field in the `CanonicalWorkout` model before forwarding it to the AI service.
+
+| Field | Action | Rationale |
+| :--- | :--- | :--- |
+| `sourceId` | **Hash** | Hashed to prevent reverse-engineering, but allows the AI to see if two activities came from the same original source. |
+| `sourceProvider` | **Keep** | Kept as-is. This is low-risk, non-PII and essential context for the AI model. |
+| `activityType` | **Keep** | Kept as-is. Essential context. |
+| `startTimestamp`| **Generalize** | Generalized to the hour (e.g., `2023-10-27T14:30:15Z` -> `2023-10-27T14:00:00Z`). Removes precision that could identify a user. |
+| `endTimestamp` | **Generalize** | Generalized to the hour. |
+| `durationSeconds`| **Keep** | Kept as-is. Essential context. |
+| `distanceMeters` | **Keep** | Kept as-is. Essential context. |
+| `energyKcal` | **Keep** | Kept as-is. Essential context. |
+| `title` | **Remove** | High-risk PII (e.g., "Run with Jane Doe"). Must be completely removed. |
+| `notes` | **Remove** | High-risk PII. Must be completely removed. |
+| *GPS Data* | **Remove** | (If added in future) Any precise location data must be completely removed. |
 
 *   **Privacy Guarantee:** This proxy-based architecture provides a strong guarantee that no raw user PII is ever processed or seen by the AI models, upholding our core privacy principles in a low-latency manner suitable for operational workflows.
 
@@ -1192,6 +1208,9 @@ To ensure high development velocity and code quality, we will establish a stream
 *   **Local Development:** Engineers must be able to run and test the entire application stack locally. This will be achieved using:
     *   **LocalStack:** To provide a high-fidelity local emulator of AWS services (Lambda, SQS, DynamoDB, etc.).
     *   **Docker Compose:** To orchestrate the running of LocalStack and any other local dependencies.
+*   **Test Data Management:** A coherent strategy for managing test data is essential for reliable automated testing.
+    *   **Test Account Provisioning:** A pool of permanent test accounts (e.g., `test-user-01@syncwell.com`) will be created in Firebase Authentication.
+    *   **Backend State Reset:** For E2E and integration tests that modify backend state, a dedicated, automated cleanup process is required. Before each test run against the staging environment, a script will be invoked to reset the DynamoDB data for the test accounts to a known, clean state. This ensures that tests are repeatable and not influenced by the results of previous runs.
 *   **Testing Strategy:** We will employ a multi-layered testing strategy:
     *   **Unit Tests:** To test individual functions and classes in isolation. Mocking frameworks like MockK will be used.
     *   **Integration Tests:** To test the interaction between components, such as a Lambda function's interaction with a DynamoDB table (running against LocalStack).
@@ -1199,6 +1218,11 @@ To ensure high development velocity and code quality, we will establish a stream
     *   **End-to-End (E2E) Tests:** To test complete user flows. For the mobile app, this will involve UI automation frameworks like Espresso and XCUITest.
     *   **Load Tests:** To validate performance and scalability, using `k6` to script and execute tests against a dedicated staging environment.
 *   **Continuous Integration & Delivery (CI/CD):** Our CI/CD pipeline, managed with **GitHub Actions**, automates quality checks and deployments. The goal is to enable rapid, reliable, and repeatable releases.
+
+*   **CI/CD for Kotlin Multiplatform (KMP) Shared Module:** The use of a shared KMP module introduces complexity into the CI/CD process, as it is a dependency for both the mobile and backend applications. A dedicated pipeline will be created to manage this:
+    1.  **Build & Test:** On every commit to the shared module, a pipeline runs its unit and integration tests.
+    2.  **Versioning & Publishing:** When a pull request is merged, the module's version is automatically incremented (using semantic versioning). The pipeline then builds and publishes the mobile (AAR/XCFramework) and backend (JAR) artifacts to a private artifact repository (e.g., AWS CodeArtifact).
+    3.  **Consumption:** The mobile and backend application build pipelines will declare a dependency on a specific, stable version of the shared module. Updating to a new version is a deliberate action that involves changing the version number in the dependency file and running all integration tests to ensure compatibility.
 
     ```mermaid
     graph TD
