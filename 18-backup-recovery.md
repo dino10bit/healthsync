@@ -42,8 +42,13 @@ The recovery process is an integral part of the onboarding flow for a returning 
 
 As defined in `06-technical-architecture.md`, we will operate in an **active-active multi-region architecture** to achieve maximum availability and resilience. A "disaster" is now defined as an event that makes an entire AWS region unavailable.
 
-*   **Recovery Time Objective (RTO):** < 5 minutes. This is the time it takes for Route 53 to detect an unhealthy region and stop routing traffic to it.
-*   **Recovery Point Objective (RPO):** < 2 seconds. This is the typical replication lag for DynamoDB Global Tables, representing the maximum potential data loss.
+This strategy yields different recovery objectives depending on the nature of the disaster.
+
+| Failure Scenario | Recovery Time Objective (RTO) | Recovery Point Objective (RPO) | Mechanism |
+| :--- | :--- | :--- | :--- |
+| **Full Regional Outage** | **< 5 minutes** | **< 2 seconds** | **Automated Failover.** Amazon Route 53 health checks detect the failure and automatically redirect traffic to a healthy region. The RPO is governed by the replication lag of DynamoDB Global Tables. |
+| **Cache Cluster Failure** | **< 15 minutes** | **< 1 minute** | **Manual Promotion.** An on-call engineer promotes a secondary ElastiCache replica to primary. The RPO is governed by the ElastiCache Global Datastore replication lag. |
+| **Data Corruption Event** (e.g., bad code deployment) | **< 4 hours** | **< 5 minutes** | **Manual Restore.** An engineer initiates a DynamoDB Point-in-Time Recovery (PITR) to restore the table to a state before the corruption. RPO is governed by the continuous backup window of PITR. This is a last-resort, manual process. |
 
 ### Recovery Mechanisms:
 
