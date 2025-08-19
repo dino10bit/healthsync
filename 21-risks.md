@@ -43,6 +43,8 @@ For a solo developer, the RACI matrix clarifies the different roles they must pl
 | **Mitigating Market Risks**| Product Manager | Product Manager | Users (via Feedback) | (Investors) |
 | **Managing Burnout**| Individual | Individual | (Family/Mentor) | - |
 
+*   **Note on Solo-Developer Context:** For a solo developer, this RACI matrix serves as a conceptual tool rather than a literal delegation matrix. Its purpose is to explicitly acknowledge the different "hats" the developer must wear (e.g., acting as the 'Developer', the 'Product Manager', the 'Legal Counsel'). This helps in consciously switching contexts and ensuring that all aspects of a task (e.g., the legal implications of a feature) are considered.
+
 ## 3. Consolidated Risk Register
 
 This register categorizes and assesses the top risks to the project.
