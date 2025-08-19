@@ -418,6 +418,14 @@ sequenceDiagram
     end
 ```
 
+The flow in this diagram can be broken down as follows:
+1.  **Client Request:** The client initiates a request, providing a unique `Idempotency-Key`.
+2.  **Initial Check:** The `RequestLambda` first checks if this key already exists and is marked as `COMPLETED`. If so, it returns the cached response immediately, preventing a duplicate API call.
+3.  **Enqueue Job:** If the key is not found, the `RequestLambda` enqueues the job for asynchronous processing and returns a `202 Accepted` response.
+4.  **Worker Processing:** When a worker receives the job, it attempts to create a lock by setting the key's state to `INPROGRESS` in the idempotency store, but only if the key doesn't already exist.
+5.  **Duplicate Suppression:** If this state-setting operation fails, it means another worker is already processing this exact job, so the current worker exits. This prevents race conditions and duplicate processing.
+6.  **Execution and Finalization:** If the worker successfully acquires the lock, it executes the business logic. Upon success, it updates the key's state to `COMPLETED` and stores the final response for future retries. If it fails, it deletes the key to allow a clean retry.
+
 ## 3b. Architecture for 1M DAU
 
 To reliably serve 1 million Daily Active Users, the architecture incorporates specific strategies for high availability, performance, and scalability.
@@ -460,6 +468,8 @@ Given the requirement for a global launch across 5 continents, a high-availabili
         style Region1 fill:#f9f9f9,stroke:#333,stroke-width:2px
         style Region2 fill:#f9f9f9,stroke:#333,stroke-width:2px
     ```
+
+    This diagram shows how a user is first directed by **Amazon Route 53** to the AWS region with the lowest latency. Each region contains a full deployment of the application's stateless services, including API Gateway and AWS Lambda. The core stateful services, **DynamoDB Global Tables** and **AWS Secrets Manager**, are replicated across all regions. This ensures that no matter which region a user is routed to, the compute services have low-latency access to a consistent, up-to-date copy of the user's metadata and credentials, providing a seamless global experience and high availability.
 
 *   **Request Routing:** **Amazon Route 53** will be configured with **Latency-Based Routing**. This will direct users to the AWS region that provides the lowest network latency, improving their application experience. Route 53 health checks will automatically detect if a region is unhealthy and redirect traffic to the next nearest healthy region.
 *   **Data Replication & Consistency:**
@@ -509,6 +519,8 @@ sequenceDiagram
         Worker->>Worker: Abort call and retry job later
     end
 ```
+
+This sequence diagram shows a **Worker Lambda** needing to make an external API call. Before doing so, it first interacts with the **ElastiCache for Redis** cluster, which acts as the distributed rate limiter. The worker makes a single, atomic call (typically using a Lua script) to check and decrement the token bucket for the specific third-party service. If the script returns `OK`, a token was available, and the worker proceeds to call the **Third-Party API**. If the script returns `FAIL`, it means the rate limit has been exceeded. In this case, the worker must abort the attempt and retry the entire job later, ensuring the system respects the external API's limits.
 
 *   **Load Projections & Resource Estimation:**
     *   **Assumptions (Bottom-Up Estimation):**
@@ -838,6 +850,8 @@ graph TD
     G -- "Triggers" --> H;
 ```
 
+This diagram illustrates the entire scheduling pipeline. The process begins with a single **EventBridge Rule** that runs on a fixed schedule (e.g., every 15 minutes). This rule triggers a **Step Functions State Machine**, which orchestrates the main workflow. The state machine first calculates the number of parallel shards required to process the user base, then uses a **Map State** to invoke a `Shard Processor Lambda` for each shard simultaneously. Each Lambda instance is responsible for finding all users within its assigned shard who are due for a sync. It then publishes individual `SyncRequested` events to the main **EventBridge Bus**, which routes them to the SQS queue for the worker fleet to process. This fan-out architecture is highly scalable and avoids the anti-pattern of managing millions of individual timers.
+
 ```kotlin
 import kotlinx.serialization.Serializable
 
@@ -940,6 +954,12 @@ To enable future product improvements through analytics and machine learning wit
 
         style C fill:#f9f9f9,stroke:#333,stroke-width:2px
     ```
+
+    This diagram shows how the system protects user privacy while still enabling analytics:
+    1.  A **Worker Lambda** from the main application publishes an event (e.g., `SyncCompleted`) to the central **EventBridge Bus**. This event may contain raw, identifiable user data.
+    2.  A specific **EventBridge Rule** is configured to match these events and forward them to the **Anonymization Lambda**.
+    3.  This specialized Lambda function acts as a filter, processing the event to remove or hash all Personally Identifiable Information (PII).
+    4.  Only after the data has been scrubbed is it sent to the **Analytics Service**. This ensures that the analytics platform never stores or processes raw user data, enforcing our privacy-by-design principles.
 
 *   **Data Stripping:** The pipeline will remove or hash direct identifiers (like user IDs) and remove indirect identifiers (like exact timestamps or unique location data). For example, a precise timestamp would be generalized to "morning" or "afternoon".
 *   **Privacy-Preserving Aggregation:** The anonymized data can then be aggregated to identify broad patterns (e.g., "what percentage of users sync workout data on weekends?") without exposing any individual's behavior. This ensures that our analytics and AI initiatives can proceed without violating our core privacy promises.
