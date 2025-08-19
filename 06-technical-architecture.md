@@ -69,13 +69,13 @@ graph TD
     subgraph "AWS Cloud (Multi-Region)"
         APIGateway[API Gateway]
         AuthorizerLambda[Lambda Authorizer]
+        EventBus[EventBridge Event Bus]
         ElastiCache[ElastiCache for Caching & Rate Limiting]
         RequestLambda[Request Lambda]
-        SQSQueue[SQS Queue]
         WorkerLambda[Worker Lambdas]
         DynamoDB[DynamoDB Global Table for Metadata]
         SecretsManager[Secrets Manager for Tokens]
-        S3[S3 for DLQ]
+        S3[S3 for Dead-Letter Queue]
         Observability["Monitoring & Observability (CloudWatch)"]
     end
 
@@ -86,6 +86,7 @@ graph TD
     subgraph "Future Capabilities"
         style AI_Service fill:#f9f,stroke:#333,stroke-width:2px
         AI_Service[AI Insights Service]
+        AnalyticsService[Analytics Service]
     end
 
     subgraph "User's Device"
@@ -97,13 +98,14 @@ graph TD
     APIGateway -- "Validates JWT with" --> AuthorizerLambda
     AuthorizerLambda -- "Caches and validates against Google's public keys"--> FirebaseAuth
     APIGateway -- Invokes --> RequestLambda
-    RequestLambda -- Puts job --> SQSQueue
-    WorkerLambda -- Polls for jobs --> SQSQueue
+    RequestLambda -- "Publishes 'SyncJobRequested' event" --> EventBus
+    EventBus -- "Rule: 'SyncJobRequested'" --> WorkerLambda
+    EventBus -- "Rule: All Events" --> AnalyticsService
     WorkerLambda -- Reads/writes config --> DynamoDB
     WorkerLambda -- Gets credentials --> SecretsManager
     WorkerLambda -- Reads/Writes --> ElastiCache
     WorkerLambda -.-> AI_Service
-    SQSQueue -- Sends failed messages to DLQ --> S3
+    WorkerLambda -- "On failure, sends to" --> S3
 
     RequestLambda -- Logs & Metrics --> Observability
     WorkerLambda -- Logs & Metrics --> Observability
@@ -121,9 +123,9 @@ graph TD
     *   **Responsibilities:** Manages user credentials, issues short-lived JWTs to the mobile client after a successful authentication event, and provides public keys for backend token verification.
 
 3.  **Scalable Serverless Backend (AWS)**
-    *   **Description:** An event-driven, serverless backend on AWS that orchestrates all syncs. All incoming requests are secured by a **Lambda Authorizer** that validates the JWT provided by the client. The backend does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
-    *   **Technology:** AWS Lambda, API Gateway with Lambda Authorizer, SQS, DynamoDB Global Tables.
-    *   **Responsibilities:** Orchestrates sync jobs, executes cloud-to-cloud syncs, securely stores third-party integration credentials, and stores user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
+    *   **Description:** A decoupled, event-driven serverless backend on AWS that orchestrates all syncs. Instead of direct service-to-service communication, components publish semantic events (e.g., `SyncJobRequested`) to a central **EventBridge Event Bus**. Other services can then subscribe to these events without the producer needing to know about the consumers. This highly extensible model is secured at the edge by a **Lambda Authorizer** that validates the JWT provided by the client. The backend does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
+    *   **Technology:** AWS Lambda, API Gateway with Lambda Authorizer, **Amazon EventBridge**, DynamoDB Global Tables.
+    *   **Responsibilities:** Publishes and subscribes to events, orchestrates sync jobs, executes cloud-to-cloud syncs, securely stores third-party integration credentials, and stores user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
 
 4.  **Distributed Cache (Amazon ElastiCache for Redis)**
     *   **Description:** An in-memory caching layer to improve performance and reduce load on downstream services.
@@ -169,17 +171,20 @@ To ensure reliability and accommodate platform constraints, SyncWell uses a hybr
 
 *   **Use Case:** Syncing between two cloud-based services (e.g., Garmin to Strava).
 *   **Flow:**
-    1.  Mobile app initiates the sync via API Gateway.
-    2.  The backend worker lambda handles the entire process: it fetches data from the source API, applies a deterministic conflict resolution strategy (e.g., newest data wins), and writes data to the destination API.
-    3.  **Advantage:** Highly reliable and does not depend on the user's device being online.
+    1.  The Mobile App sends a request to API Gateway to start a sync.
+    2.  The `RequestLambda` validates the request and publishes a semantic `SyncJobRequested` event to the **EventBridge Event Bus**.
+    3.  An EventBridge rule filters for `SyncJobRequested` events and invokes the `WorkerLambda`.
+    4.  The `WorkerLambda` handles the sync logic: fetching from the source, transforming, and writing to the destination.
+    5.  Upon completion, the `WorkerLambda` can publish a `SyncJobSucceeded` or `SyncJobFailed` event back to the bus for other services (e.g., notifications, analytics) to consume.
+    6.  **Advantage:** This is a highly reliable and extensible model. The `RequestLambda` does not need to know which service(s) will handle the sync, allowing for greater flexibility and easier addition of new features like auditing or logging.
 
 ```mermaid
 graph TD
-    A[Mobile App] -- 1. Initiate --> B[Backend]
-    B -- 2. Fetch --> C[Source Cloud API]
-    C -- 3. Data --> B
-    B -- 4. Write --> D[Destination Cloud API]
-    D -- 5. Success --> B
+    A[Mobile App] -- 1. Initiate --> B[API Gateway]
+    B -- 2. Publishes event --> C[EventBridge]
+    C -- 3. Event triggers --> D[Worker Lambda]
+    D -- 4. Fetch/Write data --> E[Third-Party APIs]
+    D -- 5. Publishes result event --> C
 ```
 
 ### Model 2: Device-to-Cloud Sync
