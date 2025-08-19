@@ -551,18 +551,31 @@ To enable future product improvements through analytics and machine learning wit
 *   **Data Stripping:** The pipeline will remove or hash direct identifiers (like user IDs) and remove indirect identifiers (like exact timestamps or unique location data). For example, a precise timestamp would be generalized to "morning" or "afternoon".
 *   **Privacy-Preserving Aggregation:** The anonymized data can then be aggregated to identify broad patterns (e.g., "what percentage of users sync workout data on weekends?") without exposing any individual's behavior. This ensures that our analytics and AI initiatives can proceed without violating our core privacy promises.
 
-### Monitoring, Logging, and Alerting
-A robust observability strategy is critical for operating a reliable service at scale. This is not just about error detection, but about proactively ensuring the system is delivering on the user stories.
+### Comprehensive Monitoring, Logging, and Alerting Framework
+For operational excellence, a robust observability framework is critical. This is not just for error detection, but for proactively ensuring the system is delivering on its promises to the user.
 
-*   **Logging:** All Lambda functions will use structured logging (JSON format). Logs will be shipped to AWS CloudWatch Logs. **All logs must be scrubbed of any PHI or user-identifiable information before being written.**
-*   **Tracing:** AWS X-Ray will be enabled for all services (API Gateway, Lambda) to provide end-to-end tracing of requests. This is invaluable for debugging performance bottlenecks in the sync pipeline.
-*   **Alerting:** AWS CloudWatch Alarms will be configured to automatically notify the on-call team via PagerDuty for critical issues, such as:
-    *   A significant spike in the `SyncJobFailureRate`.
-    *   High P99 latency in a core service.
-    *   Dead-Letter Queue (DLQ) message count above zero.
-    *   A sudden drop in `ActiveUsers`.
-    *   High cache eviction rate in ElastiCache.
-*   **Dashboards:** Pre-configured dashboards in CloudWatch will provide an at-a-glance view of system health, organized by service and by user-facing feature.
+*   **Tooling Stack:**
+    *   **Metrics & Logs:** **AWS CloudWatch** will serve as the primary platform for collecting metrics and logs from all services.
+    *   **Tracing:** **AWS X-Ray** will be enabled across API Gateway and Lambda functions to provide end-to-end request tracing, which is essential for debugging latency and complex workflows.
+    *   **Dashboards:** While AWS CloudWatch provides default dashboards, **Grafana** will be used to build more comprehensive, at-a-glance dashboards, consuming data from CloudWatch. This provides a more powerful and flexible visualization layer.
+
+*   **Logging Strategy:**
+    *   A standardized, **structured JSON logging** format will be enforced for all services to enable efficient querying and analysis in CloudWatch Logs Insights.
+    *   **Log Content:** Logs will include a `correlationId` to trace a single request across multiple services.
+    *   **Scrubbing:** All logs **must be scrubbed** of any PHI, PII, or other sensitive user data before being written.
+
+*   **Key Metrics & Alerting:**
+    *   **Alerting Flow:** Critical alerts will follow a defined path: **CloudWatch Alarms → Amazon SNS → PagerDuty/Slack**. This ensures that the on-call team is immediately notified of production issues. Non-critical alerts may be routed to a separate Slack channel for awareness.
+    *   **Critical Alert Triggers:** Alarms will be configured for key performance indicators (KPIs) and system health metrics, including but not limited to:
+        *   **Sync Health:** `SyncSuccessRate` < 99.9%, `SyncFailureRate` > 0.1% over a 15-minute period.
+        *   **API Performance:** P99 latency on core API endpoints > 500ms.
+        *   **Queue Health:** `ApproximateAgeOfOldestMessage` in the primary SQS queue > 5 minutes, or a non-zero message count in any Dead-Letter Queue (DLQ).
+        *   **Function Health:** High error rates (`Errors` metric) or throttles on critical Lambda functions.
+        *   **Resource Utilization:** High cache eviction rate in ElastiCache.
+
+*   **Dashboards:**
+    *   Dashboards in Grafana will be organized by service and user-facing feature (e.g., "User Onboarding," "Cloud Sync," "Historical Import").
+    *   They will provide a real-time view of the KPIs listed in this document, allowing for proactive monitoring of system health.
 
 #### Key Performance Indicators (KPIs)
 
