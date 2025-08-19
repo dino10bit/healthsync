@@ -41,18 +41,44 @@ A running list of potential integrations will be maintained and scored against t
 ## 3. Technical Architecture & Design
 
 ### 3.1. The "DataProvider" SDK
--   **Purpose:** To standardize the process of adding new integrations, we have developed an internal `DataProvider` SDK.
--   **Interface:** Any new integration must implement the `DataProvider` interface, which includes methods like:
-    -   `getOAuthConfig() -> OAuthConfig`
-    -   `authenticate(authCode) -> UserTokens`
-    -   `fetchData(user, dataType, dateRange) -> [CanonicalDataPoint]`
-    -   `postData(user, dataPoints) -> PostResult`
+-   **Purpose:** To standardize the process of adding new integrations, each integration must be built against our internal `DataProvider` SDK, which is based on the "plug-in" model defined in `06-technical-architecture.md`.
+-   **Interface:** Any new integration must implement the `DataProvider` interface, which creates a standardized contract for all integrations.
+
+```kotlin
+// Simplified for documentation purposes.
+interface DataProvider {
+    /**
+     * A unique, machine-readable key for the provider (e.g., "strava", "fitbit").
+     */
+    val providerKey: String
+
+    /**
+     * Handles the initial OAuth 2.0 authorization flow to acquire tokens.
+     */
+    suspend fun authenticate(authCode: String): ProviderTokens
+
+    /**
+     * Refreshes an expired access token using a refresh token.
+     */
+    suspend fun refreshAccessToken(refreshToken: String): ProviderTokens
+
+    /**
+     * Fetches data from the provider's API and transforms it into a canonical model.
+     */
+    suspend fun fetchData(tokens: ProviderTokens, dateRange: DateRange): List<CanonicalWorkout>
+
+    /**
+     * Pushes a canonical data model to the provider's API.
+     */
+    suspend fun pushData(tokens: ProviderTokens, data: CanonicalWorkout): PushResult
+}
+```
 -   **Benefit:** This approach enforces a consistent architecture, reduces boilerplate code, and makes integrations easier to test and maintain.
 
 ### 3.2. Authentication Strategy per Partner
--   **OAuth 2.0:** This is the preferred method and will be used wherever possible. Our backend will have a generic OAuth 2.0 handling service.
--   **API Keys / Other:** For partners without OAuth, API keys and other credentials will be encrypted at rest and stored securely, associated with the user's account.
--   **Token Storage:** All partner-specific tokens will be stored in a dedicated, encrypted database table.
+-   **OAuth 2.0:** This is the preferred method and will be used wherever possible. The secure authentication flow is detailed in `07-apis-integration.md`.
+-   **API Keys / Other:** For partners without OAuth, API keys and other credentials will be encrypted at rest and stored securely.
+-   **Secure Token Storage:** User-specific `access_token` and `refresh_token` are never stored directly in the database. They are encrypted and stored in **AWS Secrets Manager**. The Amazon Resource Name (ARN) of this secret is then stored in the user's `Connection` item in the `SyncWellMetadata` DynamoDB table, as defined in the core technical architecture. This ensures that a compromise of the primary database does not expose user credentials for third-party services.
 
 ### 3.3. Data Mapping & Transformation
 -   **Canonical Model:** SyncWell has an internal, canonical data model for every supported data type (e.g., a `CanonicalWorkout` object).

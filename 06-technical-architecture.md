@@ -184,6 +184,75 @@ The KMP module contains the core business logic. This code can be executed **on 
 *   **`ApiClient`:** Handles HTTP calls to backend and third-party services.
 *   **`SecureStorageWrapper`:** Abstraction for Keychain/Keystore (on-device) and AWS Secrets Manager (on-backend).
 
+### Level 3: Extensible Provider Integration Architecture
+
+The core value of the application is its ability to connect with various third-party health services. To support rapid and reliable addition of new providers, the architecture defines a "plug-in" model. This model ensures that adding a new integration (e.g., for "Polar") is a predictable process that does not require changes to the core sync engine. This is achieved through a standardized interface, a factory for dynamic loading, and a secure configuration management strategy.
+
+#### 1. The `DataProvider` Interface
+
+All provider-specific logic is encapsulated in a class that implements the `DataProvider` interface. This interface, defined in the KMP shared module, creates a standardized contract for all integrations.
+
+```kotlin
+// Simplified for documentation purposes.
+interface DataProvider {
+    /**
+     * A unique, machine-readable key for the provider (e.g., "strava", "fitbit").
+     */
+    val providerKey: String
+
+    /**
+     * Handles the initial OAuth 2.0 authorization flow to acquire tokens.
+     */
+    suspend fun authenticate(authCode: String): ProviderTokens
+
+    /**
+     * Refreshes an expired access token using a refresh token.
+     */
+    suspend fun refreshAccessToken(refreshToken: String): ProviderTokens
+
+    /**
+     * Fetches data (e.g., workouts) from the provider's API for a given time range
+     * and transforms it into the application's `CanonicalWorkout` model.
+     */
+    suspend fun fetchData(tokens: ProviderTokens, dateRange: DateRange): List<CanonicalWorkout>
+
+    /**
+     * Pushes a canonical data model to the provider's API, transforming it into the
+     * provider-specific format required by the destination service.
+     */
+    suspend fun pushData(tokens: ProviderTokens, data: CanonicalWorkout): PushResult
+}
+```
+
+#### 2. Dynamic Loading with a Factory Pattern
+
+The `ProviderManager` component acts as a factory to dynamically instantiate and manage provider-specific logic based on user configuration. This decouples the core sync engine from the individual provider implementations.
+
+*   **Process:**
+    1.  The `SyncWorker` receives a job (e.g., "sync steps from 'fitbit' to 'strava'").
+    2.  It requests the `DataProvider` for "fitbit" from the `ProviderManager`.
+    3.  The `ProviderManager` consults its internal registry, finds the `FitbitProvider` class, instantiates it, and returns the object to the worker.
+    4.  The worker then uses this object to perform the data fetch.
+
+```mermaid
+graph TD
+    SyncWorker -- "Requests provider for 'fitbit'" --> ProviderManager;
+    ProviderManager -- "Looks up 'fitbit' in registry" --> Registry((Registry));
+    Registry -- "Returns FitbitProvider class" --> ProviderManager;
+    ProviderManager -- "Instantiates and returns" --> FitbitProvider_instance(FitbitProvider);
+    ProviderManager -- "Returns instance to worker" --> SyncWorker;
+```
+
+This design means that to add a new provider, a developer only needs to implement the `DataProvider` interface and register the new class with the `ProviderManager`. No other code changes are needed.
+
+#### 3. Secure Configuration and Secret Management
+
+A secure and scalable strategy is essential for managing provider-specific configurations and API credentials.
+
+*   **Provider-Specific Configuration:** Non-sensitive configuration, such as API endpoint URLs or supported data types, is stored in a configuration file co-located with the provider's implementation in the codebase.
+*   **Application API Credentials:** The OAuth `client_id` and `client_secret` for each third-party service are highly sensitive. These are stored securely in **AWS Secrets Manager**. The backend services retrieve these credentials at runtime using a narrowly-scoped IAM role that grants access only to the secrets required for that service.
+*   **User OAuth Tokens:** User-specific `access_token` and `refresh_token` are never stored directly in the database. They are encrypted and stored in **AWS Secrets Manager**. The Amazon Resource Name (ARN) of this secret is then stored in the user's `Connection` item in the `SyncWellMetadata` DynamoDB table. When a `WorkerLambda` processes a job, its IAM role grants it permission to retrieve *only* the specific secret for the connection it is working on, enforcing the principle of least privilege.
+
 ### Level 3: Components (Future AI Insights Service)
 
 When implemented, the AI Insights Service will be composed of several components. The exact implementation details will be defined closer to the feature's development phase and will undergo a rigorous security and privacy review. The initial high-level concepts include:
@@ -551,18 +620,31 @@ To enable future product improvements through analytics and machine learning wit
 *   **Data Stripping:** The pipeline will remove or hash direct identifiers (like user IDs) and remove indirect identifiers (like exact timestamps or unique location data). For example, a precise timestamp would be generalized to "morning" or "afternoon".
 *   **Privacy-Preserving Aggregation:** The anonymized data can then be aggregated to identify broad patterns (e.g., "what percentage of users sync workout data on weekends?") without exposing any individual's behavior. This ensures that our analytics and AI initiatives can proceed without violating our core privacy promises.
 
-### Monitoring, Logging, and Alerting
-A robust observability strategy is critical for operating a reliable service at scale. This is not just about error detection, but about proactively ensuring the system is delivering on the user stories.
+### Comprehensive Monitoring, Logging, and Alerting Framework
+For operational excellence, a robust observability framework is critical. This is not just for error detection, but for proactively ensuring the system is delivering on its promises to the user.
 
-*   **Logging:** All Lambda functions will use structured logging (JSON format). Logs will be shipped to AWS CloudWatch Logs. **All logs must be scrubbed of any PHI or user-identifiable information before being written.**
-*   **Tracing:** AWS X-Ray will be enabled for all services (API Gateway, Lambda) to provide end-to-end tracing of requests. This is invaluable for debugging performance bottlenecks in the sync pipeline.
-*   **Alerting:** AWS CloudWatch Alarms will be configured to automatically notify the on-call team via PagerDuty for critical issues, such as:
-    *   A significant spike in the `SyncJobFailureRate`.
-    *   High P99 latency in a core service.
-    *   Dead-Letter Queue (DLQ) message count above zero.
-    *   A sudden drop in `ActiveUsers`.
-    *   High cache eviction rate in ElastiCache.
-*   **Dashboards:** Pre-configured dashboards in CloudWatch will provide an at-a-glance view of system health, organized by service and by user-facing feature.
+*   **Tooling Stack:**
+    *   **Metrics & Logs:** **AWS CloudWatch** will serve as the primary platform for collecting metrics and logs from all services.
+    *   **Tracing:** **AWS X-Ray** will be enabled across API Gateway and Lambda functions to provide end-to-end request tracing, which is essential for debugging latency and complex workflows.
+    *   **Dashboards:** While AWS CloudWatch provides default dashboards, **Grafana** will be used to build more comprehensive, at-a-glance dashboards, consuming data from CloudWatch. This provides a more powerful and flexible visualization layer.
+
+*   **Logging Strategy:**
+    *   A standardized, **structured JSON logging** format will be enforced for all services to enable efficient querying and analysis in CloudWatch Logs Insights.
+    *   **Log Content:** Logs will include a `correlationId` to trace a single request across multiple services.
+    *   **Scrubbing:** All logs **must be scrubbed** of any PHI, PII, or other sensitive user data before being written.
+
+*   **Key Metrics & Alerting:**
+    *   **Alerting Flow:** Critical alerts will follow a defined path: **CloudWatch Alarms → Amazon SNS → PagerDuty/Slack**. This ensures that the on-call team is immediately notified of production issues. Non-critical alerts may be routed to a separate Slack channel for awareness.
+    *   **Critical Alert Triggers:** Alarms will be configured for key performance indicators (KPIs) and system health metrics, including but not limited to:
+        *   **Sync Health:** `SyncSuccessRate` < 99.9%, `SyncFailureRate` > 0.1% over a 15-minute period.
+        *   **API Performance:** P99 latency on core API endpoints > 500ms.
+        *   **Queue Health:** `ApproximateAgeOfOldestMessage` in the primary SQS queue > 5 minutes, or a non-zero message count in any Dead-Letter Queue (DLQ).
+        *   **Function Health:** High error rates (`Errors` metric) or throttles on critical Lambda functions.
+        *   **Resource Utilization:** High cache eviction rate in ElastiCache.
+
+*   **Dashboards:**
+    *   Dashboards in Grafana will be organized by service and user-facing feature (e.g., "User Onboarding," "Cloud Sync," "Historical Import").
+    *   They will provide a real-time view of the KPIs listed in this document, allowing for proactive monitoring of system health.
 
 #### Key Performance Indicators (KPIs)
 
@@ -627,16 +709,47 @@ To ensure high development velocity and code quality, we will establish a stream
     *   **Contract Tests:** To ensure the mobile app and backend APIs can evolve independently without breaking each other, we will use **Pact**. The backend will publish its API contract, and the mobile client will test against this contract in its CI pipeline.
     *   **End-to-End (E2E) Tests:** To test complete user flows. For the mobile app, this will involve UI automation frameworks like Espresso and XCUITest.
     *   **Load Tests:** To validate performance and scalability, using `k6` to script and execute tests against a dedicated staging environment.
-*   **Continuous Integration & Delivery (CI/CD):** Our CI/CD pipeline, managed with **GitHub Actions**, will automate the following:
-    *   **On every commit:** Run linters, static analysis tools (Detekt, SwiftLint), and all unit tests.
-    *   **On every pull request:**
-        *   Run all integration tests and Static Application Security Testing (SAST) scans (Snyk).
-        *   **Validate schema changes:** Any modifications to the canonical data models in the KMP module are validated against the AWS Glue Schema Registry to ensure backward compatibility.
-    *   **On merge to `main`:**
-        *   Automatically deploy the backend services to the staging environment.
-        *   Trigger E2E tests against the staging environment.
-        *   Run Dynamic Application Security Testing (DAST) scans against the staging API using **OWASP ZAP**.
-    *   **On release tag:** Automate the deployment of backend services to production and the mobile app release process to the app stores (using Fastlane).
+*   **Continuous Integration & Delivery (CI/CD):** Our CI/CD pipeline, managed with **GitHub Actions**, automates quality checks and deployments. The goal is to enable rapid, reliable, and repeatable releases.
+
+    ```mermaid
+    graph TD
+        subgraph "Development Workflow"
+            A[Commit to Feature Branch] --> B{Pull Request};
+        end
+
+        subgraph "CI Pipeline (on PR)"
+            B --> C[Run Linters & Unit Tests];
+            C --> D[Run Integration & SAST Tests];
+            D --> E[Validate Schema];
+            E --> F{All Checks Pass?};
+        end
+
+        subgraph "Manual Review"
+            F -- Yes --> G[Code Review & Approval];
+            F -- No --> H[Fix Issues];
+            H --> A;
+        end
+
+        subgraph "CD Pipeline (Post-Merge)"
+            G --> I[Merge to 'main' branch];
+            I --> J[Deploy to Staging];
+            J --> K[Run E2E & DAST Tests];
+            K --> L{Create Release Tag};
+            L --> M[Deploy to Production];
+            M --> N[Release to App Stores];
+        end
+    ```
+
+    *   **Quality Gates:** The pipeline enforces several automated quality gates:
+        *   **On every commit:** Run linters, static analysis tools (Detekt, SwiftLint), and all unit tests.
+        *   **On every pull request:** Run all integration tests, Static Application Security Testing (SAST) scans (Snyk), and validate data model schemas against the AWS Glue Schema Registry.
+        *   **On merge to `main`:** Automatically deploy to the staging environment, then trigger E2E tests and Dynamic Application Security Testing (DAST) scans.
+    *   **Production Release:** A release to production is triggered by creating a version tag (e.g., `v1.2.0`), which automates the deployment of backend services and the mobile app release process (using Fastlane).
+
+*   **Deployment Strategy (Canary Releases):** To minimize the risk of production incidents, all backend services will be deployed to production using a **canary release strategy**.
+    *   **Process:** When a new version is deployed, a small percentage of production traffic (e.g., 5%) will be routed to the new version (the "canary"), while the majority of traffic continues to go to the stable, existing version.
+    *   **Monitoring:** The canary is closely monitored for an increase in error rates, latency, or other key metrics.
+    *   **Rollout/Rollback:** If the canary version performs as expected for a predefined period (e.g., 1 hour), traffic is gradually shifted to it until it serves 100% of requests. If any issues are detected, traffic is immediately routed back to the stable version, and the canary is rolled back. This strategy significantly reduces the blast radius of a potentially bad deployment.
 
 ## Appendix A: Technology Radar
 

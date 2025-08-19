@@ -89,21 +89,26 @@ All backend Lambda functions will output structured JSON logs to **AWS CloudWatc
 ```
 *   **PII Scrubbing:** No sensitive data like OAuth tokens will ever be logged. User IDs are logged to allow tracing a user's journey through the system.
 
-## 5. Monitoring & Alerting
+## 5. Monitoring & Alerting Strategy
 
-### 5.1. Client-Side (Firebase)
-*   **Dashboard:** Focuses on crashes and UI performance (see `39-performance-metrics.md`).
-*   **Alerts:**
-    *   New crash detected.
-    *   Crash-free user rate drops below 99.9%.
+The comprehensive observability strategy, including the full tooling stack (CloudWatch, X-Ray, Grafana), logging standards, and key performance indicators, is defined in detail in the `06-technical-architecture.md` document. This section summarizes the aspects most relevant to error handling.
 
-### 5.2. Backend-Side (AWS CloudWatch)
-*   **Dashboard:** Focuses on API health, Lambda performance, and queue depth (see `39-performance-metrics.md`).
-*   **Alerts (High Priority - PagerDuty/Slack):**
-    *   **Messages in the Dead-Letter Queue.** This is our most critical alert.
-    *   Significant spike in Lambda errors or 5xx errors on API Gateway.
-    *   SQS queue depth growing for a sustained period.
-    *   DynamoDB table is being throttled.
+### 5.1. Client-Side Monitoring
+*   **Tooling:** Firebase Crashlytics.
+*   **Focus:** Monitoring for app crashes, non-fatal errors, and UI performance issues.
+*   **Critical Alerts:**
+    *   A newly detected crash type.
+    *   A significant regression in the crash-free user rate below the target of 99.9%.
+
+### 5.2. Backend-Side Monitoring
+*   **Tooling:** The primary backend monitoring stack consists of AWS CloudWatch, AWS X-Ray, and Grafana for dashboards.
+*   **Focus:** Monitoring API health, Lambda function performance, data queue health, and database performance.
+*   **Alerting Flow:** High-priority alerts are routed via **CloudWatch Alarms → Amazon SNS → PagerDuty** to notify the on-call team immediately.
+*   **High-Priority Alert Triggers:**
+    *   **Dead-Letter Queue (DLQ):** Any message arriving in a DLQ is a critical alert, as it signifies a persistent failure.
+    *   **Function & API Errors:** A significant spike in Lambda invocation errors or 5xx-level errors from API Gateway.
+    *   **Queue Health:** The `ApproximateAgeOfOldestMessage` for the main SQS queue exceeds 5 minutes, indicating a processing backlog.
+    *   **Database Throttling:** Sustained throttling events on the DynamoDB table, indicating a performance bottleneck.
 
 ## 6. Visual Diagrams
 

@@ -67,8 +67,13 @@ This is how we apply the golden signals to our key services.
 -   **Rotation:** We will use a weekly on-call rotation managed within PagerDuty.
 -   **Runbook Template:** Every high-priority alert will have a runbook linked in its description. The runbook is a markdown document in Confluence containing:
     -   *Summary:* What this alert means.
-    -   *Initial Diagnosis:* A checklist of initial steps (e.g., "Check the service's CloudWatch dashboard," "Look for recent ERROR logs").
+    -   *Initial Diagnosis:* A checklist of initial steps (e.g., "Check the service's Grafana dashboard," "Look for recent ERROR logs").
     -   *Common Causes & Mitigations:* A list of known causes and how to fix them (e.g., "Cause: Recent deployment. Mitigation: Roll back to previous version.").
+
+### 4.3. Dashboards
+While raw logs and metrics are essential for deep diagnosis, high-level dashboards are critical for at-a-glance status checks and identifying trends.
+-   **Primary Tool:** Grafana will be used as the primary tool for creating and viewing operational dashboards. It will be configured with AWS CloudWatch as its data source.
+-   **Content:** Dashboards will be created for each service and will visualize the "Four Golden Signals" (Latency, Traffic, Errors, Saturation) for that service.
 
 ## 5. Proactive & Synthetic Monitoring
 

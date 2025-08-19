@@ -40,25 +40,61 @@ To ensure predictability, SyncWell will operate on a "Release Train" schedule.
 
 ## 4. CI/CD Automation Pipeline
 
-The release process will be heavily automated using a CI/CD service like GitHub Actions.
+The release process is heavily automated using GitHub Actions. The pipeline is designed to provide rapid feedback to developers and ensure only high-quality, well-tested code is deployed. The full developer experience, including testing strategies, is detailed in `06-technical-architecture.md`.
 
-| Pipeline | Trigger | Key Stages |
-| :--- | :--- | :--- |
-| **Pull Request Check** | On PR against `develop` | 1. `npm install` (Install dependencies)<br>2. `npm run lint` (Check code style)<br>3. `npm run test` (Run all unit & mocked integration tests)<br>4. `npm run check-bundle-size` (Fail if bundle size increases >5%) |
-| **Develop Build** | On merge to `develop` | 1. All stages from PR Check.<br>2. Build Android & iOS app packages.<br>3. Automatically distribute the build to the **Internal Beta** group via TestFlight & Google Play. |
-| **Release Build** | On push to `release/...` | 1. All stages from PR Check.<br>2. Build app packages with a "Release Candidate" version (e.g., `1.2.0-rc.1`).<br>3. Automatically distribute to the **Public Beta** group. |
-| **Production Deploy**| **Manual Trigger** on `main` branch | 1. Build signed, production-ready app packages.<br>2. Upload the packages to App Store Connect and Google Play Console, ready for staged rollout. |
+```mermaid
+graph TD
+    subgraph "Development Workflow"
+        A[Commit to Feature Branch] --> B{Pull Request};
+    end
+
+    subgraph "CI Pipeline (on PR)"
+        B --> C[Run Linters & Unit Tests];
+        C --> D[Run Integration & SAST Tests];
+        D --> E[Validate Schema];
+        E --> F{All Checks Pass?};
+    end
+
+    subgraph "Manual Review"
+        F -- Yes --> G[Code Review & Approval];
+        F -- No --> H[Fix Issues];
+        H --> A;
+    end
+
+    subgraph "CD Pipeline (Post-Merge)"
+        G --> I[Merge to 'main' branch];
+        I --> J[Deploy to Staging];
+        J --> K[Run E2E & DAST Tests];
+        K --> L{Create Release Tag};
+        L --> M[Deploy to Production];
+        M --> N[Release to App Stores];
+    end
+```
+
+*   **Quality Gates:** The pipeline enforces several automated quality gates:
+    *   **On every pull request:** Run linters, static analysis, unit tests, integration tests, SAST scans, and data model schema validation.
+    *   **On merge to `main`:** Automatically deploy the backend services to the staging environment, then trigger E2E and DAST tests.
+
+*   **Production Release Trigger:** A release to production is initiated by creating and pushing a version tag (e.g., `v1.2.0`). This single action triggers the automated deployment of backend services and the mobile app release process.
+
+## 4a. Backend Deployment Strategy (Canary Releases)
+
+To minimize the risk of production incidents, all backend services are deployed to production using a **canary release strategy**, as defined in `06-technical-architecture.md`.
+
+*   **Process:** When a new version is deployed (triggered by a release tag), a small percentage of production traffic (e.g., 5%) is routed to the new version (the "canary").
+*   **Monitoring:** The canary is closely monitored for any increase in error rates or latency.
+*   **Rollout/Rollback:** If the canary is stable, traffic is gradually shifted until it serves 100% of requests. If issues are detected, traffic is immediately routed back to the stable version.
 
 ## 5. The Release Process & Checklist
 
 ### 5.1. Minor Release (The Monthly Train)
 1.  [ ] **Feature Freeze & Branching:** On the first Monday of the month, create the `release/x.y.z` branch from `develop`.
-2.  [ ] **RC Build & Beta Testing:** The CI/CD pipeline automatically deploys the first Release Candidate (`rc.1`) to the public beta testers.
-3.  [ ] **Hardening (1 week):** For one week, only critical bug fixes discovered by beta testers are committed to the `release` branch. Each fix generates a new RC build (e.g., `rc.2`). No new features are allowed.
-4.  [ ] **Merge & Tag:** Once the release candidate is deemed stable, merge the `release/x.y.z` branch into `main` and tag the commit (e.g., `v1.2.0`). Then merge `main` back into `develop`.
-5.  [ ] **Production Deploy:** Manually trigger the production deployment job in the CI/CD pipeline.
-6.  [ ] **Staged Rollout:** Follow the staged rollout process (1% -> 10% -> 50% -> 100%) in the app store consoles, monitoring analytics at each stage.
-7.  [ ] **Communication:** Once the rollout is at 100%, announce the release.
+2.  [ ] **RC Build & Beta Testing:** The CI/CD pipeline automatically deploys Release Candidate builds to public beta testers.
+3.  [ ] **Hardening (1 week):** For one week, only critical bug fixes discovered by beta testers are committed to the `release` branch.
+4.  [ ] **Merge & Tag for Release:** Once the release candidate is deemed stable, merge the `release/x.y.z` branch into `main`. Then, create and push the final version tag (e.g., `v1.2.0`). This tag is the single trigger for the production release pipeline.
+5.  [ ] **Monitor Canary Deployment:** The CI/CD pipeline will automatically begin the canary release of the backend services. Monitor the health of the canary version via Grafana dashboards.
+6.  [ ] **Mobile App Staged Rollout:** Once the backend deployment is stable at 100%, begin the staged rollout of the mobile app (1% -> 10% -> 50% -> 100%) in the app store consoles, monitoring analytics at each stage.
+7.  [ ] **Merge Back & Communicate:** Merge `main` back into `develop`. Once the rollout is at 100%, announce the release.
 
 ### 5.2. Hotfix Release (Emergency)
 1.  [ ] **Create Hotfix Branch:** Create a `hotfix/fix-critical-bug` branch directly from `main`.
