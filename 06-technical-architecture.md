@@ -374,6 +374,58 @@ The idempotency store will be implemented in the ElastiCache for Redis cluster w
 *   **Value:** The serialized JSON response that was originally returned to the client (e.g., the `202 Accepted` response for a sync job).
 *   **TTL (Time-to-Live):** 24 hours. This duration is chosen as a safe upper bound to handle reasonable client-side retry windows. For example, if a user's device is offline for several hours, the client-side job scheduler may retry the operation once connectivity is restored. A 24-hour TTL ensures that even in these edge cases, the operation is not erroneously processed twice.
 
+The following sequence diagram illustrates the end-to-end flow, including the stateful check in the worker to handle concurrent requests and retries gracefully.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant RequestLambda
+    participant IdempotencyStore as "Idempotency Store (Redis)"
+    participant WorkerLambda
+
+    Client->>RequestLambda: POST /sync-jobs<br>Idempotency-Key: K1
+
+    RequestLambda->>IdempotencyStore: GET idem#K1
+    alt Request is a retry and already completed
+        IdempotencyStore-->>RequestLambda: Return status: COMPLETED, Response: R1
+        RequestLambda-->>Client: Return cached response R1
+    else Request is new or in-flight
+        IdempotencyStore-->>RequestLambda: null
+        RequestLambda->>RequestLambda: Publish job to SQS<br>(payload includes key K1)
+        RequestLambda-->>Client: 202 Accepted (this is Response R1)
+    end
+
+    %% ... sometime later, message is picked up by a worker ...
+    note over WorkerLambda: Receives job for key K1 from SQS
+
+    WorkerLambda->>IdempotencyStore: PUT idem#K1<br>Condition: item_not_exists() or attribute_exists(State) and State=INPROGRESS<br>State: INPROGRESS, TTL: 5min
+
+    alt Another worker is already processing this job
+        IdempotencyStore-->>WorkerLambda: ConditionalCheckFailedException
+        WorkerLambda->>WorkerLambda: Log "Duplicate processing suppressed" and exit
+    else This is the first worker for the job
+        IdempotencyStore-->>WorkerLambda: OK
+        WorkerLambda->>WorkerLambda: Execute business logic...
+        alt Business logic is successful
+            WorkerLambda->>IdempotencyStore: PUT idem#K1<br>State: COMPLETED, Response: R1, TTL: 24hr
+            IdempotencyStore-->>WorkerLambda: OK
+        else Business logic fails
+            WorkerLambda->>IdempotencyStore: DELETE idem#K1
+            IdempotencyStore-->>WorkerLambda: OK
+            WorkerLambda->>WorkerLambda: Throw error to allow SQS retry
+        end
+    end
+```
+
+The flow in this diagram can be broken down as follows:
+1.  **Client Request:** The client initiates a request, providing a unique `Idempotency-Key`.
+2.  **Initial Check:** The `RequestLambda` first checks if this key already exists and is marked as `COMPLETED`. If so, it returns the cached response immediately, preventing a duplicate API call.
+3.  **Enqueue Job:** If the key is not found, the `RequestLambda` enqueues the job for asynchronous processing and returns a `202 Accepted` response.
+4.  **Worker Processing:** When a worker receives the job, it attempts to create a lock by setting the key's state to `INPROGRESS` in the idempotency store, but only if the key doesn't already exist.
+5.  **Duplicate Suppression:** If this state-setting operation fails, it means another worker is already processing this exact job, so the current worker exits. This prevents race conditions and duplicate processing.
+6.  **Execution and Finalization:** If the worker successfully acquires the lock, it executes the business logic. Upon success, it updates the key's state to `COMPLETED` and stores the final response for future retries. If it fails, it deletes the key to allow a clean retry.
+
 ## 3b. Architecture for 1M DAU
 
 To reliably serve 1 million Daily Active Users, the architecture incorporates specific strategies for high availability, performance, and scalability.
@@ -383,6 +435,42 @@ To reliably serve 1 million Daily Active Users, the architecture incorporates sp
 Given the requirement for a global launch across 5 continents, a high-availability, active-active multi-region architecture is essential to provide low-latency access for users worldwide and ensure resilience against regional outages.
 
 *   **Deployment:** The entire backend infrastructure will be deployed in at least three geographically dispersed AWS regions (e.g., `us-east-1` for the Americas, `eu-west-1` for Europe/Africa, `ap-southeast-1` for Asia-Pacific). This can be expanded as the user base grows.
+
+    The following diagram illustrates this multi-region, active-active architecture:
+
+    ```mermaid
+    graph TD
+        User[User] --> R53{Amazon Route 53<br>Latency-Based Routing};
+
+        subgraph "AWS Global Services"
+            DynamoDB[(DynamoDB Global Table)]
+            SecretsManager[(AWS Secrets Manager<br>Replicated Secret)]
+        end
+
+        R53 --> Region1[AWS Region 1<br>us-east-1];
+        R53 --> Region2[AWS Region 2<br>eu-west-1];
+
+        subgraph Region1
+            direction LR
+            APIGW1[API Gateway] --> Lambda1[Compute<br>AWS Lambda]
+        end
+
+        subgraph Region2
+            direction LR
+            APIGW2[API Gateway] --> Lambda2[Compute<br>AWS Lambda]
+        end
+
+        Lambda1 --> DynamoDB;
+        Lambda1 --> SecretsManager;
+        Lambda2 --> DynamoDB;
+        Lambda2 --> SecretsManager;
+
+        style Region1 fill:#f9f9f9,stroke:#333,stroke-width:2px
+        style Region2 fill:#f9f9f9,stroke:#333,stroke-width:2px
+    ```
+
+    This diagram shows how a user is first directed by **Amazon Route 53** to the AWS region with the lowest latency. Each region contains a full deployment of the application's stateless services, including API Gateway and AWS Lambda. The core stateful services, **DynamoDB Global Tables** and **AWS Secrets Manager**, are replicated across all regions. This ensures that no matter which region a user is routed to, the compute services have low-latency access to a consistent, up-to-date copy of the user's metadata and credentials, providing a seamless global experience and high availability.
+
 *   **Request Routing:** **Amazon Route 53** will be configured with **Latency-Based Routing**. This will direct users to the AWS region that provides the lowest network latency, improving their application experience. Route 53 health checks will automatically detect if a region is unhealthy and redirect traffic to the next nearest healthy region.
 *   **Data Replication & Consistency:**
     *   **DynamoDB Global Tables:** User metadata and sync configurations will be stored in a DynamoDB Global Table. This provides built-in, fully managed, multi-master replication across all deployed regions, ensuring that data written in one region is automatically propagated to others with low latency.
@@ -410,6 +498,29 @@ Given the requirement for a global launch across 5 continents, a high-availabili
     | **Distributed Lock** | `lock##{userId}` | `true` | 5 minutes | Explicit release | Prevents concurrent syncs for the same user. The lock is explicitly deleted when a job completes. The TTL is a safety measure against deadlocks. |
     | **Rate Limit Token Bucket** | `ratelimit##{providerKey}` | A hash containing tokens and timestamp | 60 seconds | TTL-based | Powers the distributed rate limiter for third-party APIs. |
     | **JWT Public Keys**| `jwks##{providerUrl}` | The JSON Web Key Set (JWKS) document | 1 hour | TTL-based | Caches the public keys from auth providers (e.g., Google) to validate JWTs without a network call on every request. |
+
+To visually explain the rate-limiting pattern, the following diagram shows how a worker interacts with the distributed rate limiter before calling an external service.
+
+```mermaid
+sequenceDiagram
+    participant Worker as "Worker Lambda"
+    participant Redis as "ElastiCache for Redis<br>(Rate Limiter)"
+    participant ThirdParty as "Third-Party API"
+
+    Worker->>Worker: Need to call external API
+    Worker->>+Redis: Atomically check & decrement token<br>Key: "ratelimit##{providerKey}"
+
+    alt Token Available
+        Redis-->>-Worker: OK
+        Worker->>+ThirdParty: GET /v1/data
+        ThirdParty-->>-Worker: 200 OK
+    else Token Not Available (Rate Limit Exceeded)
+        Redis-->>-Worker: FAIL
+        Worker->>Worker: Abort call and retry job later
+    end
+```
+
+This sequence diagram shows a **Worker Lambda** needing to make an external API call. Before doing so, it first interacts with the **ElastiCache for Redis** cluster, which acts as the distributed rate limiter. The worker makes a single, atomic call (typically using a Lua script) to check and decrement the token bucket for the specific third-party service. If the script returns `OK`, a token was available, and the worker proceeds to call the **Third-Party API**. If the script returns `FAIL`, it means the rate limit has been exceeded. In this case, the worker must abort the attempt and retry the entire job later, ensuring the system respects the external API's limits.
 
 *   **Load Projections & Resource Estimation:**
     *   **Assumptions (Bottom-Up Estimation):**
@@ -706,6 +817,41 @@ Triggering automatic, periodic syncs for potentially millions of users is a sign
 *   The use of Step Functions provides built-in retries and error handling for the scheduling process itself.
 *   This pattern decouples the scheduling logic from the sync execution logic, improving resilience and maintainability.
 
+The following diagram illustrates this scalable fan-out architecture:
+
+```mermaid
+graph TD
+    subgraph "Scheduling Infrastructure"
+        A[EventBridge Rule<br>cron(0/15 * * * ? *)] --> B{Scheduler State Machine<br>(AWS Step Functions)};
+        B --> C[Fan-Out Lambda<br>Calculates N shards];
+        C --> D{Map State<br>Processes N shards in parallel};
+    end
+
+    subgraph "Shard Processing (Parallel)"
+        style E1 fill:#f5f5f5,stroke:#333
+        style E2 fill:#f5f5f5,stroke:#333
+        style E_N fill:#f5f5f5,stroke:#333
+        D -- "Shard #1" --> E1[Shard Processor Lambda];
+        D -- "Shard #2" --> E2[Shard Processor Lambda];
+        D -- "..." --> E_N[Shard Processor Lambda];
+    end
+
+    subgraph "Job Enqueueing & Execution"
+        F[Main Event Bus<br>(EventBridge)];
+        G[SQS Queue];
+        H[Worker Fleet<br>(AWS Lambda)];
+    end
+
+    E1 -- "Finds eligible users &<br>publishes 'SyncRequested' events" --> F;
+    E2 -- "Finds eligible users &<br>publishes 'SyncRequested' events" --> F;
+    E_N -- "Finds eligible users &<br>publishes 'SyncRequested' events" --> F;
+
+    F -- "Routes events to" --> G;
+    G -- "Triggers" --> H;
+```
+
+This diagram illustrates the entire scheduling pipeline. The process begins with a single **EventBridge Rule** that runs on a fixed schedule (e.g., every 15 minutes). This rule triggers a **Step Functions State Machine**, which orchestrates the main workflow. The state machine first calculates the number of parallel shards required to process the user base, then uses a **Map State** to invoke a `Shard Processor Lambda` for each shard simultaneously. Each Lambda instance is responsible for finding all users within its assigned shard who are due for a sync. It then publishes individual `SyncRequested` events to the main **EventBridge Bus**, which routes them to the SQS queue for the worker fleet to process. This fan-out architecture is highly scalable and avoids the anti-pattern of managing millions of individual timers.
+
 ```kotlin
 import kotlinx.serialization.Serializable
 
@@ -791,6 +937,30 @@ A detailed financial model is a mandatory prerequisite before implementation.
 To enable future product improvements through analytics and machine learning without compromising user privacy, a strict data anonymization strategy will be implemented.
 
 *   **Anonymization Pipeline:** Before any data is sent to the Analytics Service or used for training the AI Insights Service, it will pass through a dedicated anonymization pipeline. This pipeline is an AWS Lambda function responsible for stripping all Personally Identifiable Information (PII) and any other data that could be used to re-identify a user.
+
+    The following diagram illustrates this privacy-enhancing data flow:
+
+    ```mermaid
+    graph TD
+        subgraph "Main Application"
+            A[Worker Lambda] -- "1. Publishes 'SyncCompleted' event<br>with raw data" --> B[EventBridge Bus];
+        end
+
+        subgraph "Anonymization & Analytics Pipeline"
+            C[Anonymization Lambda] -- "3. Processes event" --> D{PII Stripped};
+            B -- "2. Rule forwards event" --> C;
+            D -- "Anonymized Data" --> E[Analytics Service<br>(e.g., S3 Data Lake)];
+        end
+
+        style C fill:#f9f9f9,stroke:#333,stroke-width:2px
+    ```
+
+    This diagram shows how the system protects user privacy while still enabling analytics:
+    1.  A **Worker Lambda** from the main application publishes an event (e.g., `SyncCompleted`) to the central **EventBridge Bus**. This event may contain raw, identifiable user data.
+    2.  A specific **EventBridge Rule** is configured to match these events and forward them to the **Anonymization Lambda**.
+    3.  This specialized Lambda function acts as a filter, processing the event to remove or hash all Personally Identifiable Information (PII).
+    4.  Only after the data has been scrubbed is it sent to the **Analytics Service**. This ensures that the analytics platform never stores or processes raw user data, enforcing our privacy-by-design principles.
+
 *   **Data Stripping:** The pipeline will remove or hash direct identifiers (like user IDs) and remove indirect identifiers (like exact timestamps or unique location data). For example, a precise timestamp would be generalized to "morning" or "afternoon".
 *   **Privacy-Preserving Aggregation:** The anonymized data can then be aggregated to identify broad patterns (e.g., "what percentage of users sync workout data on weekends?") without exposing any individual's behavior. This ensures that our analytics and AI initiatives can proceed without violating our core privacy promises.
 
