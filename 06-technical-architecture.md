@@ -62,18 +62,26 @@ graph TD
 
 ### Level 2: Containers
 
-This level zooms into the system boundary to show the high-level technical containers. For the initial launch, the focus is on the core sync engine, with provisions for future enhancements like an AI service.
+This level zooms into the system boundary to show the high-level technical containers. The architecture is composed of two primary workflows: a low-latency "hot path" for real-time syncs, and a robust "cold path" for long-running historical syncs.
 
 ```mermaid
 graph TD
     subgraph "AWS Cloud (Multi-Region)"
         APIGateway[API Gateway]
         AuthorizerLambda[Lambda Authorizer]
-        EventBus[EventBridge Event Bus]
-        SQSQueue[SQS Queue for Buffering]
-        ElastiCache[ElastiCache for Caching & Rate Limiting]
         RequestLambda[Request Lambda]
-        WorkerLambda[Worker Lambdas]
+
+        subgraph "Hot Path (Real-time Syncs)"
+            HotPathEventBus[EventBridge Event Bus]
+            RealtimeSyncQueue[SQS for Real-time Jobs]
+            WorkerLambda[Worker Lambdas]
+        end
+
+        subgraph "Cold Path (Historical Syncs)"
+            HistoricalOrchestrator[Step Functions State Machine]
+        end
+
+        ElastiCache[ElastiCache for Caching & Rate Limiting]
         DynamoDB[DynamoDB Global Table for Metadata]
         SecretsManager[Secrets Manager for Tokens]
         S3[S3 for Dead-Letter Queue]
@@ -100,18 +108,23 @@ graph TD
         MobileApp[Mobile Application w/ KMP Module]
     end
 
-    MobileApp -- Signs up / signs in with --> FirebaseAuth
+    MobileApp -- "Signs up / signs in with" --> FirebaseAuth
     MobileApp -- "HTTPS Request (with Firebase JWT)" --> APIGateway
     APIGateway -- "Validates JWT with" --> AuthorizerLambda
     AuthorizerLambda -- "Caches and validates against Google's public keys"--> FirebaseAuth
     APIGateway -- Invokes --> RequestLambda
-    RequestLambda -- "Publishes 'SyncJobRequested' event" --> EventBus
-    EventBus -- "Rule: 'SyncJobRequested' sends to" --> SQSQueue
-    SQSQueue -- "Triggers" --> WorkerLambda
-    EventBus -- "Rule: All Events" --> AnalyticsService
-    WorkerLambda -- Reads/writes user config --> DynamoDB
-    WorkerLambda -- Gets credentials --> SecretsManager
-    WorkerLambda -- Reads/Writes --> ElastiCache
+
+    RequestLambda -- "Publishes 'RealtimeSyncRequested' event" --> HotPathEventBus
+    HotPathEventBus -- "Rule routes to" --> RealtimeSyncQueue
+    RealtimeSyncQueue -- "Triggers" --> WorkerLambda
+
+    RequestLambda -- "Starts execution for historical sync" --> HistoricalOrchestrator
+    HistoricalOrchestrator -- "Orchestrates and invokes" --> WorkerLambda
+
+    HotPathEventBus -- "Rule: All Events" --> AnalyticsService
+    WorkerLambda -- "Reads/writes user config" --> DynamoDB
+    WorkerLambda -- "Gets credentials" --> SecretsManager
+    WorkerLambda -- "Reads/Writes" --> ElastiCache
     WorkerLambda -.-> AI_Service
     WorkerLambda -- "On failure, sends to" --> S3
     CICD -- "Registers & Validates Schemas in" --> GlueSchemaRegistry
@@ -119,9 +132,9 @@ graph TD
     RequestLambda -- "Fetches runtime config from" --> AppConfig
     WorkerLambda -- "Fetches runtime config from" --> AppConfig
 
-    RequestLambda -- Logs & Metrics --> Observability
-    WorkerLambda -- Logs & Metrics --> Observability
-    AuthorizerLambda -- Logs & Metrics --> Observability
+    RequestLambda -- "Logs & Metrics" --> Observability
+    WorkerLambda -- "Logs & Metrics" --> Observability
+    AuthorizerLambda -- "Logs & Metrics" --> Observability
 ```
 
 1.  **Mobile Application (Kotlin Multiplatform & Native UI)**
@@ -135,8 +148,11 @@ graph TD
     *   **Responsibilities:** Manages user credentials, issues short-lived JWTs to the mobile client after a successful authentication event, and provides public keys for backend token verification.
 
 3.  **Scalable Serverless Backend (AWS)**
-    *   **Description:** A decoupled, event-driven serverless backend on AWS that orchestrates all syncs. Instead of direct service-to-service communication, components publish semantic events (e.g., `SyncJobRequested`) to a central **EventBridge Event Bus**. For high-volume asynchronous jobs, EventBridge rules forward events to an **Amazon SQS queue**, which acts as a durable buffer. This queue decouples the `RequestLambda` from the `WorkerLambda`, absorbing traffic spikes and improving system resilience by retaining jobs for processing even if workers fail temporarily. This highly extensible model is secured at the edge by a **Lambda Authorizer** that validates the JWT provided by the client. The backend does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
-    *   **Technology:** AWS Lambda, API Gateway with Lambda Authorizer, **Amazon EventBridge**, **Amazon SQS**, DynamoDB Global Tables.
+    *   **Description:** A decoupled, event-driven serverless backend on AWS that orchestrates all syncs. The architecture is split into two main paths: a "hot path" for frequent, low-latency, real-time syncs, and a "cold path" for infrequent, long-running, historical syncs.
+        -   **Hot Path:** For real-time jobs, the `RequestLambda` publishes a semantic event (e.g., `RealtimeSyncRequested`) to an **EventBridge Event Bus**. A rule forwards this event to an **Amazon SQS queue** that acts as a durable, high-throughput buffer. To ensure no events are lost if the target queue is unavailable, the EventBridge rule itself will be configured with a Dead-Letter Queue (DLQ). This decouples the request from the execution and ensures maximum reliability.
+        -   **Cold Path:** For historical syncs, the `RequestLambda` directly triggers an **AWS Step Functions** state machine. This is a managed workflow orchestrator ideal for long-running, multi-step processes, providing superior reliability, state management, and observability for these complex jobs.
+    *   The backend does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
+    *   **Technology:** AWS Lambda, API Gateway with Lambda Authorizer, **Amazon EventBridge**, **Amazon SQS**, **AWS Step Functions**, DynamoDB Global Tables.
     *   **Responsibilities:** Publishes and subscribes to events, orchestrates sync jobs, executes cloud-to-cloud syncs, securely stores third-party integration credentials, and stores user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
 
 4.  **Distributed Cache (Amazon ElastiCache for Redis)**
@@ -262,28 +278,51 @@ When implemented, the AI Insights Service will be composed of several components
 
 ## 3. Sync Models: A Hybrid Architecture
 
-To ensure reliability and accommodate platform constraints, SyncWell uses a hybrid architecture.
+To ensure reliability and accommodate platform constraints, SyncWell uses a hybrid architecture. This means some integrations are handled entirely in the cloud ("Cloud-to-Cloud"), while others require on-device processing using native SDKs (like Apple's HealthKit or Google's Health Connect).
+
+The following table clarifies the integration model for each provider supported in the MVP:
+
+| Provider | Integration Model | Rationale |
+| :--- | :--- | :--- |
+| **Apple Health** | Device-to-Cloud / Cloud-to-Device | HealthKit is a device-native framework with no cloud API. All processing must happen on the user's device. |
+| **Google Fit** | Hybrid (Device & Cloud) | While Google Fit has a REST API, the new Health Connect SDK is the preferred, modern way to integrate on Android. The implementation will be device-first, using the cloud API as a fallback. |
+| **Fitbit** | Cloud-to-Cloud | Fitbit provides a comprehensive REST API for all data types. No on-device component is needed. |
+| **Garmin** | Cloud-to-Cloud | Garmin provides a cloud-based API. No on-device component is needed. |
+| **Strava** | Cloud-to-Cloud | Strava provides a cloud-based API. No on-device component is needed. |
 
 ### Model 1: Cloud-to-Cloud Sync
 
-*   **Use Case:** Syncing between two cloud-based services (e.g., Garmin to Strava).
+Cloud-to-cloud syncs are handled by two distinct architectural patterns depending on the use case.
+
+#### **Real-time Sync (Hot Path)**
+*   **Use Case:** Handling frequent, automatic, and user-initiated manual syncs for recent data.
 *   **Flow:**
     1.  The Mobile App sends a request to API Gateway to start a sync.
-    2.  The `RequestLambda` validates the request and publishes a semantic `SyncJobRequested` event to the **EventBridge Event Bus**.
-    3.  An EventBridge rule filters for `SyncJobRequested` events and sends them to an **Amazon SQS queue**. This queue acts as a buffer, protecting the system from load spikes and ensuring jobs are not lost.
-    4.  The SQS queue triggers the `WorkerLambda`, which processes the job. The worker handles the sync logic: fetching from the source, transforming, and writing to the destination.
-    5.  Upon completion, the `WorkerLambda` can publish a `SyncJobSucceeded` or `SyncJobFailed` event back to the bus for other services (e.g., notifications, analytics) to consume.
-    6.  **Advantage:** This is a highly reliable and extensible model. The use of an SQS queue adds a layer of resilience, and the `RequestLambda` does not need to know which service(s) will handle the sync, allowing for greater flexibility.
+    2.  The `RequestLambda` validates the request and publishes a semantic `RealtimeSyncRequested` event to the **EventBridge Event Bus**.
+    3.  An EventBridge rule filters for these events and sends them to an **Amazon SQS queue**. This queue acts as a buffer, protecting the system from load spikes and ensuring jobs are not lost.
+    4.  The SQS queue triggers the `WorkerLambda`, which processes the job.
+    5.  Upon completion, the `WorkerLambda` can publish a result event back to the bus for other services to consume.
+*   **Advantage:** This is a highly reliable and extensible model for high-volume, short-lived jobs.
 
 ```mermaid
 graph TD
-    A[Mobile App] -- 1. Initiate --> B[API Gateway]
-    B -- 2. Publishes event --> C[EventBridge]
-    C -- 3. Forwards to --> SQS[SQS Queue]
-    SQS -- 4. Triggers --> D[Worker Lambda]
-    D -- 5. Fetch/Write data --> E[Third-Party APIs]
-    D -- 6. Publishes result event --> C
+    subgraph "Real-time Sync Flow"
+        A[Mobile App] -- 1. Initiate --> B[API Gateway]
+        B -- 2. Publishes event --> C[EventBridge]
+        C -- 3. Forwards to --> SQS[SQS Queue]
+        SQS -- 4. Triggers --> D[Worker Lambda]
+        D -- 5. Fetch/Write data --> E[Third-Party APIs]
+        D -- 6. Publishes result event --> C
+    end
 ```
+
+#### **Historical Sync (Cold Path)**
+*   **Use Case:** Handling user-initiated requests to backfill months or years of historical data.
+*   **Flow:**
+    1.  The Mobile App sends a request to a dedicated API Gateway endpoint to start a historical sync.
+    2.  The `RequestLambda` validates the request and directly starts an execution of the **AWS Step Functions** state machine.
+    3.  The state machine orchestrates the entire workflow, including breaking the job into chunks, processing them in parallel with `WorkerLambda` invocations, and handling errors. The detailed workflow is described in the "Historical Sync Workflow" section below.
+*   **Advantage:** Step Functions provides the state management, error handling, and observability required for long-running, complex jobs, making the process far more reliable than a single, long-lived function.
 
 ### Model 2: Device-to-Cloud Sync
 *(Unchanged)*
@@ -291,34 +330,23 @@ graph TD
 ### Model 3: Cloud-to-Device Sync
 *(Unchanged)*
 
-## 3a. Explicit Idempotency Strategy
+## 3a. Unified End-to-End Idempotency Strategy
 
-In a distributed, event-driven system, operations can be retried due to network errors or transient failures. To prevent duplicate processing and ensure data integrity, a formal idempotency strategy is critical.
+In a distributed, event-driven system, operations can be retried at multiple levels, making a robust idempotency strategy critical for data integrity. We will implement a single, unified strategy based on a client-generated **`Idempotency-Key`**. This key ensures that an operation is processed at most once, from the initial API call to the final asynchronous worker execution.
 
-### API Endpoint Idempotency
+*   **Key Generation:** The mobile client is responsible for generating a unique `Idempotency-Key` (e.g., a UUID) for each new state-changing operation. This same key **must** be used for any retries of that same operation.
 
-All state-changing `POST` operations on the API Gateway will support idempotency. The client is responsible for generating a unique **`Idempotency-Key`** (e.g., a UUID) for each distinct operation.
+*   **End-to-End Flow:**
+    1.  **API Request:** The client sends a `POST` request, including the `Idempotency-Key` in the HTTP header.
+    2.  **API Gateway & RequestLambda:** The `RequestLambda` receives the request. It immediately checks for the `Idempotency-Key` in a dedicated idempotency store (e.g., a Redis cache with a short TTL).
+        *   If the key is found, it means the request is a duplicate. The `RequestLambda` immediately returns the original, cached response without reprocessing.
+        *   If the key is not found, the `RequestLambda` stores the key in the idempotency store and proceeds.
+    3.  **Event Payload:** The `RequestLambda` **must** include the `Idempotency-Key` in the payload of the event it publishes to EventBridge or the job it sends to Step Functions.
+    4.  **Worker Execution:** The `WorkerLambda` receives the event. Before starting any processing, it performs its own check against the same idempotency store using the key from the event payload.
+        *   If the key is found, it means the job has already been processed (e.g., due to an SQS redelivery). The worker logs this and exits gracefully.
+        *   If the key is not found, the worker stores the key and begins processing the job.
 
-*   **Flow:**
-    1.  The mobile client generates a unique `Idempotency-Key` for a new operation (e.g., creating a new connection).
-    2.  The client sends the request, including the `Idempotency-Key` in the HTTP header.
-    3.  The `RequestLambda` receives the request. It first checks a dedicated idempotency table in DynamoDB (or a Redis cache) for the given key.
-        *   If the key is found, the backend returns the *original* cached response immediately without reprocessing the request.
-        *   If the key is not found, the backend processes the request, stores the response against the idempotency key, and then returns the response.
-*   **Benefit:** If the client retries a request due to a timeout but the original request succeeded, this mechanism prevents the creation of duplicate resources.
-
-### Worker Idempotency
-
-Asynchronous workers that consume events from the EventBridge bus must also be idempotent, as events can be delivered more than once.
-
-*   **Strategy:** Workers will be designed to be **naturally idempotent** based on the state of the system, which is stored in DynamoDB.
-*   **Example (`SyncJobRequested` event):**
-    1.  The `WorkerLambda` is triggered by a `SyncJobRequested` event.
-    2.  Before initiating the sync, the worker performs a check against the `SyncWellMetadata` table in DynamoDB.
-    3.  It queries for the existence of a sync job with the same unique identifiers from the event payload.
-    4.  If the job has already been processed or is currently in progress (e.g., based on a `status` attribute), the worker logs this and exits gracefully.
-    5.  If the job is new, the worker "claims" it by writing its initial state to DynamoDB and then proceeds with the sync logic.
-*   **Benefit:** This prevents duplicate syncs from being performed if the same `SyncJobRequested` event is processed multiple times.
+*   **Benefit:** This two-check approach provides comprehensive protection. The first check at the API level prevents duplicate synchronous operations. The second check in the asynchronous worker prevents duplicate processing in the case of event redeliveries, guaranteeing at-most-once execution for the entire operation.
 
 ## 3b. Architecture for 1M DAU
 
@@ -361,14 +389,13 @@ Given the requirement for a global launch across 5 continents, a high-availabili
         *   Average RPS: `90M / 86400s = ~1,042 RPS`.
         *   Peak RPS from this model: `45M / 14400s = ~3,125 RPS`.
     *   **Governing Non-Functional Requirement (NFR):**
-        *   While the bottom-up estimation provides a baseline, the `01-context-vision.md` document sets a strict non-functional requirement for the system to handle a peak load of **10,000 requests per second (RPS)**.
-        *   **The architecture must be designed, provisioned, and tested to meet this 10,000 RPS target.** All subsequent calculations and cost models will be based on this governing requirement.
-    *   **Worker Lambdas & SQS (at 10,000 RPS):**
-        *   Total daily jobs at this scale would be significantly higher, but the critical metric for provisioning is peak concurrency.
-        *   SQS can handle this throughput. The key is Lambda concurrency, which must be sized for the 10,000 RPS peak load.
-        *   Assuming an average job takes 5 seconds, the required concurrency during peak hours is `10,000 jobs/s * 5s/job = 50,000 concurrent executions`.
-        *   **Note on Concurrency Calculation:** This is a straightforward, upper-bound estimate based on Little's Law (`L = λW`). This provides a clear target for capacity planning and financial modeling.
-        *   This peak concurrency number is critical. The default AWS account limit (1,000) must be significantly increased, and this level of concurrency has **major cost and architectural implications** that must be factored into financial models and may require a re-evaluation of a purely serverless approach for some components.
+        *   While the bottom-up estimation provides a baseline of ~3,125 RPS, the system must be designed for a higher peak load to ensure resilience. The governing NFR is for the system to handle a peak load of **3,500 requests per second (RPS)**.
+        *   **The architecture must be designed, provisioned, and load-tested to meet this 3,500 RPS target.** This provides a significant buffer over the calculated average peak while being a more realistic and financially viable target for a serverless architecture than a higher, more speculative number.
+    *   **Worker Lambdas & SQS (at 3,500 RPS):**
+        *   The critical metric for provisioning is peak concurrency. SQS can easily handle this throughput.
+        *   Assuming an average real-time sync job takes 5 seconds to complete, the required concurrency during peak hours can be estimated using Little's Law (`L = λW`).
+        *   Required Concurrency = `3,500 jobs/s * 5s/job = 17,500 concurrent executions`.
+        *   **Note on Concurrency Calculation:** This is a high-end estimate. While still a very large number, it is more feasible to achieve than the original 50,000 projection. Nonetheless, this peak concurrency number is critical. The default AWS account limit (1,000) must be significantly increased, and this level of concurrency has **major cost and architectural implications** that must be factored into financial models. It may still warrant a re-evaluation of a purely serverless approach for the worker fleet in favor of a container-based one (e.g., AWS Fargate) which can be more cost-effective at this scale.
     *   **DynamoDB:**
         *   We will use **On-Demand Capacity Mode**. This is more cost-effective for spiky, unpredictable workloads than provisioned throughput. It automatically scales to handle the required read/write operations, although we must monitor for throttling if traffic patterns become extreme.
 
@@ -424,6 +451,8 @@ This single-table design efficiently serves the following critical access patter
 
 This structure provides a flexible and scalable foundation for our application's metadata needs.
 
+**Note on "Viral User" Hot Partitions:** While this single-table design is highly efficient for the vast majority of users, it carries a risk for individual "power users" who might become exceptionally active. Because all data for a single user is on the same physical partition, a user with an extremely high volume of syncs could potentially be throttled by DynamoDB, even if the table's overall capacity is not stressed. For the MVP, this is an acceptable risk. For future iterations, a mitigation strategy such as **write sharding** could be employed for these high-volume users. This would involve distributing a single user's data across multiple partitions (e.g., using a sharded PK like `USER#{userId}-1`, `USER#{userId}-2`) to increase their individual throughput.
+
 ### Level 4: Historical Sync Workflow
 
 To handle long-running, complex, and potentially error-prone processes like a user's historical data sync, we will use a dedicated workflow orchestrator. **AWS Step Functions** is the ideal choice as it is a fully managed service that aligns with our serverless-first approach, providing excellent reliability, state management, and observability out of the box.
@@ -452,7 +481,32 @@ graph TD
 
 ## 3d. Core API Contracts
 
-To ensure clear communication between the mobile client and the backend, we define the following core API endpoints. This is not an exhaustive list but represents the most critical interactions. The API will be versioned via the URL path (e.g., `/v1/...`).
+To ensure clear communication between the mobile client and the backend, we define the following core API endpoints. This is not an exhaustive list but represents the most critical interactions. The API will be versioned via the URL path (e.g., `/v1/...`). A full OpenAPI 3.0 specification will be maintained in the repository as the single source of truth.
+
+### GET /v1/connections
+
+Retrieves a list of all third-party applications the user has connected to their SyncWell account.
+
+*   **Success Response (200 OK):**
+
+    ```json
+    {
+      "connections": [
+        {
+          "connectionId": "conn_12345_fitbit",
+          "provider": "fitbit",
+          "displayName": "Fitbit",
+          "status": "active" // "active" or "needs_reauth"
+        },
+        {
+          "connectionId": "conn_67890_strava",
+          "provider": "strava",
+          "displayName": "Strava",
+          "status": "active"
+        }
+      ]
+    }
+    ```
 
 ### POST /v1/sync-jobs
 
@@ -466,10 +520,14 @@ Initiates a new synchronization job for a user.
     {
       "sourceConnectionId": "conn_12345_fitbit",
       "destinationConnectionId": "conn_67890_strava",
-      "dataType": "steps",
+      "dataType": "steps", // See enum below
       "mode": "automatic" // "automatic" or "manual"
     }
     ```
+    *   **`dataType` (enum):** `steps`, `weight`, `sleep`, `workout`
+    *   **`mode` (enum):**
+        *   `automatic`: A background sync triggered by the system scheduler.
+        *   `manual`: A sync explicitly triggered by the user from the UI. This may be given higher priority in future implementations.
 
 *   **Success Response (202 Accepted):**
 
@@ -496,7 +554,7 @@ Initiates a new synchronization job for a user.
 
 To handle data from various third-party sources, we must first transform it into a standardized, canonical format. This allows our sync engine and conflict resolution logic to operate on a consistent data structure, regardless of the source.
 
-Below are examples of our core canonical models.
+Below are examples of our core canonical models. The definitive schemas are implemented as Kotlin `data class`es in the KMP shared module and versioned in the AWS Glue Schema Registry.
 
 ### `CanonicalWorkout`
 
@@ -565,12 +623,38 @@ data class CanonicalSleepSession(
 )
 ```
 
+### `ProviderTokens`
+
+Represents the set of authentication tokens for a specific third-party connection. This model is designed to be flexible enough to handle standard OAuth 2.0 flows. It will be stored securely in AWS Secrets Manager.
+
+```kotlin
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class ProviderTokens(
+    // The primary token used to authenticate API requests.
+    val accessToken: String,
+
+    // The token used to refresh an expired access token. May be null for some providers.
+    val refreshToken: String? = null,
+
+    // The lifetime of the access token in seconds from the time of issuance.
+    val expiresIn: Long,
+
+    // The time the token was issued, in epoch seconds. Used with expiresIn to calculate the expiration time.
+    val issuedAt: Long = System.currentTimeMillis() / 1000,
+
+    // A space-separated list of scopes granted by the user.
+    val scope: String? = null
+)
+```
+
 ## 4. Technology Stack & Rationale
 
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
 | **Authentication Service** | **Firebase Authentication** | **Cost-Effective & Developer-Friendly.** Provides a fully managed authentication backend with a generous free tier, excellent mobile SDKs, and built-in support for social logins, as detailed in `46-user-authentication.md`. |
-| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) across the mobile app and a potential JVM backend, while maintaining native UI performance. |
+| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) across the mobile app and a potential JVM backend, while maintaining native UI performance. We acknowledge the trade-off of using a JVM-based Lambda, which can have higher cold-start times. For the MVP, code reuse is prioritized, but latency-critical functions may be re-evaluated for a different runtime in the future. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Primary Database** | **Amazon DynamoDB with Global Tables** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance required to support 1M DAU. The single-table design enables efficient, complex access patterns. We use On-Demand capacity mode, which is the most cost-effective choice for our unpredictable, spiky workload, as it automatically scales to meet traffic demands without the need for manual capacity planning. Global Tables provide the multi-region, active-active replication needed for high availability and low-latency access for our global user base.** |
 | **Serverless Backend** | **AWS (Lambda, EventBridge, SQS, DynamoDB)** | **Massive Scalability & Optimal Cost-Efficiency.** An event-driven, serverless-first architecture is chosen over container-based solutions (like EKS or Fargate) for several key reasons. It provides automatic scaling to handle unpredictable, spiky workloads without manual intervention, a purely pay-per-use cost model that is highly efficient during idle periods, and significantly reduced operational overhead as there are no servers or clusters to manage. This allows the engineering team to focus on application logic rather than infrastructure management, which is critical for meeting the 1M DAU target reliably and cost-effectively. |
@@ -632,9 +716,9 @@ For operational excellence, a robust observability framework is critical. This i
     *   **Dashboards:** While AWS CloudWatch provides default dashboards, **Grafana** will be used to build more comprehensive, at-a-glance dashboards, consuming data from CloudWatch. This provides a more powerful and flexible visualization layer.
 
 *   **Logging Strategy:**
-    *   A standardized, **structured JSON logging** format will be enforced for all services to enable efficient querying and analysis in CloudWatch Logs Insights.
-    *   **Log Content:** Logs will include a `correlationId` to trace a single request across multiple services.
-    *   **Scrubbing:** All logs **must be scrubbed** of any PHI, PII, or other sensitive user data before being written.
+    *   A standardized, **structured JSON logging** format will be enforced for all services. To ensure consistency and automate best practices, all Lambda functions **must** use the **AWS Lambda Powertools for TypeScript** library.
+    *   **Log Content:** Powertools will be used to automatically inject a `correlationId` into all log entries, allowing a single request to be traced through the distributed system.
+    *   **Scrubbing:** All logs **must be scrubbed** of any PHI, PII, or other sensitive user data before being written. Powertools' logging utility can assist with this, but careful implementation is required.
 
 *   **Key Metrics & Alerting:**
     *   **Alerting Flow:** Critical alerts will follow a defined path: **CloudWatch Alarms → Amazon SNS → PagerDuty/Slack**. This ensures that the on-call team is immediately notified of production issues. Non-critical alerts may be routed to a separate Slack channel for awareness.
@@ -690,10 +774,10 @@ This section defines the key non-functional requirements for the SyncWell platfo
 | **Availability** | Core Service Uptime | Monthly Uptime % | > 99.9% | Measured for core API endpoints and sync processing. Excludes scheduled maintenance. |
 | | Disaster Recovery RTO | Recovery Time Objective | < 4 hours | Maximum time to restore service in the DR region after a primary region failure is declared. |
 | | Disaster Recovery RPO | Recovery Point Objective | < 15 minutes | Maximum acceptable data loss in a disaster recovery scenario. Governed by PITR backup frequency. |
-| **Performance** | Manual Sync Latency | P95 Latency | < 5 seconds | The 95th percentile for a user-initiated cloud-to-cloud sync to complete. |
+| **Performance** | Manual Sync Latency | P95 Latency | < 45 seconds | This end-to-end latency is highly dependent on third-party API performance. Internal processing time will be tracked separately as a more precise SLO. |
 | | API Gateway Latency | P99 Latency | < 500ms | For all synchronous API endpoints, measured at the gateway. |
 | | Global User Read Latency | P95 Latency | < 200ms | For users accessing data from a local regional replica of the DynamoDB Global Table. |
-| | Concurrent Users | Peak Concurrent Lambdas | > 50,000 | Must be able to scale to handle peak load concurrency. Requires significant AWS limit increases and has major cost implications. |
+| | Concurrent Users | Peak Concurrent Lambdas | > 17,500 | Must be able to scale to handle peak load concurrency. Requires significant AWS limit increases and has major cost and architectural implications. |
 | **Security** | Data Encryption | TLS Version | TLS 1.2+ | All traffic in transit must use modern, secure protocols. |
 | | Vulnerability Patching | Time to Patch Critical CVE | < 72 hours | Time from when a critical vulnerability in a dependency is identified to when it is patched in production. |
 | **Scalability** | User Capacity | Daily Active Users (DAU) | 1,000,000 | The architecture must be able to support 1 million daily active users without degradation. |
