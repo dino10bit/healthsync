@@ -102,6 +102,7 @@ graph TD
         style AI_Service fill:#f9f,stroke:#333,stroke-width:2px
         AI_Service[AI Insights Service]
         AnalyticsService[Analytics Service]
+        KinesisFirehose[Kinesis Data Firehose]
     end
 
     subgraph "User's Device"
@@ -121,7 +122,8 @@ graph TD
 
     HistoricalOrchestrator -- "Orchestrates and invokes" --> WorkerLambda
 
-    HotPathEventBus -- "Rule: All Events" --> AnalyticsService
+    HotPathEventBus -- "Rule: Analytics Events" --> KinesisFirehose
+    KinesisFirehose -- "Batches & delivers" --> AnalyticsService
     WorkerLambda -- "Reads/writes user config" --> DynamoDB
     WorkerLambda -- "Gets credentials" --> SecretsManager
     WorkerLambda -- "Reads/Writes" --> ElastiCache
@@ -148,7 +150,7 @@ graph TD
     *   **Description:** A decoupled, event-driven backend on AWS that uses a **unified AWS Lambda compute model** to orchestrate all syncs. This serverless-first approach maximizes developer velocity and minimizes operational overhead.
     *   The backend does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
     *   **Technology:** AWS Lambda, API Gateway, **Amazon EventBridge**, **Amazon SQS**, **AWS Step Functions**, DynamoDB Global Tables.
-    *   **Responsibilities:** The API Layer (**API Gateway**) is responsible for request validation and routing, using direct service integrations to send jobs to the backend. The Worker Service (also Lambda) is responsible for executing all cloud-to-cloud sync jobs, securely storing credentials, and storing user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
+    *   **Responsibilities:** The API Layer (**API Gateway**) is responsible for request validation, authorization, and routing. To ensure maximum performance and cost-effectiveness, it will leverage **API Gateway's built-in caching for the Lambda Authorizer**. The authorizer's response (the IAM policy) will be cached based on the user's identity token for a configurable TTL (e.g., 5 minutes). For subsequent requests within this TTL, API Gateway will use the cached policy and will not invoke the `AuthorizerLambda`, dramatically reducing latency and cost. The Worker Service (also Lambda) is responsible for executing all cloud-to-cloud sync jobs, securely storing credentials, and storing user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
 
 4.  **Distributed Cache (Amazon ElastiCache for Redis)**
     *   **Description:** An in-memory caching layer to improve performance and reduce load on downstream services. The cluster must be sized appropriately to handle the high volume of requests from the worker fleet, particularly for the distributed locking and rate-limiting functions which will be under heavy load at 10,000 RPS.
@@ -334,7 +336,11 @@ graph TD
     1.  The Mobile App sends a request to a dedicated API Gateway endpoint to start a historical sync.
     2.  **API Gateway** uses a direct service integration to validate the request and start an execution of the **AWS Step Functions** state machine.
     3.  The state machine orchestrates the entire workflow, breaking the job into chunks, processing them in parallel with `WorkerLambda` invocations, and handling errors. The detailed workflow is described in the "Historical Sync Workflow" section below.
-*   **Advantage:** Step Functions provides the state management, error handling, and observability required for long-running, complex jobs, making the process far more reliable than a single, long-lived function.
+*   **Advantage:** Step Functions is the ideal choice for this workflow due to its rich, native observability features, which are critical for operating and debugging complex, long-running jobs at scale. The architecture will explicitly leverage:
+    *   **Visual Workflow Monitoring:** Using the visual execution graph in the AWS Console to trace the path of each historical sync job in real-time and quickly identify the exact point of failure.
+    *   **Detailed Execution History:** Relying on the detailed, event-by-event log of every state transition, including inputs and outputs, which is invaluable for auditing and debugging.
+    *   **AWS X-Ray Integration:** Enabling end-to-end tracing to generate a service map that visualizes the entire workflow, including time spent in each state and in the invoked Lambda functions.
+    These features make the process far more reliable and transparent than orchestration with a single, long-lived function.
 
 ### Model 2: Device-to-Cloud Sync
 *(Unchanged)*
@@ -483,7 +489,8 @@ Given the requirement for a global launch across 5 continents, a high-availabili
     | **User Sync Config** | `config##{userId}` | Serialized JSON of all user's sync configs | 15 minutes | TTL-based | Reduces DynamoDB reads for frequently accessed user settings. |
     | **Distributed Lock** | `lock##{userId}` | `true` | 5 minutes | Explicit release | Prevents concurrent syncs for the same user. The lock is explicitly deleted when a job completes. The TTL is a safety measure against deadlocks. |
     | **Rate Limit Token Bucket** | `ratelimit##{providerKey}` | A hash containing tokens and timestamp | 60 seconds | TTL-based | Powers the distributed rate limiter for third-party APIs. |
-    | **JWT Public Keys**| `jwks##{providerUrl}` | The JSON Web Key Set (JWKS) document | 1 hour | TTL-based | Caches the public keys from auth providers (e.g., Google) to validate JWTs without a network call on every request. |
+    | **API Gateway Authorizer** | User's Identity Token | The generated IAM policy document | 5 minutes | TTL-based (in API Gateway) | Caches the final authorization policy at the API Gateway level. This is the most critical cache, as it avoids invoking the Lambda Authorizer entirely for frequent requests. |
+    | **JWT Public Keys (in Lambda)**| `jwks##{providerUrl}` | The JSON Web Key Set (JWKS) document | 1 hour | TTL-based (in-memory) | Caches the public keys from auth providers (e.g., Google) inside the authorizer Lambda. This is a secondary optimization for when the API Gateway cache misses. |
 
 To visually explain the rate-limiting pattern, the following diagram shows how a worker interacts with the distributed rate limiter before calling an external service.
 
@@ -591,12 +598,24 @@ This single-table design efficiently serves the following critical access patter
 
 This structure provides a flexible and scalable foundation for our application's metadata needs.
 
-**Note on "Viral User" Hot Partitions:** While this single-table design is highly efficient for the vast majority of users, it carries a risk for individual "power users" or influencers who might become exceptionally active. Because all data for a single user is on the same physical partition, a user with an extremely high volume of syncs could be throttled by DynamoDB. To mitigate this proactively, the system will be designed with a **write-sharding capability**.
+**Mitigating "Viral User" Hot Partitions:** While the single-table design is highly efficient, it presents a "hot partition" risk for a "viral user" whose activity dramatically exceeds the norm. Because all data for one user resides on the same physical partition, their high traffic could lead to throttling. The strategy to mitigate this must be chosen carefully to balance performance and complexity.
 
-*   **Concept:** This feature involves distributing a single user's data across multiple partitions (e.g., using a sharded PK like `USER#{userId}-1`, `USER#{userId}-2`) to increase their individual throughput. A `shardingFactor` attribute would be stored on the user's `PROFILE` item. The application logic would then distribute writes across the specified number of shards.
-*   **Activation:** This capability will be controlled by a feature flag in AWS AppConfig, allowing it to be enabled for specific high-volume users without a new deployment.
-*   **Implementation Note & Read Complexity:** This is a non-trivial feature. While it solves the "hot partition" problem for writes, it introduces significant **read-side complexity**. For example, fetching all sync configurations for a sharded user would require the application to query all N shards and merge the results, increasing latency and cost.
-*   **Alternative to Consider:** A simpler alternative to application-level write sharding is to use a "hot user" flag. When this flag is enabled for a user, the application logic would write that user's data to a separate, dedicated DynamoDB table with higher provisioned throughput. This avoids the read-side merge complexity and may be a cleaner solution. The viability of this approach will be assessed before implementing a sharding solution.
+**Primary Strategy: "Hot User" Isolation via Dedicated Table**
+
+The recommended primary strategy is to isolate the hot user's data into a separate, dedicated DynamoDB table.
+
+*   **Concept:** When a user is identified as "hot" (e.g., via a flag in their user profile), all application logic will read/write that user's data to a different DynamoDB table (e.g., `SyncWellMetadata_HotUsers`). This table can have its own provisioned throughput tailored to the user's load.
+*   **Advantage - Drastically Reduced Complexity:** This approach completely avoids the complex, error-prone, and costly read-side logic of querying N shards and merging the results. The application's access patterns remain simple: it just checks the user's flag and directs the query to the correct table.
+*   **Advantage - Complete Isolation:** It provides perfect performance isolation, ensuring that a high-volume user cannot impact the performance of the general user population.
+
+**Secondary Strategy: Application-Level Write Sharding**
+
+Application-level write sharding should only be considered if the "hot table" strategy proves insufficient (e.g., if a single user's traffic becomes so extreme it could overwhelm a single table's partition limit).
+
+*   **Concept:** This feature involves distributing a single user's data across multiple partitions within the *same* table by appending a shard number to the partition key (e.g., `USER#{userId}-1`, `USER#{userId}-2`).
+*   **Read-Side Complexity:** This approach introduces significant implementation complexity. Fetching all data for a sharded user requires the application to query all N shards and merge the results in the application logic, which increases latency and cost.
+
+Given its simplicity and effectiveness, the "hot table" strategy will be the first and preferred solution to be implemented and assessed.
 
 #### Degraded Mode: Resilience to Cache Failure
 
@@ -917,6 +936,7 @@ A detailed financial model is a mandatory prerequisite before implementation.
     *   **Backend:** All data stored at rest in the AWS cloud is encrypted by default. Specifically, user OAuth tokens are encrypted in AWS Secrets Manager, DynamoDB tables are encrypted using AWS-managed keys, and the S3 bucket used for the Dead-Letter Queue is encrypted. All underlying encryption is managed by the AWS Key Management Service (KMS).
     *   **On-Device:** Any sensitive data (e.g., cached tokens) is stored in the native, hardware-backed secure storage systems: the Keychain on iOS and the Keystore on Android.
 *   **Access Control and Least Privilege:** Access to all backend resources is governed by the principle of least privilege. We use AWS Identity and Access Management (IAM) to enforce this.
+    *   **Secure Authorizer Implementation:** The `AuthorizerLambda` is a security-critical component. To prevent common vulnerabilities and adhere to security best practices, it **must** use a well-vetted, open-source library for all JWT validation logic. A library like **AWS Lambda Powertools** will be used to handle the complexities of fetching the JWKS, validating the signature, and checking standard claims (`iss`, `aud`, `exp`). This avoids implementing complex and error-prone security logic from scratch.
     *   **Granular IAM Roles:** Each compute component (API Lambda, Fargate Task, Worker Lambda) has its own unique IAM role with a narrowly scoped policy. For example, a worker for a specific third-party service is only granted permission to access the specific secrets and DynamoDB records relevant to its task. It cannot access resources related to other services.
     *   **Resource-Based Policies:** Where applicable, resource-based policies are used as an additional layer of defense. For example, the AWS Secrets Manager secret containing third-party tokens will have a resource policy that only allows access from the specific IAM roles of the workers that need it.
 *   **Egress Traffic Control (Firewall):** To enforce the principle of least privilege at the network layer, an egress firewall will be implemented to control outbound traffic from the VPC. The `WorkerLambda` functions need to call third-party APIs, and this traffic will be routed through an **AWS Network Firewall**. A firewall policy will be configured with an allow-list of the specific Fully Qualified Domain Names (FQDNs) for required partners (Fitbit, Strava, etc.). This provides defense in depth; if a function were compromised, this control would prevent it from exfiltrating data or communicating with malicious domains. It also provides a centralized point for auditing all outbound connections.
@@ -932,7 +952,9 @@ A detailed financial model is a mandatory prerequisite before implementation.
 ### Data Anonymization for Analytics and AI
 To enable future product improvements through analytics and machine learning without compromising user privacy, a strict data anonymization strategy will be implemented.
 
-*   **Anonymization Pipeline:** Before any data is sent to the Analytics Service or used for training the AI Insights Service, it will pass through a dedicated anonymization pipeline. This pipeline is an AWS Lambda function responsible for stripping all Personally Identifiable Information (PII) and any other data that could be used to re-identify a user.
+*   **Anonymization & Ingestion Pipeline:** To handle analytics data at scale, a robust and cost-effective ingestion pipeline is required. At 1M DAU, sending millions of individual events directly to an analytics endpoint would be inefficient and expensive. To solve this, the architecture will use **Amazon Kinesis Data Firehose**.
+    *   **Buffering and Batching:** The EventBridge bus will forward all raw analytics events to a Kinesis Data Firehose delivery stream. Firehose will automatically buffer these events—for example, for 60 seconds or until 5MB of data is collected—and then deliver them as a single, compressed file to the downstream analytics service (the S3 data lake). This dramatically reduces the number of ingest requests and associated costs.
+    *   **On-the-fly Transformation:** Before delivering the data, Firehose will invoke the dedicated **Anonymization Lambda**. This function receives the entire batch of events, strips all Personally Identifiable Information (PII) from each record, and returns the scrubbed batch to Firehose. This ensures that only anonymized, privacy-safe data is ever persisted.
 
     The following diagram illustrates this privacy-enhancing data flow:
 
@@ -943,19 +965,20 @@ To enable future product improvements through analytics and machine learning wit
         end
 
         subgraph "Anonymization & Analytics Pipeline"
-            C[Anonymization Lambda] -- "3. Processes event" --> D{PII Stripped};
-            B -- "2. Rule forwards event" --> C;
-            D -- "Anonymized Data" --> E[Analytics Service<br>(e.g., S3 Data Lake)];
+            C[Kinesis Data Firehose] -- "3. Invokes for transformation" --> D[Anonymization Lambda];
+            B -- "2. Rule forwards events" --> C;
+            D -- "Returns anonymized batch" --> C;
+            C -- "4. Delivers compressed batch" --> E[Analytics Service<br>(S3 Data Lake)];
         end
 
         style C fill:#f9f9f9,stroke:#333,stroke-width:2px
     ```
 
-    This diagram shows how the system protects user privacy while still enabling analytics:
-    1.  A **Worker Lambda** from the main application publishes an event (e.g., `SyncCompleted`) to the central **EventBridge Bus**. This event may contain raw, identifiable user data.
-    2.  A specific **EventBridge Rule** is configured to match these events and forward them to the **Anonymization Lambda**.
-    3.  This specialized Lambda function acts as a filter, processing the event to remove or hash all Personally Identifiable Information (PII).
-    4.  Only after the data has been scrubbed is it sent to the **Analytics Service**. This ensures that the analytics platform never stores or processes raw user data, enforcing our privacy-by-design principles.
+    This diagram shows the scalable and privacy-preserving analytics ingestion pipeline:
+    1.  A **Worker Lambda** from the main application publishes an event containing raw data to the central **EventBridge Bus**.
+    2.  An EventBridge rule forwards these events to **Kinesis Data Firehose**.
+    3.  Firehose buffers the events and invokes the **Anonymization Lambda** with a large batch of records for transformation. The Lambda strips all PII and returns the anonymized records.
+    4.  Firehose compresses the anonymized batch and delivers it to the **Analytics Service** (S3 Data Lake). This batching and compression approach is significantly more scalable and cost-effective than processing individual events.
 
 *   **Data Stripping:** The pipeline will remove or hash direct identifiers (like user IDs) and remove indirect identifiers (like exact timestamps or unique location data). For example, a precise timestamp would be generalized to "morning" or "afternoon".
 *   **Privacy-Preserving Aggregation:** The anonymized data can then be aggregated to identify broad patterns (e.g., "what percentage of users sync workout data on weekends?") without exposing any individual's behavior. This ensures that our analytics and AI initiatives can proceed without violating our core privacy promises.
