@@ -44,7 +44,7 @@ The MVP for SyncWell is guided by the "depth over breadth" principle. Instead of
 *   **S4: Additional Integrations:** Adding 1-2 more popular integrations like Oura or Suunto based on user demand.
 *   **S5: Sync Advanced Biometrics:** Support for niche but high-value data types for power users, such as Heart Rate Variability (HRV) and SpO2. (US-32)
 *   **S6: Automatic "Source of Truth":** Allow users to define rules to make the conflict resolution engine even smarter and more automated. (US-34)
-*   **S7: Smart Onboarding Backfill:** Automatically sync the last 7 days of data for new users to provide an immediate "wow" moment and demonstrate value. (US-31)
+*   **S7: Smart Onboarding Backfill (Pro Feature):** Automatically sync the last 7 days of data for new Pro users to provide an immediate "wow" moment and demonstrate the value of the subscription. (US-31)
 *   **S8: Interactive Troubleshooting:** An in-app guide to help users solve common sync errors themselves, reducing frustration and support load. (US-35)
 
 ### Could-Have (Long-Term Enhancements)

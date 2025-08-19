@@ -45,7 +45,7 @@ The release process is heavily automated using GitHub Actions. The pipeline is d
 ```mermaid
 graph TD
     subgraph "Development Workflow"
-        A[Commit to Feature Branch] --> B{Pull Request};
+        A[Commit to feature branch] --> B{Pull Request to develop};
     end
 
     subgraph "CI Pipeline (on PR)"
@@ -61,19 +61,23 @@ graph TD
         H --> A;
     end
 
-    subgraph "CD Pipeline (Post-Merge)"
-        G --> I[Merge to 'main' branch];
+    subgraph "Staging Deployment"
+        G --> I[Merge to 'develop' branch];
         I --> J[Deploy to Staging];
-        J --> K[Run E2E & DAST Tests];
-        K --> L{Create Release Tag};
-        L --> M[Deploy to Production];
-        M --> N[Release to App Stores];
+        J --> K[Run E2E & DAST Tests on Staging];
+    end
+
+    subgraph "Production Release"
+        K --> L[Create 'release' branch from 'develop'];
+        L --> M[Merge to 'main' & Create Tag];
+        M --> N[Deploy to Production (Canary)];
+        N --> O[Promote & Release to App Stores];
     end
 ```
 
 *   **Quality Gates:** The pipeline enforces several automated quality gates:
-    *   **On every pull request:** Run linters, static analysis, unit tests, integration tests, SAST scans, and data model schema validation.
-    *   **On merge to `main`:** Automatically deploy the backend services to the staging environment, then trigger E2E and DAST tests.
+    *   **On every pull request (to `develop`):** Run linters, static analysis, unit tests, integration tests, SAST scans, and data model schema validation.
+    *   **On merge to `develop`:** Automatically deploy the backend services to the staging environment, then trigger E2E and DAST tests.
 
 *   **Production Release Trigger:** A release to production is initiated by creating and pushing a version tag (e.g., `v1.2.0`). This single action triggers the automated deployment of backend services and the mobile app release process.
 

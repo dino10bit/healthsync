@@ -74,7 +74,7 @@ graph TD
         subgraph "Hot Path (Real-time Syncs)"
             HotPathEventBus[EventBridge Event Bus]
             RealtimeSyncQueue[SQS for Real-time Jobs]
-            WorkerLambda[Worker Lambdas]
+            FargateService[Worker Service (AWS Fargate)]
         end
 
         subgraph "Cold Path (Historical Syncs)"
@@ -116,24 +116,24 @@ graph TD
 
     RequestLambda -- "Publishes 'RealtimeSyncRequested' event" --> HotPathEventBus
     HotPathEventBus -- "Rule routes to" --> RealtimeSyncQueue
-    RealtimeSyncQueue -- "Triggers" --> WorkerLambda
+    RealtimeSyncQueue -- "Target for" --> FargateService
 
     RequestLambda -- "Starts execution for historical sync" --> HistoricalOrchestrator
-    HistoricalOrchestrator -- "Orchestrates and invokes" --> WorkerLambda
+    HistoricalOrchestrator -- "Orchestrates and invokes" --> FargateService
 
     HotPathEventBus -- "Rule: All Events" --> AnalyticsService
-    WorkerLambda -- "Reads/writes user config" --> DynamoDB
-    WorkerLambda -- "Gets credentials" --> SecretsManager
-    WorkerLambda -- "Reads/Writes" --> ElastiCache
-    WorkerLambda -.-> AI_Service
-    WorkerLambda -- "On failure, sends to" --> S3
+    FargateService -- "Reads/writes user config" --> DynamoDB
+    FargateService -- "Gets credentials" --> SecretsManager
+    FargateService -- "Reads/Writes" --> ElastiCache
+    FargateService -.-> AI_Service
+    FargateService -- "On failure, sends to" --> S3
     CICD -- "Registers & Validates Schemas in" --> GlueSchemaRegistry
-    WorkerLambda -- "Uses Schemas during build/runtime" --> GlueSchemaRegistry
+    FargateService -- "Uses Schemas during build/runtime" --> GlueSchemaRegistry
     RequestLambda -- "Fetches runtime config from" --> AppConfig
-    WorkerLambda -- "Fetches runtime config from" --> AppConfig
+    FargateService -- "Fetches runtime config from" --> AppConfig
 
     RequestLambda -- "Logs & Metrics" --> Observability
-    WorkerLambda -- "Logs & Metrics" --> Observability
+    FargateService -- "Logs & Metrics" --> Observability
     AuthorizerLambda -- "Logs & Metrics" --> Observability
 ```
 
@@ -147,16 +147,14 @@ graph TD
     *   **Technology:** Firebase Authentication (Google Cloud).
     *   **Responsibilities:** Manages user credentials, issues short-lived JWTs to the mobile client after a successful authentication event, and provides public keys for backend token verification.
 
-3.  **Scalable Serverless Backend (AWS)**
-    *   **Description:** A decoupled, event-driven serverless backend on AWS that orchestrates all syncs. The architecture is split into two main paths: a "hot path" for frequent, low-latency, real-time syncs, and a "cold path" for infrequent, long-running, historical syncs.
-        -   **Hot Path:** For real-time jobs, the `RequestLambda` publishes a semantic event (e.g., `RealtimeSyncRequested`) to an **EventBridge Event Bus**. A rule forwards this event to an **Amazon SQS queue** that acts as a durable, high-throughput buffer. To ensure no events are lost if the target queue is unavailable, the EventBridge rule itself will be configured with a Dead-Letter Queue (DLQ). This decouples the request from the execution and ensures maximum reliability.
-        -   **Cold Path:** For historical syncs, the `RequestLambda` directly triggers an **AWS Step Functions** state machine. This is a managed workflow orchestrator ideal for long-running, multi-step processes, providing superior reliability, state management, and observability for these complex jobs.
+3.  **Scalable Hybrid Backend (AWS)**
+    *   **Description:** A decoupled, event-driven backend on AWS that uses a hybrid compute model to orchestrate all syncs. The architecture uses **AWS Lambda** for the latency-sensitive API layer and **AWS Fargate** for the high-throughput, asynchronous worker fleet. This hybrid approach provides the best of both worlds: the rapid response and low overhead of Lambda for user-facing requests, and the cost-effectiveness and stable performance of containers for the massive scale of background processing.
     *   The backend does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
-    *   **Technology:** AWS Lambda, API Gateway with Lambda Authorizer, **Amazon EventBridge**, **Amazon SQS**, **AWS Step Functions**, DynamoDB Global Tables.
-    *   **Responsibilities:** Publishes and subscribes to events, orchestrates sync jobs, executes cloud-to-cloud syncs, securely stores third-party integration credentials, and stores user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
+    *   **Technology:** AWS Lambda, API Gateway, **Amazon EventBridge**, **Amazon SQS**, **AWS Step Functions**, **AWS Fargate**, DynamoDB Global Tables.
+    *   **Responsibilities:** The API Layer (Lambda) is responsible for request validation and routing. The Worker Service (Fargate) is responsible for executing all cloud-to-cloud sync jobs, securely storing credentials, and storing user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
 
 4.  **Distributed Cache (Amazon ElastiCache for Redis)**
-    *   **Description:** An in-memory caching layer to improve performance and reduce load on downstream services.
+    *   **Description:** An in-memory caching layer to improve performance and reduce load on downstream services. The cluster must be sized appropriately to handle the high volume of requests from the worker fleet, particularly for the distributed locking and rate-limiting functions which will be under heavy load at 10,000 RPS.
     *   **Technology:** Amazon ElastiCache for Redis.
     *   **Responsibilities:**
         *   Caches frequently accessed, non-sensitive data (e.g., user sync configurations).
@@ -187,6 +185,7 @@ graph TD
     *   **Responsibilities:**
         *   Stores and serves feature flags (e.g., enabling the `AI-Powered Merge` for Pro users).
         *   Manages operational parameters, allowing for real-time adjustments.
+        *   **Manages critical resource identifiers (e.g., the DynamoDB table name). This is a crucial element of the disaster recovery strategy, allowing the application to be repointed to a restored database table without a code deployment.**
         *   Provides validation and deployment strategies for configuration changes, reducing the risk of outages.
 
 ### Level 3: Components (Inside the KMP Shared Module)
@@ -235,11 +234,24 @@ interface DataProvider {
     suspend fun fetchData(tokens: ProviderTokens, dateRange: DateRange): List<CanonicalWorkout>
 
     /**
-     * Pushes a canonical data model to the provider's API, transforming it into the
+     * Pushes a list of canonical data models to the provider's API, transforming them into the
      * provider-specific format required by the destination service.
      */
-    suspend fun pushData(tokens: ProviderTokens, data: CanonicalWorkout): PushResult
+    suspend fun pushData(tokens: ProviderTokens, data: List<CanonicalData>): PushResult
 }
+
+/**
+ * A sealed interface representing any piece of canonical data.
+ */
+sealed interface CanonicalData
+
+/**
+ * Represents the result of a push operation, including any items that failed.
+ */
+data class PushResult(
+    val success: Boolean,
+    val failedItemIds: List<String> = emptyList()
+)
 ```
 
 #### 2. Dynamic Loading with a Factory Pattern
@@ -355,7 +367,7 @@ In a distributed, event-driven system, operations can be retried at multiple lev
 The idempotency store will be implemented in the ElastiCache for Redis cluster with the following schema:
 *   **Key:** `idem#<Idempotency-Key>` (e.g., `idem#a1b2c3d4-e5f6-7890-1234-567890abcdef`)
 *   **Value:** The serialized JSON response that was originally returned to the client (e.g., the `202 Accepted` response for a sync job).
-*   **TTL (Time-to-Live):** 24 hours. This is a safe upper bound for any reasonable client-side retry window.
+*   **TTL (Time-to-Live):** 24 hours. This duration is chosen as a safe upper bound to handle reasonable client-side retry windows. For example, if a user's device is offline for several hours, the client-side job scheduler may retry the operation once connectivity is restored. A 24-hour TTL ensures that even in these edge cases, the operation is not erroneously processed twice.
 
 ## 3b. Architecture for 1M DAU
 
@@ -398,15 +410,15 @@ Given the requirement for a global launch across 5 continents, a high-availabili
         *   Average RPS: `90M / 86400s = ~1,042 RPS`.
         *   Peak RPS from this model: `45M / 14400s = ~3,125 RPS`.
     *   **Governing Non-Functional Requirement (NFR):**
-        *   While the bottom-up estimation provides a baseline of ~3,125 RPS, the system must be designed for a higher peak load to ensure resilience. The governing NFR is for the system to handle a peak load of **3,500 requests per second (RPS)**.
-        *   **The architecture must be designed, provisioned, and load-tested to meet this 3,500 RPS target.** This provides a significant buffer over the calculated average peak while being a more realistic and financially viable target for a serverless architecture than a higher, more speculative number.
-    *   **Worker Lambdas & SQS (at 3,500 RPS):**
+        *   To ensure the system is highly resilient and can handle viral growth, the governing NFR is for the system to handle a peak load of **10,000 requests per second (RPS)**.
+        *   **The architecture must be designed, provisioned, and load-tested to meet this 10,000 RPS target.** This is the definitive scalability goal.
+    *   **Worker Tasks (Fargate) & SQS (at 10,000 RPS):**
         *   The critical metric for provisioning is peak concurrency. SQS can easily handle this throughput.
         *   Assuming an average real-time sync job takes 5 seconds to complete, the required concurrency during peak hours can be estimated using Little's Law (`L = λW`).
-        *   Required Concurrency = `3,500 jobs/s * 5s/job = 17,500 concurrent executions`.
-        *   **Note on Concurrency Calculation:** This is a high-end estimate. While still a very large number, it is more feasible to achieve than the original 50,000 projection. Nonetheless, this peak concurrency number is critical. The default AWS account limit (1,000) must be significantly increased, and this level of concurrency has **major cost and architectural implications** that must be factored into financial models. It may still warrant a re-evaluation of a purely serverless approach for the worker fleet in favor of a container-based one (e.g., AWS Fargate) which can be more cost-effective at this scale.
+        *   Required Concurrency = `10,000 jobs/s * 5s/job = 50,000 concurrent tasks`.
+        *   **Note on Concurrency Calculation:** This is a massive level of concurrency. The Fargate service must be configured with an auto-scaling policy that allows it to scale out to this number of tasks. This has major cost and architectural implications that must be factored into financial models and capacity planning.
     *   **DynamoDB:**
-        *   We will use **On-Demand Capacity Mode**. This is more cost-effective for spiky, unpredictable workloads than provisioned throughput. It automatically scales to handle the required read/write operations, although we must monitor for throttling if traffic patterns become extreme.
+        *   We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased via a Savings Plan to cost-effectively handle the predictable average load. **On-Demand Capacity** will handle any traffic that exceeds the provisioned throughput, providing the best of both worlds in terms of cost and elasticity.
 
 ## 3c. DynamoDB Data Modeling & Access Patterns
 
@@ -419,7 +431,7 @@ Our primary data table will be named **`SyncWellMetadata`**. It will use a compo
 *   **Primary Key:**
     *   **Partition Key (PK):** `USER#{userId}` - All data for a given user is co-located in the same partition, enabling efficient retrieval of a user's entire profile with a single query.
     *   **Sort Key (SK):** A hierarchical string that defines the type of data and its relationships (e.g., `PROFILE`, `CONN#{connectionId}`).
-*   **Capacity Mode:** On-Demand. This is ideal for our unpredictable, spiky traffic patterns, automatically scaling capacity to meet load.
+*   **Capacity Mode:** Hybrid (Provisioned + On-Demand). To balance cost and performance at scale, the table will use a hybrid capacity model. A baseline of Provisioned Capacity will be purchased (ideally via a Savings Plan) to handle the predictable average load, while On-Demand capacity will automatically handle any traffic that exceeds the provisioned throughput.
 *   **Global Tables:** The table will be configured as a DynamoDB Global Table, providing active-active multi-region replication for high availability and low-latency reads for a global user base.
 
 ### Item Types & Schema
@@ -434,6 +446,8 @@ Below are the different data entities, or "item types," that will be stored in t
 | **Hist. Sync Job** | `USER#{userId}` | `HISTORICAL##{orchestrationId}` | `ExecutionArn`, `StartDate`, `Status`. Acts as a pointer to the AWS Step Functions execution that orchestrates a large historical data sync. The definitive status is stored in the state machine itself. |
 
 *Example `SYNCCONFIG` SK:* `SYNCCONFIG#fitbit#to#googlefit#steps` (Note: single `#` delimiters are used for clarity and parsing reliability).
+
+**Note on Sparse Attributes:** This single-table design makes use of sparse attributes. Attributes that are not relevant to a particular item type (e.g., a `LastSyncTime` attribute on a `PROFILE` item) are not stored at all for that item. This is a core feature of NoSQL databases and is highly efficient, as it reduces both storage costs and the amount of data transferred for each read operation.
 
 **Note on Historical Sync Job Items:** Storing a potentially large number of `HISTORICAL` items in the same item collection as the `PROFILE` and `CONN` items can lead to performance degradation when fetching core user data. The query to "Get all settings for a user" (`PK = USER#{userId}`) will retrieve these job items, increasing payload size and read costs. To mitigate this, client-side queries for a user's core profile should explicitly filter to only retrieve items with SKs beginning with `PROFILE`, `CONN`, or `SYNCCONFIG`. This avoids fetching the potentially large list of historical job pointers unless they are explicitly needed.
 
@@ -460,7 +474,11 @@ This single-table design efficiently serves the following critical access patter
 
 This structure provides a flexible and scalable foundation for our application's metadata needs.
 
-**Note on "Viral User" Hot Partitions:** While this single-table design is highly efficient for the vast majority of users, it carries a risk for individual "power users" or influencers who might become exceptionally active. Because all data for a single user is on the same physical partition, a user with an extremely high volume of syncs could be throttled by DynamoDB. To mitigate this proactively, the system **will be built with a write-sharding capability from the start**. This feature will be controlled by a feature flag in AWS AppConfig, allowing it to be enabled for specific high-volume users without a new deployment. This involves distributing a single user's data across multiple partitions (e.g., using a sharded PK like `USER#{userId}-1`, `USER#{userId}-2`) to increase their individual throughput.
+**Note on "Viral User" Hot Partitions:** While this single-table design is highly efficient for the vast majority of users, it carries a risk for individual "power users" or influencers who might become exceptionally active. Because all data for a single user is on the same physical partition, a user with an extremely high volume of syncs could be throttled by DynamoDB. To mitigate this proactively, the system will be designed with a **write-sharding capability**.
+
+*   **Concept:** This feature involves distributing a single user's data across multiple partitions (e.g., using a sharded PK like `USER#{userId}-1`, `USER#{userId}-2`) to increase their individual throughput. A `shardingFactor` attribute would be stored on the user's `PROFILE` item. The application logic would then distribute writes across the specified number of shards.
+*   **Activation:** This capability will be controlled by a feature flag in AWS AppConfig, allowing it to be enabled for specific high-volume users without a new deployment.
+*   **Implementation Note:** This is a non-trivial feature with significant complexity in both the client and backend logic (e.g., how to handle reads across multiple shards). A full, detailed design document for this capability is a prerequisite for its implementation.
 
 #### Degraded Mode: Resilience to Cache Failure
 
@@ -583,6 +601,11 @@ Represents a single workout or activity session. The definitive schema is implem
 import kotlinx.serialization.Serializable
 
 @Serializable
+enum class CanonicalActivityType {
+    RUN, CYCLE, SWIM, STRENGTH_TRAINING, WALK, HIKE, OTHER
+}
+
+@Serializable
 data class CanonicalWorkout(
     // A unique identifier for the workout from its source system.
     val sourceId: String,
@@ -590,16 +613,15 @@ data class CanonicalWorkout(
     // The platform the workout originated from (e.g., "strava", "garmin").
     val sourceProvider: String,
 
-    // The type of activity. We will maintain a standard enum of activities.
-    // e.g., "run", "cycle", "swim", "strength_training"
-    val activityType: String,
+    // The type of activity.
+    val activityType: CanonicalActivityType,
 
     // Timestamps in ISO 8601 format (UTC).
     val startTimestamp: String,
     val endTimestamp: String,
 
     // Duration of the workout in seconds.
-    val durationSeconds: Long,
+    val durationSeconds: Double,
 
     // Distance in meters.
     val distanceMeters: Double? = null,
@@ -609,7 +631,7 @@ data class CanonicalWorkout(
 
     // Optional title or name for the activity.
     val title: String? = null
-)
+) : CanonicalData
 ```
 
 ### `CanonicalSleepSession`
@@ -658,10 +680,10 @@ data class ProviderTokens(
     val refreshToken: String? = null,
 
     // The lifetime of the access token in seconds from the time of issuance.
-    val expiresIn: Long,
+    val expiresInSeconds: Long,
 
-    // The time the token was issued, in epoch seconds. Used with expiresIn to calculate the expiration time.
-    val issuedAt: Long = System.currentTimeMillis() / 1000,
+    // The time the token was issued, in epoch seconds. Used with expiresInSeconds to calculate the absolute expiration time.
+    val issuedAtEpochSeconds: Long = System.currentTimeMillis() / 1000,
 
     // A space-separated list of scopes granted by the user.
     val scope: String? = null
@@ -676,7 +698,7 @@ data class ProviderTokens(
 | **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. However, to meet our strict latency SLOs, the KMP/JVM runtime should only be used for **asynchronous `WorkerLambda` functions** where cold starts are less critical. Latency-sensitive functions, such as the `RequestLambda` and `AuthorizerLambda`, **must be written in a faster-starting runtime like TypeScript or Python** to ensure the P99 API latency target can be met. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Primary Database** | **Amazon DynamoDB with Global Tables** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance required to support 1M DAU. The single-table design enables efficient, complex access patterns. We use On-Demand capacity mode, which is the most cost-effective choice for our unpredictable, spiky workload, as it automatically scales to meet traffic demands without the need for manual capacity planning. Global Tables provide the multi-region, active-active replication needed for high availability and low-latency access for our global user base.** |
-| **Serverless Backend** | **AWS (Lambda, EventBridge, SQS, DynamoDB)** | **Massive Scalability & Optimal Cost-Efficiency.** An event-driven, serverless-first architecture is chosen over container-based solutions (like EKS or Fargate) for several key reasons. It provides automatic scaling to handle unpredictable, spiky workloads without manual intervention, a purely pay-per-use cost model that is highly efficient during idle periods, and significantly reduced operational overhead as there are no servers or clusters to manage. This allows the engineering team to focus on application logic rather than infrastructure management, which is critical for meeting the 1M DAU target reliably and cost-effectively. |
+| **Backend Compute** | **AWS Lambda & AWS Fargate** | **Hybrid Compute for Optimal Performance & Cost.** The architecture uses a hybrid compute strategy. **AWS Lambda** is used for the latency-sensitive, intermittent workloads of the API layer (request validation, authentication, routing). **AWS Fargate** is used for the high-throughput, sustained-load workload of the asynchronous worker fleet. This approach is more cost-effective and provides more stable performance at the 10,000 RPS scale than a purely serverless model. |
 | **Schema Governance** | **AWS Glue Schema Registry** | **Data Integrity & Evolution.** Provides a managed, centralized registry for our canonical data schemas. Enforces backward-compatibility checks in the CI/CD pipeline, preventing breaking changes and ensuring system stability as new data sources are added. |
 | **Distributed Cache** | **Amazon ElastiCache for Redis** | **Performance & Scalability.** Provides a high-throughput, low-latency in-memory cache for reducing database load and implementing distributed rate limiting. |
 | **AI & Machine Learning (Future)** | **Amazon SageMaker, Amazon Bedrock** | **Rationale for Future Use:** When we implement AI features, these managed services will allow us to scale without managing underlying infrastructure, reducing operational overhead and allowing focus on feature development. |
@@ -690,21 +712,22 @@ data class ProviderTokens(
 
 ## 5. Cost-Effectiveness and Financial Modeling at Scale (1M DAU)
 
-While the serverless architecture is designed to be cost-effective, operating at the scale of 1 million DAU introduces significant financial risks that must be proactively managed. The "pay-per-use" model can lead to unexpectedly high costs if not carefully modeled and monitored.
+Operating at the scale of 1 million DAU with a 10,000 RPS peak introduces significant financial risks that must be proactively managed. The choice of a hybrid compute architecture (Lambda + Fargate) is designed to mitigate these risks, but a detailed financial model is still a mandatory prerequisite before implementation.
 
-**A detailed financial model and cost projection is a mandatory prerequisite before beginning implementation.** This model must be based on the peak projections (~17,500 concurrent Lambdas) and account for the following major cost drivers:
+This model must be based on the peak projection of **~50,000 concurrent Fargate tasks** and account for the following major cost drivers:
 
-1.  **AWS Lambda Concurrency:** This is likely to be the largest cost. While Lambda is pay-per-use, the cost of running tens of thousands of concurrent functions, even for short durations, is substantial. The cost of Provisioned Concurrency for any functions requiring low latency must also be factored in.
-2.  **Cross-Region Data Transfer:** This is a significant and often underestimated cost. The active-active multi-region architecture incurs data transfer costs for every write operation across all replicated services:
+1.  **AWS Fargate:** This is likely to be the largest cost. While Fargate is more cost-effective than Lambda for sustained workloads, the cost of running tens of thousands of concurrent tasks is substantial. The vCPU and memory configuration of the worker task is a key cost lever.
+2.  **Cross-Region Data Transfer:** This remains a significant and often underestimated cost. The active-active multi-region architecture incurs data transfer costs for every write operation across all replicated services:
     *   **DynamoDB Global Tables:** Every write, update, or delete is replicated and billed.
     *   **AWS Secrets Manager:** Replicating secrets incurs costs.
     *   **ElastiCache Global Datastore:** Cross-region replication traffic is a direct cost.
 3.  **CloudWatch Logs, Metrics, and Traces:** At the projected scale (~90 million jobs/day), the volume of logs, metrics, and traces generated will be massive. The costs for CloudWatch Logs ingest, storage, and analysis (via Insights queries) will be a major operational expense.
-4.  **NAT Gateway Data Processing:** Any outbound traffic from Lambdas in a private VPC to third-party APIs will pass through a NAT Gateway, which incurs a per-gigabyte data processing charge.
+4.  **NAT Gateway Data Processing:** Any outbound traffic from Fargate tasks in a private VPC to third-party APIs will pass through a NAT Gateway, which incurs a per-gigabyte data processing charge.
+5.  **API Layer (AWS Lambda):** While smaller than the Fargate cost, the cost of the Lambda functions for the API layer (API Gateway, Authorizer, Request Lambda) must still be factored in.
 
 **Cost Management Strategy:**
-*   **Mandatory Financial Modeling:** Develop a detailed cost model using the AWS Pricing Calculator and the high-end projections from this document.
-*   **Explore Savings Plans:** For predictable compute usage (like a baseline level of Lambda or potential Fargate), utilize AWS Savings Plans to significantly reduce costs.
+*   **Mandatory Financial Modeling:** Develop a detailed cost model using the AWS Pricing Calculator, comparing the Fargate/Lambda hybrid model against a pure Lambda model at the 10,000 RPS scale to validate the architectural choice.
+*   **Explore Savings Plans:** For predictable compute usage on Fargate and a baseline of DynamoDB capacity, a Compute Savings Plan is essential to significantly reduce costs.
 *   **Aggressive Log Management:** Implement strict log-level controls (via AppConfig), short retention periods in CloudWatch, and automated archiving to S3/Glacier to manage logging costs.
 *   **Cost Anomaly Detection:** Configure AWS Cost Anomaly Detection to automatically alert the team to any unexpected spikes in the daily or monthly bill.
 
@@ -877,7 +900,8 @@ These are technologies we have chosen as the foundation for the SyncWell platfor
 | Technology | Domain | Justification |
 | :--- | :--- | :--- |
 | **Kotlin Multiplatform** | Cross-Platform Logic | Core strategy for code reuse between mobile clients. |
-| **AWS Lambda, SQS, DynamoDB** | Backend Platform | Core of our scalable, serverless-first architecture. |
+| **AWS Lambda, SQS, DynamoDB** | Backend Platform | Core of our scalable, event-driven architecture. |
+| **AWS Fargate** | Container-based Workers | Adopted for the high-throughput worker fleet to provide stable performance and cost-efficiency at scale. |
 | **Terraform** | Infrastructure as Code | Standard for provisioning and managing our cloud infrastructure. |
 | **LocalStack** | Local Development | Essential for providing a high-fidelity local development loop. |
 | **Pact** | Contract Testing | Critical for ensuring API stability between the client and backend. |
@@ -905,6 +929,6 @@ These are technologies that we have considered but have decided not to use at th
 
 | Technology | Domain | Justification |
 | :--- | :--- | :--- |
-| **Kubernetes** | Container Orchestration | Our serverless-first approach means we have no current need for a complex container orchestrator. We will hold on this unless we develop a large suite of auxiliary services that require it. |
+| **Kubernetes (EKS / Self-Managed)** | Container Orchestration | While we have adopted containerization with AWS Fargate, we are holding on the added complexity of a full Kubernetes platform. Fargate meets our needs for serverless container orchestration without the management overhead of a Kubernetes cluster. |
 | **ScyllaDB / Cassandra** | NoSQL Database | DynamoDB meets all of our current and projected needs for metadata storage. We will not consider alternative NoSQL databases unless we hit a specific, insurmountable limitation with DynamoDB. |
 | **Service Mesh (Linkerd, etc.)**| Service-to-Service | A service mesh is a solution for managing a large and complex microservices architecture. Our current architecture is too simple to justify this complexity. We will put this on hold indefinitely. |

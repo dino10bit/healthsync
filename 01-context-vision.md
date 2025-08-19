@@ -56,7 +56,7 @@ The primary goal of this PRD is to provide a comprehensive, enterprise-grade roa
 *   **Reliability:** The app must ensure >99% data integrity and sync reliability. Data loss or corruption is not acceptable.
 *   **Performance:** App launch time <2s. UI animations at 60fps. Background syncs must be battery-efficient and not appear on the OS's high-consumption list.
 *   **Security:** All data transfer over TLS 1.2+. Sensitive tokens stored exclusively in the platform's native Keychain/Keystore. No personal health data stored on company servers.
-*   **Scalability:** The backend architecture must support **1 million Daily Active Users (DAU)** with an average of 4 syncs per day per user, and handle peak loads of up to **10,000 requests per second (RPS)** without performance degradation. The system should adhere to serverless and event-driven principles (e.g., using services like AWS Lambda, DynamoDB, SQS) to ensure cost-efficiency, minimal operational overhead, and automatic scaling.
+*   **Scalability:** The backend architecture must support **1 million Daily Active Users (DAU)** with an average of 4 syncs per day per user, and handle peak loads of up to **10,000 requests per second (RPS)** without performance degradation. The system will be built on event-driven principles and use a hybrid compute model (AWS Lambda for the API layer, AWS Fargate for workers) to ensure cost-efficiency, massive scalability, and minimal operational overhead.
 *   **Usability:** The app must be intuitive enough for a non-technical user to configure their first sync within 2 minutes of completing onboarding.
 
 ## 6. Risk Analysis & Mitigation
