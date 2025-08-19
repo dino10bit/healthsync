@@ -193,7 +193,36 @@ graph TD
 ### Model 3: Cloud-to-Device Sync
 *(Unchanged)*
 
-## 3a. Architecture for 1M DAU
+## 3a. Explicit Idempotency Strategy
+
+In a distributed, event-driven system, operations can be retried due to network errors or transient failures. To prevent duplicate processing and ensure data integrity, a formal idempotency strategy is critical.
+
+### API Endpoint Idempotency
+
+All state-changing `POST` operations on the API Gateway will support idempotency. The client is responsible for generating a unique **`Idempotency-Key`** (e.g., a UUID) for each distinct operation.
+
+*   **Flow:**
+    1.  The mobile client generates a unique `Idempotency-Key` for a new operation (e.g., creating a new connection).
+    2.  The client sends the request, including the `Idempotency-Key` in the HTTP header.
+    3.  The `RequestLambda` receives the request. It first checks a dedicated idempotency table in DynamoDB (or a Redis cache) for the given key.
+        *   If the key is found, the backend returns the *original* cached response immediately without reprocessing the request.
+        *   If the key is not found, the backend processes the request, stores the response against the idempotency key, and then returns the response.
+*   **Benefit:** If the client retries a request due to a timeout but the original request succeeded, this mechanism prevents the creation of duplicate resources.
+
+### Worker Idempotency
+
+Asynchronous workers that consume events from the EventBridge bus must also be idempotent, as events can be delivered more than once.
+
+*   **Strategy:** Workers will be designed to be **naturally idempotent** based on the state of the system, which is stored in DynamoDB.
+*   **Example (`SyncJobRequested` event):**
+    1.  The `WorkerLambda` is triggered by a `SyncJobRequested` event.
+    2.  Before initiating the sync, the worker performs a check against the `SyncWellMetadata` table in DynamoDB.
+    3.  It queries for the existence of a sync job with the same unique identifiers from the event payload.
+    4.  If the job has already been processed or is currently in progress (e.g., based on a `status` attribute), the worker logs this and exits gracefully.
+    5.  If the job is new, the worker "claims" it by writing its initial state to DynamoDB and then proceeds with the sync logic.
+*   **Benefit:** This prevents duplicate syncs from being performed if the same `SyncJobRequested` event is processed multiple times.
+
+## 3b. Architecture for 1M DAU
 
 To reliably serve 1 million Daily Active Users, the architecture incorporates specific strategies for high availability, performance, and scalability.
 
@@ -242,7 +271,7 @@ Given the requirement for a global launch across 5 continents, a high-availabili
     *   **DynamoDB:**
         *   We will use **On-Demand Capacity Mode**. This is more cost-effective for spiky, unpredictable workloads than provisioned throughput. It automatically scales to handle the required read/write operations, although we must monitor for throttling if traffic patterns become extreme.
 
-## 3b. DynamoDB Data Modeling & Access Patterns
+## 3c. DynamoDB Data Modeling & Access Patterns
 
 To support the application's data storage needs efficiently and scalably, we will use a **single-table design** in DynamoDB. This modern approach to NoSQL data modeling minimizes operational overhead, reduces costs by optimizing read/write operations, and allows for complex access patterns with a single table.
 
@@ -320,7 +349,7 @@ graph TD
     4.  **Error Handling:** The state machine has a declarative `Retry` policy for transient errors. The `Map` state can also be configured with a `Catch` block to handle and log persistent failures for a specific chunk without halting the entire workflow.
     5.  **Finalize Sync:** After the `Map` state completes, a final Lambda function is invoked to send a "success" push notification to the user.
 
-## 3c. Core API Contracts
+## 3d. Core API Contracts
 
 To ensure clear communication between the mobile client and the backend, we define the following core API endpoints. This is not an exhaustive list but represents the most critical interactions. The API will be versioned via the URL path (e.g., `/v1/...`).
 
@@ -328,6 +357,8 @@ To ensure clear communication between the mobile client and the backend, we defi
 
 Initiates a new synchronization job for a user.
 
+*   **Headers:**
+    *   `Idempotency-Key: <UUID>` (Required for all `POST` operations)
 *   **Request Body:**
 
     ```json
@@ -360,7 +391,7 @@ Initiates a new synchronization job for a user.
     }
     ```
 
-## 3d. Canonical Data Models
+## 3e. Canonical Data Models
 
 To handle data from various third-party sources, we must first transform it into a standardized, canonical format. This allows our sync engine and conflict resolution logic to operate on a consistent data structure, regardless of the source.
 
