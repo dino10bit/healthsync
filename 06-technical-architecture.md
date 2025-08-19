@@ -113,7 +113,7 @@ graph TD
     MobileApp -- "Signs up / signs in with" --> FirebaseAuth
     MobileApp -- "HTTPS Request (with Firebase JWT)" --> APIGateway
     APIGateway -- "Validates JWT with" --> AuthorizerLambda
-    AuthorizerLambda -- "Caches and validates against Google's public keys"--> FirebaseAuth
+    AuthorizerLambda -- "Caches and validates against Google's public keys" --> FirebaseAuth
     APIGateway -- "Direct Service Integration<br>Publishes 'RealtimeSyncRequested' event" --> HotPathEventBus
     APIGateway -- "Direct Service Integration<br>Starts execution for historical sync" --> HistoricalOrchestrator
 
@@ -506,11 +506,11 @@ To visually explain the rate-limiting pattern, the following diagram shows how a
 ```mermaid
 sequenceDiagram
     participant Worker as "Worker Lambda"
-    participant Redis as "ElastiCache for Redis<br>(Rate Limiter)"
+    participant Redis as "ElastiCache for Redis\n(Rate Limiter)"
     participant ThirdParty as "Third-Party API"
 
     Worker->>Worker: Need to call external API
-    Worker->>+Redis: Atomically check & decrement token<br>Key: "ratelimit##{providerKey}"
+    Worker->>+Redis: Atomically check & decrement token\nKey: "ratelimit##{providerKey}"
 
     alt Token Available
         Redis-->>-Worker: OK
@@ -520,6 +520,7 @@ sequenceDiagram
         Redis-->>-Worker: FAIL
         Worker->>Worker: Abort call and retry job later
     end
+
 ```
 
 This sequence diagram shows a **Worker Lambda** needing to make an external API call. Before doing so, it first interacts with the **ElastiCache for Redis** cluster, which acts as the distributed rate limiter. The worker makes a single, atomic call (typically using a Lua script) to check and decrement the token bucket for the specific third-party service. If the script returns `OK`, a token was available, and the worker proceeds to call the **Third-Party API**. If the script returns `FAIL`, it means the rate limit has been exceeded. In this case, the worker must abort the attempt and retry the entire job later, ensuring the system respects the external API's limits.
@@ -716,7 +717,7 @@ Retrieves a list of all third-party applications the user has connected to their
           "connectionId": "conn_12345_fitbit",
           "provider": "fitbit",
           "displayName": "Fitbit",
-          "status": "active" // "active" or "needs_reauth"
+          "status": "active"
         },
         {
           "connectionId": "conn_67890_strava",
@@ -740,8 +741,8 @@ Initiates a new synchronization job for a user.
     {
       "sourceConnectionId": "conn_12345_fitbit",
       "destinationConnectionId": "conn_67890_strava",
-      "dataType": "steps", // See enum below
-      "mode": "manual" // This endpoint is only for user-initiated syncs
+      "dataType": "steps",
+      "mode": "manual"
     }
     ```
     *   **`dataType` (enum):** `steps`, `weight`, `sleep`, `workout`
@@ -881,7 +882,7 @@ The following diagram illustrates this scalable fan-out architecture:
 ```mermaid
 graph TD
     subgraph "Scheduling Infrastructure"
-        A[EventBridge Rule<br>cron(0/15 * * * ? *)] --> B{Scheduler State Machine<br>(AWS Step Functions)};
+        A["EventBridge Rule<br>cron(0/15 * * * ? *)"] --> B{"Scheduler State Machine<br>(AWS Step Functions)"};
         B --> C[Fan-Out Lambda<br>Calculates N shards];
         C --> D{Map State<br>Processes N shards in parallel};
     end
@@ -896,9 +897,9 @@ graph TD
     end
 
     subgraph "Job Enqueueing & Execution"
-        F[Main Event Bus<br>(EventBridge)];
+        F["Main Event Bus<br>(EventBridge)"];
         G[SQS Queue];
-        H[Worker Fleet<br>(AWS Lambda)];
+        H["Worker Fleet<br>(AWS Lambda)"];
     end
 
     E1 -- "Finds eligible users &<br>publishes 'SyncRequested' events" --> F;
@@ -931,6 +932,7 @@ data class ProviderTokens(
     // A space-separated list of scopes granted by the user.
     val scope: String? = null
 )
+```
 
 ### 3g. Client-Side Persistence and Offline Support Strategy
 
@@ -1038,7 +1040,6 @@ For features like the AI-Powered Merge, which require a synchronous, real-time r
         Anonymizer->>+AIService: POST /process<br>(Anonymized Payload)
         AIService-->>-Anonymizer: Merged data response
         Anonymizer-->>-Worker: Pass-through response
-    end
     ```
 
 *   **Latency Impact:** The introduction of this synchronous proxy adds a small amount of latency to the AI-powered merge workflow.
