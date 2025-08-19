@@ -66,56 +66,52 @@ This level zooms into the system boundary to show the high-level technical conta
 
 ```mermaid
 graph TD
-    subgraph "AWS Cloud (Multi-Region)"
-        APIGateway[API Gateway]
-        AuthorizerLambda[Lambda Authorizer]
-
-        subgraph "Hot Path (Real-time Syncs)"
-            HotPathEventBus[EventBridge Event Bus]
-            RealtimeSyncQueue[SQS for Real-time Jobs]
-            RealtimeSyncDLQ[SQS DLQ for Failures]
-            WorkerLambda["Worker Service (AWS Lambda)"]
-        end
-
-        subgraph "Cold Path (Historical Syncs)"
-            HistoricalOrchestrator[Step Functions State Machine]
-        end
-
-        ElastiCache[ElastiCache for Caching & Rate Limiting]
-        DynamoDB[DynamoDB Global Table for Metadata]
-        SecretsManager[Secrets Manager for Tokens]
-        S3[S3 for Archiving & Backup]
-        Observability["Monitoring & Observability (CloudWatch)"]
-        GlueSchemaRegistry[AWS Glue Schema Registry]
-        AppConfig[AWS AppConfig]
+    subgraph "User's Device"
+        MobileApp[Mobile Application w/ KMP Module]
     end
 
     subgraph "Google Cloud"
         FirebaseAuth[Firebase Authentication]
     end
 
-    subgraph "CI/CD & Development"
-        CICD[CI/CD Pipeline]
+    subgraph "External Services"
+        ThirdPartyAPIs["Third-Party Health APIs"]
     end
 
-    subgraph "Future Capabilities"
-        style AI_Service fill:#f9f,stroke:#333,stroke-width:2px
-        AnonymizerProxy[Anonymizer Proxy Lambda]
-        AI_Service[AI Insights Service]
-        AnalyticsService[Analytics Service]
-        KinesisFirehose[Kinesis Data Firehose]
-    end
+    subgraph "AWS Cloud (Multi-Region)"
+        APIGateway[API Gateway]
+        AuthorizerLambda[Lambda Authorizer]
+        HotPathEventBus[EventBridge Event Bus]
+        HistoricalOrchestrator[Step Functions State Machine]
+        DynamoDB[DynamoDB Global Table]
+        SecretsManager[Secrets Manager]
+        S3[S3 for Archiving]
+        Observability["CloudWatch Suite"]
+        AppConfig[AWS AppConfig]
 
-    subgraph "User's Device"
-        MobileApp[Mobile Application w/ KMP Module]
+        subgraph "VPC"
+            style VPC fill:#f5f5f5,stroke:#333
+            NetworkFirewall[AWS Network Firewall]
+            subgraph "Private Subnets"
+                WorkerLambda["Worker Service (AWS Lambda)"]
+                AnonymizerProxy["Anonymizer Proxy (Lambda)"]
+                ElastiCache[ElastiCache for Redis]
+            end
+        end
+
+        subgraph "SQS Queues"
+            RealtimeSyncQueue[SQS for Real-time Jobs]
+            RealtimeSyncDLQ[SQS DLQ for Failures]
+        end
     end
 
     MobileApp -- "Signs up / signs in with" --> FirebaseAuth
     MobileApp -- "HTTPS Request (with Firebase JWT)" --> APIGateway
+
     APIGateway -- "Validates JWT with" --> AuthorizerLambda
     AuthorizerLambda -- "Caches and validates against Google's public keys" --> FirebaseAuth
-    APIGateway -- "Direct Service Integration<br>Publishes 'RealtimeSyncRequested' event" --> HotPathEventBus
-    APIGateway -- "Direct Service Integration<br>Starts execution for historical sync" --> HistoricalOrchestrator
+    APIGateway -- "Publishes 'RealtimeSyncRequested' event" --> HotPathEventBus
+    APIGateway -- "Starts execution for historical sync" --> HistoricalOrchestrator
 
     HotPathEventBus -- "Rule routes to" --> RealtimeSyncQueue
     RealtimeSyncQueue -- "Target for" --> WorkerLambda
@@ -123,19 +119,17 @@ graph TD
 
     HistoricalOrchestrator -- "Orchestrates and invokes" --> WorkerLambda
 
-    HotPathEventBus -- "Rule: Analytics Events" --> KinesisFirehose
-    KinesisFirehose -- "Batches & delivers" --> AnalyticsService
     WorkerLambda -- "Reads/writes user config" --> DynamoDB
     WorkerLambda -- "Gets credentials" --> SecretsManager
-    WorkerLambda -- "Reads/Writes" --> ElastiCache
-    WorkerLambda -- "Calls for real-time merge" --> AnonymizerProxy
-    AnonymizerProxy -- "Forwards anonymized data to" --> AI_Service
-    CICD -- "Registers & Validates Schemas in" --> GlueSchemaRegistry
-    WorkerLambda -- "Uses Schemas during build/runtime" --> GlueSchemaRegistry
-    WorkerLambda -- "Fetches runtime config from" --> AppConfig
-
+    WorkerLambda -- "Reads/Writes cache" --> ElastiCache
     WorkerLambda -- "Logs & Metrics" --> Observability
-    AuthorizerLambda -- "Logs & Metrics" --> Observability
+    WorkerLambda -- "Fetches runtime config from" --> AppConfig
+    WorkerLambda -- "Makes outbound API calls via" --> NetworkFirewall
+
+    AnonymizerProxy -- "Forwards anonymized data via" --> NetworkFirewall
+    NetworkFirewall -- "Allow-listed traffic to" --> ThirdPartyAPIs
+
+    WorkerLambda -- "Calls for real-time merge" --> AnonymizerProxy
 ```
 
 1.  **Mobile Application (Kotlin Multiplatform & Native UI)**
@@ -155,11 +149,10 @@ graph TD
     *   **Responsibilities:** The API Layer (**API Gateway**) is responsible for request validation, authorization, and routing. To ensure maximum performance and cost-effectiveness, it will leverage **API Gateway's built-in caching for the Lambda Authorizer**. The authorizer's response (the IAM policy) will be cached based on the user's identity token for a configurable TTL (e.g., 5 minutes). For subsequent requests within this TTL, API Gateway will use the cached policy and will not invoke the `AuthorizerLambda`, dramatically reducing latency and cost. The Worker Service (also Lambda) is responsible for executing all cloud-to-cloud sync jobs, securely storing credentials, and storing user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
 
 4.  **Distributed Cache (Amazon ElastiCache for Redis)**
-    *   **Description:** An in-memory caching layer to improve performance and reduce load on downstream services. The cluster must be sized appropriately to handle the high volume of requests from the worker fleet, particularly for the distributed locking and rate-limiting functions which will be under heavy load at 10,000 RPS.
+    *   **Description:** An in-memory caching layer to improve performance and reduce load on downstream services. The cluster must be sized appropriately to handle the high volume of requests from the worker fleet, particularly for the rate-limiting functions which will be under heavy load at 10,000 RPS.
     *   **Technology:** Amazon ElastiCache for Redis.
     *   **Responsibilities:**
         *   Caches frequently accessed, non-sensitive data (e.g., user sync configurations).
-        *   Acts as a distributed lock manager to prevent concurrent sync job collisions for the same user.
         *   Powers the rate-limiting engine to manage calls to third-party APIs.
 
 5.  **(Future) AI Insights Service (AWS)**
@@ -191,7 +184,9 @@ graph TD
 
 ### Level 3: Components (Inside the KMP Shared Module)
 
-The KMP module contains the core business logic. This code can be executed **on the device** (for HealthKit syncs) or **on the backend**. For the backend, the KMP module will be compiled to a JAR and run on a standard JVM-based AWS Lambda runtime, maximizing code reuse.
+The KMP module contains the core business logic. This code can be executed **on the device** (for HealthKit syncs) or **on the backend**. For the backend, the general strategy is to compile the KMP module to a JAR and run it on a standard JVM-based AWS Lambda runtime to maximize code reuse.
+
+However, a key exception will be made for the security-critical, latency-sensitive `AuthorizerLambda`. To ensure it meets the strict performance SLOs for API requests, it **must** be implemented in a faster-starting runtime like TypeScript or Python, as detailed in the Technology Stack section.
 
 *   **`SyncManager`:** Orchestrates the sync process based on instructions from the backend.
 *   **`ConflictResolutionEngine`:** Detects data conflicts. The initial version will use deterministic strategies (e.g., newest data wins, source priority).
@@ -394,19 +389,22 @@ sequenceDiagram
     %% ... sometime later, message is picked up by a worker ...
     note over WorkerLambda: Receives job for key K1 from SQS
 
-    WorkerLambda->>IdempotencyStore: PUT idem#K1<br>Condition: item_not_exists()<br>State: INPROGRESS, TTL: 5min
+    WorkerLambda->>IdempotencyStore: SET idem#K1 "INPROGRESS" NX EX 300
+    note right of IdempotencyStore: Atomically SET if Not eXists, with 5min Expiry
 
-    alt Another worker is already processing this job<br>OR request is a duplicate
-        IdempotencyStore-->>WorkerLambda: ConditionalCheckFailedException
+    alt Key already exists (duplicate job)
+        IdempotencyStore-->>WorkerLambda: nil
         WorkerLambda->>WorkerLambda: Log "Duplicate processing suppressed" and exit
-    else This is the first worker for the job
+    else Lock acquired successfully
         IdempotencyStore-->>WorkerLambda: OK
         WorkerLambda->>WorkerLambda: Execute business logic...
         alt Business logic is successful
-            WorkerLambda->>IdempotencyStore: PUT idem#K1<br>State: COMPLETED, Response: (empty), TTL: 24hr
+            WorkerLambda->>IdempotencyStore: SET idem#K1 "COMPLETED" EX 86400
+            note right of IdempotencyStore: Update key state to COMPLETED, set 24hr TTL
             IdempotencyStore-->>WorkerLambda: OK
         else Business logic fails
-            WorkerLambda->>IdempotencyStore: DELETE idem#K1
+            WorkerLambda->>IdempotencyStore: DEL idem#K1
+            note right of IdempotencyStore: Delete lock to allow clean retry
             IdempotencyStore-->>WorkerLambda: OK
             WorkerLambda->>WorkerLambda: Throw error to allow SQS retry
         end
@@ -475,7 +473,7 @@ Given the requirement for a global launch across 5 continents, a high-availabili
 *   **Request Routing:** **Amazon Route 53** will be configured with **Latency-Based Routing**. This will direct users to the AWS region that provides the lowest network latency, improving their application experience. Route 53 health checks will automatically detect if a region is unhealthy and redirect traffic to the next nearest healthy region.
 *   **Data Replication & Consistency:**
     *   **DynamoDB Global Tables:** User metadata and sync configurations will be stored in a DynamoDB Global Table. This provides built-in, fully managed, multi-master replication across all deployed regions, ensuring that data written in one region is automatically propagated to others with low latency.
-    *   **Write Conflict Resolution:** By using a multi-master database, write conflicts can occur (e.g., if a user changes a setting in two regions simultaneously). Our application will be designed to be idempotent, and for configuration data, we will rely on DynamoDB's default "last writer wins" conflict resolution strategy. This is an acceptable trade-off for the types of non-transactional metadata we are storing.
+    *   **Write Conflict Resolution:** By using a multi-master database, write conflicts can occur (e.g., if a user changes a setting in two regions simultaneously). For the MVP, we will rely on DynamoDB's default "last writer wins" conflict resolution strategy. This is a high-risk approach that can lead to silent data loss and is only considered an acceptable starting point for non-critical user settings. A more robust strategy, such as using version numbers and conditional writes to detect and reject conflicting updates, **must be implemented** for critical user configuration data before the feature set expands.
 *   **Credential Storage:** **AWS Secrets Manager** secrets will be replicated to each active region. This ensures that worker tasks (AWS Lambda) in any region can access the necessary third-party OAuth tokens to perform sync jobs.
 *   **Resilience Testing (Chaos Engineering):** To proactively validate our multi-region high availability, we will practice chaos engineering. We will use the **AWS Fault Injection Simulator (FIS)** to inject faults into our pre-production environments on a regular, scheduled basis (e.g., weekly). This practice is critical for building confidence in our system's ability to withstand turbulent conditions in production.
 
@@ -496,7 +494,6 @@ Given the requirement for a global launch across 5 continents, a high-availabili
     | :--- | :--- | :--- | :--- | :--- | :--- |
     | **Idempotency Key** | `idem##{idempotencyKey}` | The original JSON response | 24 hours | TTL-based | Prevents duplicate processing of operations. |
     | **User Sync Config** | `config##{userId}` | Serialized JSON of all user's sync configs | 15 minutes | TTL-based | Reduces DynamoDB reads for frequently accessed user settings. |
-    | **Distributed Lock** | `lock##{userId}` | `true` | 5 minutes | Explicit release | Prevents concurrent syncs for the same user. The lock is explicitly deleted when a job completes. The TTL is a safety measure against deadlocks. |
     | **Rate Limit Token Bucket** | `ratelimit##{providerKey}` | A hash containing tokens and timestamp | 60 seconds | TTL-based | Powers the distributed rate limiter for third-party APIs. |
     | **API Gateway Authorizer** | User's Identity Token | The generated IAM policy document | 5 minutes | TTL-based (in API Gateway) | Caches the final authorization policy at the API Gateway level. This is the most critical cache, as it avoids invoking the Lambda Authorizer entirely for frequent requests. |
     | **JWT Public Keys (in Lambda)**| `jwks##{providerUrl}` | The JSON Web Key Set (JWKS) document | 1 hour | TTL-based (in-memory) | Caches the public keys from auth providers (e.g., Google) inside the authorizer Lambda. This is a secondary optimization for when the API Gateway cache misses. |
@@ -546,15 +543,16 @@ The workflow for the distributed rate limiter is as follows:
         *   **The architecture must be designed, provisioned, and load-tested to meet this 3,000 RPS target.** This is the definitive scalability goal.
     *   **Worker Concurrency (Lambda) & SQS (at 3,000 RPS):**
         *   The critical metric for provisioning is peak concurrency. SQS can easily handle this throughput.
-        *   Assuming an average real-time sync job takes 5 seconds to complete, the required concurrency during peak hours can be estimated using Little's Law (`L = λW`).
-        *   Required Concurrency = `3,000 jobs/s * 5s/job = 15,000 concurrent Lambda executions`.
-        *   **Provisioned Concurrency:** Given that the `WorkerLambda` uses a KMP/JVM runtime with known cold start latencies, **Provisioned Concurrency** will be enabled for the `WorkerLambda` fleet. This keeps a specified number of execution environments warm and ready to respond instantly. This strategy is critical for eliminating cold start latency, making performance more predictable, and can be more cost-effective than on-demand Lambda for this type of predictable, high-throughput workload.
-        *   **Note on Concurrency Calculation:** This is a high level of concurrency that will require an increase to the default AWS account limits for Lambda, but it is well within the service's capabilities.
-        *   **Feasibility & Risk Mitigation:** The projection of ~15,000 concurrent Lambda executions is a significant technical risk that must be proactively addressed before launch. While technically achievable, this scale of concurrency has major implications for cost, downstream service stability, and AWS account limits. The following actions are mandatory prerequisites for implementation:
-            1.  **Detailed Cost Model:** A detailed cost model must be created using the AWS Pricing Calculator for the projected 15,000 provisioned concurrency instances (JVM-based). This model must be included in the project budget and approved.
-            2.  **Downstream Dependency Validation:** A proof-of-concept load test must be executed to validate that all critical downstream dependencies can handle the projected load without failure. This includes, but is not limited to: third-party APIs (which may have hard rate limits), Amazon ElastiCache, AWS Secrets Manager, and VPC networking limits (e.g., NAT Gateway concurrency, available IP addresses).
-            3.  **Service Limit Increases:** A formal request to increase all relevant AWS service limits must be submitted and approved well in advance of the production launch. This includes limits for: Lambda concurrent executions, VPC IP addresses, and any other services identified during load testing.
-            4.  **Architectural Alternatives Assessment:** While Lambda is the chosen MVP strategy, architectural alternatives that can achieve the required throughput with lower concurrency (e.g., processing multiple jobs within a single Lambda invocation, or a container-based model like Fargate) must be considered for future phases to manage cost and risk at scale.
+        *   To ensure the system can meet its performance targets under realistic, worst-case conditions, the concurrency calculation **must** be based on the P90 Service Level Objective (SLO) for job duration (15 seconds), not an optimistic average.
+        *   Required Concurrency (Worst-Case) = `3,000 jobs/s * 15s/job = 45,000 concurrent Lambda executions`.
+        *   **Provisioned Concurrency:** Given that the `WorkerLambda` uses a KMP/JVM runtime with known cold start latencies, **Provisioned Concurrency** will be enabled for the `WorkerLambda` fleet. This keeps a specified number of execution environments warm and ready to respond instantly. This strategy is critical for eliminating cold start latency and making performance more predictable.
+    *   **Feasibility & Risk Mitigation (Critical):**
+        *   The projection of **~45,000 concurrent executions** represents a worst-case scenario that the system must be able to withstand. This number has **catastrophic implications for cost and technical feasibility**, and it dramatically increases the project's risk profile. As noted in `16-performance-optimization.md`, addressing this risk is a project-blocking prerequisite.
+        *   The following actions are **mandatory prerequisites** before any significant implementation work proceeds:
+            1.  **Create Detailed Cost Model:** A full cost analysis for **45,000** provisioned concurrency Lambda instances must be completed and approved by project stakeholders.
+            2.  **Conduct Downstream Load Tests:** A proof-of-concept load test must be performed, specifically targeting the validation of downstream dependencies (third-party APIs, ElastiCache, Secrets Manager, VPC networking) under the projected parallel load.
+            3.  **Secure Service Limit Increases:** The AWS account limits for Lambda concurrency and other relevant services must be formally requested and approved well in advance of launch.
+            4.  **Architectural Alternatives Assessment:** Alternatives that could lower concurrency for the same throughput (e.g., batching multiple jobs in a single Lambda, exploring AWS Fargate) must be seriously assessed for future cost optimization and risk reduction.
             A phased rollout, gradually increasing user load while monitoring system performance, remains a mandatory part of the release strategy.
     *   **DynamoDB:**
         *   We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased via a Savings Plan to cost-effectively handle the predictable average load. **On-Demand Capacity** will handle any traffic that exceeds the provisioned throughput, providing the best of both worlds in terms of cost and elasticity.
@@ -588,10 +586,10 @@ Below are the different data entities, or "item types," that will be stored in t
 | :--- | :--- | :--- | :--- |
 | **User Profile** | `USER#{userId}` | `PROFILE` | `SubscriptionLevel`, `CreatedAt`. Stores top-level user attributes. A user's profile is the root item for all their related data. |
 | **Connection** | `USER#{userId}` | `CONN#{connectionId}` | `Status` (`active`, `needs_reauth`), `CredentialArn`. Represents a user's authenticated link to a 3rd party (e.g., Fitbit). This is referred to as a "Connection". |
-| **Sync Config** | `USER#{userId}` | `SYNCCONFIG#{sourceId}#{destId}#{dataType}` | `LastSyncTime`, `ConflictStrategy`, `IsEnabled`. Defines a single data sync flow for a user. |
+| **Sync Config** | `USER#{userId}` | `SYNCCONFIG#{sourceId}#to#{destId}#{dataType}` | `LastSyncTime`, `ConflictStrategy`, `IsEnabled`. Defines a single data sync flow for a user. |
 | **Hist. Sync Job** | `USER#{userId}` | `HISTORICAL##{orchestrationId}` | `ExecutionArn`, `StartDate`, `Status`. Acts as a pointer to the AWS Step Functions execution that orchestrates a large historical data sync. The definitive status is stored in the state machine itself. |
 
-*Example SYNCCONFIG SK:* `SYNCCONFIG#fitbit#googlefit#steps` (Note: single `#` delimiters are used for clarity and parsing reliability).
+*Example SYNCCONFIG SK:* `SYNCCONFIG#fitbit#to#googlefit#steps`.
 
 **Note on Sparse Attributes:** This single-table design makes use of sparse attributes. Attributes that are not relevant to a particular item type (e.g., a `LastSyncTime` attribute on a `PROFILE` item) are not stored at all for that item. This is a core feature of NoSQL databases and is highly efficient, as it reduces both storage costs and the amount of data transferred for each read operation.
 
@@ -604,6 +602,19 @@ Some access patterns are for infrequent, non-time-sensitive operational tasks, n
 Instead, we will address this with a more robust and scalable approach:
 
 *   **Background Scans:** A scheduled, periodic background process (e.g., a weekly Lambda) will perform a DynamoDB `Scan` operation on the table to find all connections with a `needs_reauth` status. Because scans are slow and consume read capacity, this job will be configured to run at a very low, throttled rate during off-peak hours to avoid impacting production traffic. This is a standard and cost-effective pattern for non-urgent, full-table queries.
+
+### Distributed Locking with DynamoDB
+
+To prevent race conditions in our highly concurrent environment (e.g., two workers processing the same sync job simultaneously), a robust distributed locking mechanism is required. As detailed in `18-backup-recovery.md`, using a replicated cache for this purpose is an anti-pattern in a multi-region architecture due to replication lag.
+
+Therefore, we will use **DynamoDB's conditional write functionality** to implement a correct and consistent distributed lock.
+
+*   **Mechanism:** A worker will attempt to acquire a lock by creating a specific lock item in the `SyncWellMetadata` table. This `PutItem` operation will have a **condition expression** that causes it to fail if an item with that primary key already exists.
+*   **Item Schema:**
+    *   **PK:** `USER#{userId}`
+    *   **SK:** `LOCK##{lockScope}` (e.g., `LOCK##syncJob`)
+    *   **ttl:** A short TTL (e.g., 5 minutes) to automatically release the lock in case of a worker crash, preventing deadlocks.
+*   **Consistency:** This leverages DynamoDB's strong consistency for write operations, providing a reliable locking mechanism that is safe for a multi-region, active-active deployment.
 
 ### Core Access Patterns Supported
 
@@ -642,7 +653,7 @@ The recommended primary strategy is to isolate the hot user's data into a separa
         3.  Verifies that the data has been copied correctly.
         4.  Sets the `isHot: true` flag on the user's `PROFILE` item in the *main* table. This acts as the "switch" that redirects all future application traffic.
     *   **De-migration Process:** If a user's activity level returns to normal, a similar script will be run to migrate them back. It will copy the data back to the main table and then remove the `isHot` flag from the user's profile.
-    *   **Operational Overhead:** The primary overhead is the need for manual intervention by the on-call engineer. This includes monitoring the alerts, running the peer-reviewed migration scripts, and verifying the outcome. The existence of a second DynamoDB table (`SyncWellMetadata_HotUsers`) adds minimal cost unless it is actively used, and its management (backups, etc.) will be automated via the same Infrastructure as Code (Terraform) configuration as the main table. The process is designed to be used rarely, only for extreme outlier users, thus keeping the operational burden low.
+    *   **Operational Overhead:** The primary overhead is the need for manual intervention by the on-call engineer. This includes monitoring the alerts, running the peer-reviewed migration scripts, and verifying the outcome. This manual process introduces unacceptable latency into a critical scaling workflow and is prone to human error. While acceptable for an MVP, it is a significant operational risk that is not scalable. Automating this workflow with a secure internal tool **must be prioritized** on the post-launch roadmap. The process is designed to be used rarely, only for extreme outlier users, thus keeping the operational burden low.
 
 *   **Advantages:**
     *   **Simplicity:** This approach avoids the significant read-side complexity of other techniques like write-sharding, as the application logic only needs to select a table name, not query multiple shards and merge results.
@@ -987,7 +998,6 @@ A detailed financial model is a mandatory prerequisite before implementation.
 2.  **Cross-Region Data Transfer:** The multi-region architecture incurs data transfer costs for every write operation across all replicated services:
     *   **DynamoDB Global Tables:** Every write, update, or delete is replicated and billed.
     *   **AWS Secrets Manager:** Replicating secrets incurs costs.
-    *   **ElastiCache Global Datastore:** Cross-region replication traffic is a direct cost.
 3.  **CloudWatch:** At scale, the volume of logs, metrics, and traces generated will be massive and will be a major operational expense.
 4.  **NAT Gateway:** Outbound traffic from Lambda functions in a VPC to **third-party APIs** will incur data processing charges. (Note: Traffic to internal AWS services will use VPC Endpoints to minimize this cost).
 
@@ -1141,7 +1151,6 @@ In addition to generic system metrics, we will track a set of specific KPIs that
 | **Monitoring** | **OpenTelemetry** | Vendor-neutral standard for instrumentation. |
 | | **Prometheus / Grafana** | Alternative/complement to CloudWatch for advanced metrics and dashboards. |
 | **Local Development** | **LocalStack** | High-fidelity emulator for local AWS development. |
-| **Release Management** | **Unleash** | Open-source feature flagging system. |
 | **Static Analysis** | **Detekt, SwiftLint** | Static analysis tools for Kotlin and Swift. |
 | **Dependency Scanning** | **Snyk, Dependabot** | Vulnerability scanning for dependencies. |
 
