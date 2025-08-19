@@ -29,14 +29,24 @@ Every notification sent from SyncWell must adhere to three principles:
 
 ## 3. Notification Technical Architecture
 
-*   **Client-Side:** A centralized `NotificationService` will be responsible for:
+The notification architecture is designed to be robust, scalable, and decoupled from the core sync engine.
+
+*   **Client-Side:** A centralized `NotificationService` in the mobile app is responsible for:
     *   Requesting user permission for push notifications.
-    *   Receiving and handling incoming push notifications from the system.
+    *   Receiving and handling incoming push notifications from the operating system.
     *   Handling deep link navigation when a notification is tapped.
-    *   Scheduling and canceling local notifications (e.g., for trial expiration).
-*   **Server-Side (Firebase Cloud Functions):** A set of serverless functions will be responsible for triggering event-driven, remote notifications.
-    *   `onSyncError`: A function that can be called by the app when a sync fails permanently. It will be responsible for sending the "Sync Error" push notification.
-    *   `onNewFeatureAnnouncement`: A manually triggered function used by the developer to send a broadcast message to all users about a major new feature.
+    *   Registering the device token with our backend.
+    *   Scheduling and canceling purely local notifications (e.g., for trial expiration).
+
+*   **Backend (AWS):** The core backend (e.g., a `WorkerLambda`) is responsible for *initiating* a notification by publishing an event to a dedicated **Amazon SNS (Simple Notification Service) topic** called `PushNotificationEvents`. The event payload contains the recipient's `userId`, the notification type (e.g., `SYNC_ERROR`), and any necessary metadata (e.g., `source: "fitbit"`).
+
+*   **Notification Dispatcher (Firebase Cloud Functions):** A dedicated serverless function, deployed in the Google Cloud ecosystem, subscribes to the AWS SNS topic. Its sole responsibility is to act as a dispatcher:
+    1.  It receives the event from SNS.
+    2.  It looks up the user's device token(s) based on the `userId`.
+    3.  It constructs the localized, user-facing message.
+    4.  It sends the final push notification via **Firebase Cloud Messaging (FCM)**.
+
+This decoupled architecture ensures that the core AWS backend does not need to have direct credentials or knowledge of FCM, improving security and separation of concerns.
 
 ## 4. Detailed Notification Catalog
 
@@ -48,6 +58,10 @@ Every notification sent from SyncWell must adhere to three principles:
 | **N-04**| Sync Success| Push | A background sync completes successfully. | **Off**| **Sync Complete** / Your {{dataType}} data was successfully synced. | The app's main dashboard. | Sync Alerts |
 | **A-01**| Needs Re-auth| In-App Banner | App launch detects an invalid refresh token for a connected app. | N/A | "Your connection to {{appName}} has expired. Tap here to sign in again." | The "Connected Apps" screen. | N/A |
 | **A-02**| Offline | In-App Banner | App launch or foreground detects no network connectivity. | N/A | "You are currently offline. Syncing is paused." | N/A | N/A |
+| **N-05**| Hist. Sync Complete | Push | A historical sync job (Step Functions) completes successfully. | On | **Historical Sync Complete** / Your historical data from {{source}} has been synced. | The app's main dashboard. | Sync Alerts |
+| **N-06**| Hist. Sync Failed | Push | A historical sync job (Step Functions) fails. | On | **Historical Sync Failed** / There was a problem syncing your historical data from {{source}}. Please tap to review. | A sync history/status screen. | Sync Alerts |
+| **N-07**| Export Ready | Push | A data export job completes and the file is ready. | On | **Export Ready** / Your data export is ready to download. | The download screen in the app. | App Reminders |
+| **N-08**| Import Ready for Review | Push | An imported file has been processed and is ready for the user's review. | On | **Import Ready** / Your imported file is ready for review. Tap to continue. | The import confirmation screen. | App Reminders |
 
 ## 5. User-Facing Notification Settings
 

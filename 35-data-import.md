@@ -20,16 +20,21 @@ This document provides the detailed specification for the **Data Import** featur
 
 To ensure reliability and consistency with the rest of our ecosystem, the import process is built on an **asynchronous, backend-driven architecture**. This specification details the process of uploading the file, having the backend parse and validate it, and then prompting the user for a final review before syncing.
 
-## 2. Data Import Architecture (Backend-Driven)
+## 2. Data Import Architecture (Orchestrated by AWS Step Functions)
 
-1.  **Initiation & Upload (Mobile):** A user selects a file (e.g., `.fit`) and uses "Open with SyncWell." The mobile app uploads this file to a secure, temporary folder in our **S3 bucket**.
-2.  **Job Request (Mobile -> Backend):** The app sends a request to a new `/import` endpoint, providing the S3 URL of the uploaded file.
-3.  **Queueing (Backend):** The backend creates an import job in a DynamoDB table and places a message in a dedicated **`import-queue` in SQS**.
-4.  **Parsing & Validation (Backend):** An **`import-worker` (Lambda)** picks up the job. It downloads the file from S3 and uses a modular `Parser` to convert it into our `CanonicalActivity` model.
-5.  **Duplicate Check (Backend):** The worker then queries the destination APIs to check for existing activities with a similar start time.
-6.  **Ready for Review (Backend -> Mobile):** The worker saves the parsed data, along with any issues found (e.g., `duplicate_found`, `mapping_needed`), to the DynamoDB job table. It then sends a **push notification** to the user: *"Your imported file is ready for review."*
-7.  **User Confirmation (Mobile):** The user taps the notification. The app fetches the preview data from the backend, and the user resolves any issues (e.g., chooses to "Import Anyway" on a duplicate).
-8.  **Final Sync (Mobile -> Backend):** The user's confirmation is sent to the backend, which then places the final, approved sync job into the main `hot-queue` for processing.
+The data import process is a multi-step workflow that includes waiting for user input. To manage this complexity reliably, the feature will be orchestrated by a dedicated **AWS Step Functions state machine**. This provides superior state management, error handling, and observability compared to an ad-hoc SQS-based approach.
+
+1.  **Initiation & Upload (Mobile):** A user selects a file, and the mobile app uploads it to a secure S3 bucket.
+2.  **Start Execution (Mobile -> Backend):** The app calls an API endpoint that triggers a new execution of the `DataImport` state machine, providing the S3 URL of the uploaded file.
+3.  **State Machine Execution (Backend):**
+    *   **a. Parse & Validate:** A Lambda function downloads the file from S3 and uses a `Parser` to validate it and convert it into our `CanonicalActivity` model. If the file is corrupt, the state machine transitions to a `FAILED` state.
+    *   **b. Duplicate Check:** A second Lambda queries destination APIs to check for potential duplicates.
+    *   **c. Wait for User Review:** The state machine saves the parsed data and enters a "wait" state using a **task token**. This token represents the paused workflow. The machine then publishes an event to SNS to trigger the `N-08` "Ready for Review" push notification.
+    *   **d. User Confirmation (Mobile):** The user reviews the import in the app. When they confirm, the app sends the confirmation choices and the **task token** to a backend API.
+    *   **e. Resume Execution:** The backend API calls the `SendTaskSuccess` Step Functions API action with the task token and the user's choices as output. This resumes the state machine execution.
+    *   **f. Final Sync:** The final state in the machine places the approved sync job into the main `hot-queue` for processing by the standard sync workers.
+
+This architecture provides a robust way to handle the human-in-the-loop part of the workflow, with built-in support for timeouts (e.g., after 7 days) if the user never confirms the import.
 
 ## 3. User Experience & Workflow
 
@@ -58,26 +63,30 @@ To ensure reliability and consistency with the rest of our ecosystem, the import
 
 ## 6. Visual Diagrams
 
-### Backend-Driven Import Architecture
+### Import Architecture (Orchestrated by Step Functions)
 ```mermaid
 graph TD
     subgraph Mobile App
-        A[Open File]
-        B[Upload to S3]
-        C[Send Job to Backend]
-        F[Review & Confirm]
+        A[Upload File to S3]
+        B[Trigger State Machine]
+        G[Review & Confirm Import]
     end
     subgraph AWS Backend
-        D[SQS Import Queue]
-        E[Import Worker (Lambda)]
-        G[SQS Hot Queue]
+        C[Step Functions<br>Import State Machine]
+        D[Parse & Validate (Lambda)]
+        E[Check Duplicates (Lambda)]
+        F[Wait for User Review<br>(with Task Token)]
+        H[Queue Final Sync Job (Lambda)]
+        I[SQS Hot Queue]
     end
 
     A --> B
     B --> C
-    C --> D
-    D -- Polls --> D
-    E -- Parses, Validates, Checks Duplicates --> E
-    E -- Sends 'Ready for Review' Push --> F
-    F -- Sends Confirmation --> G
+    C -- Invokes --> D
+    D -- Success --> E
+    E -- Success --> F
+    F -- Sends Notification --> G
+    G -- Send Confirmation w/ Task Token --> C
+    C -- Resumes --> H
+    H --> I
 ```
