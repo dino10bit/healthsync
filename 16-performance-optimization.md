@@ -115,6 +115,25 @@ The SyncWell architecture is designed from the ground up for massive, automatic 
 
 ## 6. Visual Diagrams
 *   **Caching Architecture:**
-    *   *A diagram showing how Lambda worker functions interact with ElastiCache for config caching, distributed locking, and rate limiting before accessing DynamoDB or third-party APIs. [Placeholder - Diagram to be created]*
+    *   The following diagram illustrates the **cache-aside pattern** used by worker Lambdas. Before accessing the primary data store (DynamoDB), the worker first checks the ElastiCache for Redis cluster. This significantly reduces read load on the database and improves latency.
+
+    ```mermaid
+    sequenceDiagram
+        participant Worker as Worker Lambda
+        participant Cache as ElastiCache for Redis
+        participant DB as DynamoDB
+
+        Worker->>+Cache: GET config##{userId}
+        alt Cache Hit
+            Cache-->>-Worker: Return cached config
+        else Cache Miss
+            Cache-->>-Worker: nil
+            Worker->>+DB: Query for user config
+            DB-->>-Worker: Return user config
+            Worker->>+Cache: SET config##{userId} (with TTL)
+            Cache-->>-Worker: OK
+        end
+        Worker->>Worker: Continue processing with config...
+    ```
 *   **Job Chunking Flow:**
     *   *A visual representation of how a large historical sync request is broken into multiple jobs that are placed on the SQS queue for processing by the Lambda service. [Placeholder - Diagram to be created]*

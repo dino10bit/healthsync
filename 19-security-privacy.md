@@ -107,10 +107,16 @@ The backend is a core component and must be secured accordingly.
 
 *   **Authentication:** Communication between the mobile app and our backend API Gateway will be authenticated using short-lived JSON Web Tokens (JWTs) or a similar standard.
 *   **Secure JWT Validation:** The Lambda Authorizer is a security-critical component. To avoid common pitfalls in security implementation ("don't roll your own crypto"), the authorizer **must** use a well-vetted, open-source library for JWT validation. A library like **AWS Lambda Powertools** will be used to handle the complexities of fetching the JWKS, validating the signature, and checking standard claims (`iss`, `aud`, `exp`).
+*   **API Rate Limiting:** All public-facing API endpoints, especially authentication-related endpoints, **must** have robust rate limiting configured to prevent abuse (e.g., credential stuffing, denial-of-service attacks). This will be implemented using AWS WAF, providing a centralized point of control for defining and applying rate-based rules.
 *   **Authorization:** All backend compute services (API Gateway and Lambda functions) will use strict IAM roles, adhering to the principle of least privilege. A worker for Fitbit should not have access to Garmin tokens.
 *   **Authorizer Policy Caching:** The architecture uses API Gateway's built-in authorizer caching to improve performance. From a security perspective, the Time-to-Live (TTL) of this cache represents a window during which a user's permissions might be stale. For example, if a user's access is revoked, they may retain access until the cached policy expires. The TTL will be set to a short duration (e.g., 5 minutes) as a balance between performance and security responsiveness.
 *   **Network Security:** Services are isolated in a Virtual Private Cloud (VPC). To ensure traffic between our backend Lambda functions and other AWS services (like DynamoDB, SQS, and Secrets Manager) does not traverse the public internet, we use **VPC Endpoints**. This creates a private, secure connection to these services from within our VPC, reducing the attack surface and preventing potential data exposure. Access to databases and secret stores is restricted to services within the VPC via security groups and network ACLs. Furthermore, to control outbound traffic from the VPC to third-party APIs, an **AWS Network Firewall** will be implemented. This acts as an egress filter, configured with an allow-list of the specific domain names of our required partners (e.g., Fitbit, Strava). This enforces the principle of least privilege at the network layer and provides a critical defense-in-depth measure against potential data exfiltration or communication with malicious domains in the event of a compromised worker.
 *   **Logging & Monitoring:** All API calls and backend activity will be logged and monitored for anomalous behavior using services like AWS CloudTrail and CloudWatch. All logs will be scrubbed of sensitive data before being persisted.
+
+*   **Security of Critical Operational Scripts:** Certain operational procedures, like the manual account recovery described in `18-backup-recovery.md`, require powerful, privileged scripts. These scripts represent a significant security risk if not properly controlled.
+    *   **Storage and Access Control:** All such critical operational scripts **must** be stored in a dedicated, private Git repository with strict branch protection rules.
+    *   **Execution Permissions:** The ability to execute these scripts (e.g., via an IAM role that the script assumes) **must** be granted only to a small, named group of senior engineers. Access will be managed via an AWS SSO permission set that requires re-authentication with MFA for every session.
+    *   **Peer Review:** As with the "break-glass" procedure, any execution of a critical script **must** be triggered by a pull request that is peer-reviewed and approved by at least one other authorized engineer. The PR must contain the exact command and parameters to be run.
 
 ### 6.1. Secure Logging Practices
 
@@ -131,7 +137,7 @@ While `userId` is never logged by default, a critical operational gap exists for
 
 *   **MVP Workflow:**
     1.  **Request:** An authorized support engineer, working on a specific support ticket (e.g., `TICKET-123`), identifies the need to debug for a specific `userId`.
-    2.  **Approval:** The engineer creates a pull request containing the script to be run (e.g., a simple AWS CLI command to query a purpose-built lookup index) and the `userId` as a parameter. A second authorized engineer reviews the PR, verifies the legitimacy of the support ticket, and approves the PR.
+    2.  **Approval:** The engineer creates a pull request containing the script to be run (e.g., a simple AWS CLI command to query a purpose-built lookup index) and the `userId` as a parameter. To ensure a timely review for a critical support issue, the requestor **must** notify the secondary on-call engineer via a direct PagerDuty alert or by posting the request in a dedicated, monitored Slack channel (`#break-glass-requests`). A second authorized engineer reviews the PR, verifies the legitimacy of the support ticket, and approves the PR.
     3.  **Execution:** Once approved, the engineer executes the peer-reviewed script from their local machine using their MFA-authenticated AWS credentials. The script performs a temporary lookup to find recent `correlationId`s associated with that `userId`.
     4.  **Debugging:** The engineer uses the retrieved `correlationId`s to find the relevant logs in CloudWatch to diagnose the issue. The mapping between `userId` and `correlationId` is not stored permanently; it is only available for a short time in the secure lookup index as described below.
 *   **Future Enhancement:** The manual, PR-based workflow is recognized as having significant operational friction that could slow down support response times. While acceptable for an MVP, replacing this process with a dedicated internal web tool that automates the approval and lookup workflow is a high-priority follow-up item for the first quarter post-launch. The core security principles (MFA, peer approval, auditing) will remain the same in the automated tool.
@@ -149,7 +155,7 @@ The "purpose-built lookup index" is a critical component of the break-glass proc
     *   `ttl`: An epoch timestamp for automatic deletion.
 *   **Time-to-Live (TTL):** The `ttl` attribute will be enabled on this table. All items written to this table **must** have a TTL of **72 hours**. This duration is a pragmatic compromise between the principle of data minimization and the practical needs of a support team that may need to investigate issues over a weekend. It ensures that the mapping between a user's permanent ID and their temporary correlation IDs is automatically and permanently deleted after a reasonable period.
 *   **Population:** The `AuthorizerLambda` at the API Gateway entrypoint will be the only component responsible for writing to this table. Upon successfully validating a user's JWT, it will write a new item containing the `userId` and the newly generated `correlationId` for that request.
-*   **Security:** Access to this table will be extremely restricted via IAM policies. Only the `AuthorizerLambda` will have write permissions. Read permissions will only be granted to a specific IAM role that can only be assumed by authorized engineers performing the peer-reviewed break-glass procedure.
+*   **Security:** Access to this table will be the most stringently controlled in the entire system. Access is restricted via IAM policies: only the `AuthorizerLambda` has write permissions, and read permissions are granted only to a specific IAM role assumable by authorized engineers. As an additional defense-in-depth measure, the table **should be encrypted with a customer-managed KMS key**, which provides a separate layer of access control and a detailed audit trail of key usage.
 
 ## 7. Pre-Launch Security Audit Checklist
 
@@ -187,6 +193,11 @@ Users will be able to request an export of all their configuration data stored b
     4.  The function formats this data into a human-readable JSON file.
     5.  The JSON file is saved to a secure, private S3 bucket with a randomly generated, time-limited path.
     6.  The user is sent a push notification (see `29-notifications-alerts.md`) with a secure, pre-signed S3 URL to download their data export. This URL will have a short expiry (e.g., 24 hours).
+*   **S3 Bucket Security:** The S3 bucket used to temporarily store data exports **must** be configured with the following security settings:
+    *   **Block Public Access:** All "Block Public Access" settings must be enabled at the bucket level.
+    *   **Default Encryption:** Server-side encryption with AWS-managed keys (SSE-S3) must be enabled by default.
+    *   **Restrictive Lifecycle Policy:** A lifecycle policy must be configured to permanently delete objects after a short period (e.g., 3 days) to ensure exported data is not retained indefinitely.
+    *   **Least Privilege Bucket Policy:** The bucket policy must be configured to only allow `s3:PutObject` from the `DataExportLambda`'s IAM role and `s3:GetObject` from pre-signed URLs.
 
 ### 8.2. Account Deletion ("Right to be Forgotten")
 

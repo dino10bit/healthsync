@@ -126,6 +126,8 @@ This process is for the rare case where a user permanently loses access to their
     *   Answering specific questions about their sync configurations that only the true user would know.
 2.  **Engineering Ticket:** Once support has verified the user's identity to a high degree of confidence, they will create a high-priority engineering ticket with all verification details.
 3.  **Manual Data Migration:** An authorized engineer will run a peer-reviewed, version-controlled script that performs the following actions:
-    *   Assigns the user's existing data (identified by their old `userId`) to their new `userId`.
-    *   This is a delicate operation that involves updating the Partition Key on all of the user's items in DynamoDB.
+    *   This is a delicate and dangerous operation. Because a partition key cannot be updated in place, the script must perform a multi-step migration:
+        1.  Query all items belonging to the old `USER#{userId}` partition.
+        2.  For each item, create a new item with the new `USER#{userId}` partition key.
+        3.  After successful validation, delete all the original items from the old partition.
 4.  **Confirmation:** The engineer confirms with the support team that the migration is complete, and the user is notified.

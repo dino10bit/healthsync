@@ -129,7 +129,8 @@ All backend Lambda functions will output structured JSON logs to **AWS CloudWatc
   }
 }
 ```
-*   **PII Scrubbing & Traceability:** No sensitive data (e.g., OAuth tokens, PII) will ever be logged. To align with the strict privacy policy in `19-security-privacy.md`, permanent identifiers like `userId` **must not** be logged. The mandated Powertools library will automatically handle the injection and propagation of a temporary `correlationId` across all logs, ensuring full request traceability without compromising user privacy. For the rare cases where debugging a specific user's issue is required, a secure, audited "break-glass" procedure must be followed by authorized personnel. This involves using the `SyncWellBreakGlassIndex` (as defined in `19-security-privacy.md`) to map the `correlationId` back to the `userId` under strict audit controls.
+*   **PII Scrubbing & Traceability:** No sensitive data (e.g., OAuth tokens, raw health data) will ever be logged. To enforce our strict privacy policy, permanent identifiers like `userId` **must not be written to general application logs**. Instead, the mandated Powertools library will automatically inject a temporary `correlationId` into all log entries. This ensures full request traceability for debugging without directly exposing user identities in logs.
+    For the rare but critical cases where debugging a specific user's issue is required, a secure, audited "break-glass" procedure must be followed. This procedure, detailed in `19-security-privacy.md`, uses the purpose-built `SyncWellBreakGlassIndex` to temporarily map a `correlationId` back to a `userId` under strict audit controls. This provides a necessary escape hatch for support while maintaining a high standard of privacy by default.
 
 ## 5. Monitoring & Alerting Strategy
 
