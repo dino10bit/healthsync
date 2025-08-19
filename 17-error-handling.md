@@ -41,6 +41,8 @@ The backend's error handling strategy is designed for maximum resilience and mes
 
 4.  **Alerting and Analysis:** A CloudWatch Alarm continuously monitors the DLQ. If the number of messages rises above zero, it triggers a high-priority alert to the on-call engineering team. The failed job message, which is stored in the DLQ, contains the full context of the job, allowing engineers to diagnose and resolve the root cause.
 
+5.  **EventBridge Durability:** To provide an additional layer of durability, the EventBridge rule that targets the SQS queue will also be configured with its own DLQ. This ensures that if an event fails to be delivered to the SQS queue for any reason (e.g., a misconfiguration or temporary unavailability), the event is captured and can be reprocessed, preventing data loss.
+
 ## 3. Unified Error Code Dictionary
 
 A version-controlled dictionary will be the single source of truth for error definitions, shared between the backend and client. When the backend encounters a specific, known error (e.g., an expired token), it will update the sync status in DynamoDB with a specific error code. The client reads this code and uses the dictionary to display the correct localized message and recovery action to the user.
@@ -67,19 +69,18 @@ A version-controlled dictionary will be the single source of truth for error def
 The mobile app will maintain a local, rotating log file with structured JSON entries for targeted debugging of device-specific issues.
 
 ### 4.2. Backend Logging
-All backend Lambda functions will output structured JSON logs to **AWS CloudWatch Logs**. This is the primary source of information for debugging backend processes. The log schema will be consistent with the client-side schema.
+All backend Lambda functions will output structured JSON logs to **AWS CloudWatch Logs**. To enforce consistency and automate best practices like traceability, all functions **must** use a standardized library such as **AWS Lambda Powertools for TypeScript**.
 
-**Example Log Entry (CloudWatch):**
+**Example Log Entry (CloudWatch with Powertools):**
 ```json
 {
   "timestamp": "2023-10-27T14:30:00.123Z",
   "level": "ERROR",
   "message": "Sync job failed: Unhandled exception from provider.",
-  "context": {
-    "jobId": "xyz-123",
-    "source": "garmin",
-    "correlationId": "a1b2c3d4-e5f6-7890-1234-567890abcdef"
-  },
+  "service": "SyncWorker",
+  "correlationId": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+  "jobId": "xyz-123",
+  "source": "garmin",
   "error": {
     "name": "GarminApiError",
     "statusCode": 503,
@@ -87,7 +88,7 @@ All backend Lambda functions will output structured JSON logs to **AWS CloudWatc
   }
 }
 ```
-*   **PII Scrubbing:** No sensitive data (e.g., OAuth tokens, names, emails) will ever be logged. To align with the strict privacy policy in `19-security-privacy.md`, permanent identifiers like `userId` **must not** be logged. Instead, a temporary, randomly generated `correlationId` should be used to trace a single request's journey through the system.
+*   **PII Scrubbing & Traceability:** No sensitive data (e.g., OAuth tokens, PII) will ever be logged. To align with the strict privacy policy in `19-security-privacy.md`, permanent identifiers like `userId` **must not** be logged. The mandated Powertools library will automatically handle the injection and propagation of a temporary `correlationId` across all logs, ensuring full request traceability without compromising user privacy.
 
 ## 5. Monitoring & Alerting Strategy
 

@@ -25,17 +25,21 @@ This document serves as a blueprint for the **product and engineering teams**, d
 
 ## 2. Sync Engine Architecture
 
-The data synchronization engine is a server-side, event-driven system built on AWS, as defined in `06-technical-architecture.md`. This architecture is designed for massive scale and reliability, separating real-time and historical syncs into "hot" and "cold" paths.
+The data synchronization engine is a server-side, event-driven system built on AWS, as defined in `06-technical-architecture.md`. This architecture is designed for massive scale and reliability, separating syncs into two distinct paths:
 
-*   **`API Gateway` + `Request Lambda`:** The public-facing entry point. The mobile app calls this endpoint to request a sync. The Lambda validates the request and publishes a semantic event (e.g., `SyncJobRequested`) to the central EventBridge bus.
-*   **`EventBridge Event Bus`:** The central nervous system for our backend. It receives events from producers (like the `RequestLambda`) and routes them to consumers based on defined rules. This decouples services from one another.
-*   **`SQS Queues`:** For sync jobs, an EventBridge rule forwards the event to a primary, durable SQS queue. This queue acts as a critical buffer, absorbing traffic spikes and ensuring that sync jobs are never lost, even if the worker fleet is down.
-*   **`Worker Lambdas`:** The heart of the engine. A fleet of serverless functions that pull jobs from the queues and execute them. Each worker is responsible for the full lifecycle of a single sync job.
-*   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration (Fitbit, Garmin, etc.) must implement.
-*   **`Smart Conflict Resolution Engine`:** A core component within the worker lambda that analyzes data from the source and destination to intelligently resolve conflicts before writing. This engine can now leverage the **AI Insights Service**.
-*   **`AI Insights Service`:** As detailed in the technical architecture, this service provides ML and LLM-powered intelligence, including advanced conflict resolution models.
-*   **`DynamoDB`:** The **`SyncWellMetadata`** table is used to store all essential, non-ephemeral state for the sync process. This includes user configurations, connection status, and sync metadata. Its single-table design is detailed in `06-technical-architecture.md`.
-*   **`S3 for Dead-Letter Queues`**: Messages that fail processing repeatedly are sent to a Dead-Letter Queue (DLQ) and stored in an S3 bucket for analysis and manual reprocessing.
+*   **Hot Path (for Real-time Syncs):** This path is optimized for low-latency, high-volume, short-lived sync jobs. It uses an SQS queue to reliably buffer requests and decouple the API from the workers.
+*   **Cold Path (for Historical Syncs):** This path is designed for long-running, complex, and potentially error-prone historical data backfills. It uses AWS Step Functions to orchestrate the entire workflow, providing state management, error handling, and observability.
+
+The core components are:
+*   **`API Gateway` + `Request Lambda`:** The public-facing entry point. The `RequestLambda` validates requests and routes them to the appropriate path by either publishing an event to EventBridge (hot path) or starting a state machine execution (cold path).
+*   **`EventBridge Event Bus`:** The central nervous system for the hot path. It receives `RealtimeSyncRequested` events and routes them to the SQS queue.
+*   **`SQS Queue (Hot Path)`:** A primary, durable SQS queue that acts as a critical buffer for real-time sync jobs, absorbing traffic spikes and ensuring no jobs are lost.
+*   **`AWS Step Functions (Cold Path)`:** A managed workflow orchestrator that manages the entire lifecycle of a historical sync, breaking it into chunks and coordinating worker Lambdas.
+*   **`Worker Lambdas`:** The heart of the engine. A single fleet of serverless functions that contain the core sync logic. They are invoked either by SQS (for hot path jobs) or by the Step Functions orchestrator (for cold path jobs).
+*   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration must implement.
+*   **`Smart Conflict Resolution Engine`:** A core component within the worker that intelligently resolves data conflicts before writing.
+*   **`DynamoDB`:** The `SyncWellMetadata` table stores all essential state for the sync process.
+*   **`S3 for Dead-Letter Queues`**: Messages that fail processing repeatedly in the SQS queue are sent to a Dead-Letter Queue (DLQ) and stored in an S3 bucket for analysis.
 
 ## 3. The Synchronization Algorithm (Server-Side Delta Sync)
 
@@ -57,6 +61,19 @@ The `Worker Lambda` will follow this algorithm for each job pulled from the SQS 
 
 This engine is a core feature of SyncWell, designed to eliminate data duplication and loss. It offers several strategies that Pro users can choose from, catering to our key user personas. For "Sarah," who values simplicity, the default `Prioritize Source` is a "set it and forget it" solution. For "Alex," who wants ultimate control, the ability to choose a strategy, especially the `AI-Powered Merge`, is a key differentiator.
 
+### 4.1. Conflict Detection Algorithm
+
+Before the engine can resolve a conflict, it must first detect one. A conflict that is eligible for the `AI-Powered Merge` strategy is detected using the following algorithm:
+
+1.  **Candidate Selection:** The algorithm considers new activities fetched from the `source` and potentially overlapping activities from the `destination`.
+2.  **Time Overlap Check:** A conflict is identified if a `source` activity and a `destination` activity have time ranges that overlap by more than a configured threshold (e.g., **60 seconds**).
+3.  **Activity Type Match:** The overlapping activities must be of a compatible type. For example, a "Run" can be compared with another "Run", but a "Run" and a "Swim" at the same time are considered two distinct valid activities, not a conflict.
+4.  **Exclusion of Exact Duplicates:** If the two overlapping activities have the same `sourceId` and `sourceProvider`, they are considered an exact technical duplicate (e.g., from a re-sync of the same data) and are not sent for AI resolution. The duplicate is simply ignored.
+
+Only if all these conditions are met are the two activity records sent to the AI Insights Service for an intelligent merge.
+
+### 4.2. Resolution Strategies
+
 *   **`Prioritize Source`:** The default behavior. New data from the source platform will always overwrite any existing data in the destination for the same time period.
 *   **`Prioritize Destination`:** Never overwrite existing data. If a conflicting entry is found in the destination, the source entry is ignored.
 *   **`AI-Powered Merge` (Activities Only - Pro Feature):** This advanced strategy uses a machine learning model to create the best possible "superset" of the data. Instead of fixed rules, it makes an intelligent prediction.
@@ -68,7 +85,7 @@ This engine is a core feature of SyncWell, designed to eliminate data duplicatio
 
 ## 5. Data Integrity
 
-*   **Durable Queueing & Idempotency:** By using SQS, we guarantee that a sync job will be processed "at-least-once". To handle rare cases of a message being delivered twice (e.g., after a worker crash), our worker logic is designed to be idempotent. Idempotency is achieved by using the `MessageId` from the SQS message as an idempotency key. Before processing, the worker will check if a job with this `MessageId` has already been successfully completed within a recent time window (e.g., 15 minutes, matching the SQS visibility timeout). This check prevents the same job from being processed multiple times and creating duplicate data.
+*   **Durable Queueing & Idempotency:** The combination of SQS and Lambda guarantees that a real-time sync job will be processed "at-least-once". To prevent duplicate processing in the rare case of a message being delivered more than once, the system uses a robust, end-to-end idempotency strategy. As defined in `06-technical-architecture.md`, a unique `Idempotency-Key` generated by the client is passed through the entire system. The worker Lambda checks for this key in a central store before processing to ensure the job has not already been completed, guaranteeing at-most-once processing.
 *   **Transactional State:** State updates in DynamoDB are atomic. The `lastSyncTime` is only updated if the entire write operation to the destination platform succeeds.
 *   **Dead Letter Queue (DLQ):** If a job fails repeatedly (e.g., due to a persistent third-party API error or a problem with the AI service), SQS will automatically move it to a DLQ. This allows for manual inspection and debugging without blocking the main queue.
 
@@ -99,7 +116,7 @@ Handling a user's request to sync several years of historical data (User Story *
 
 ## 8. Visual Diagrams
 
-### Sync Engine Architecture (with AI Service)
+### Sync Engine Architecture
 ```mermaid
 graph TD
     subgraph User Device
@@ -109,10 +126,16 @@ graph TD
         APIGateway[API Gateway]
         RequestLambda[Request Lambda]
         EventBridge[EventBridge Bus]
-        HotQueue[SQS - Hot Path]
-        ColdQueue[SQS - Cold Path]
-        HotWorkers[Worker Lambdas - Hot]
-        ColdWorkers[Worker Lambdas - Cold]
+
+        subgraph "Hot Path"
+            HotQueue[SQS for Real-time Jobs]
+        end
+
+        subgraph "Cold Path"
+            HistoricalOrchestrator[AWS Step Functions]
+        end
+
+        WorkerLambdas[Worker Lambdas]
         DynamoDB[DynamoDB]
         DLQ_S3[S3 for DLQ]
         AI_Service[AI Insights Service]
@@ -124,18 +147,17 @@ graph TD
     MobileApp -- Sync Request --> APIGateway
     APIGateway --> RequestLambda
     RequestLambda -- Publishes Event --> EventBridge
-    EventBridge -- Rule forwards to --> HotQueue
-    EventBridge -- Rule forwards to --> ColdQueue
-    HotWorkers -- Polls --> HotQueue
-    ColdWorkers -- Polls --> ColdQueue
-    HotWorkers -- Read/Write --> DynamoDB
-    ColdWorkers -- Read/Write --> DynamoDB
-    HotWorkers -- Syncs Data --> ThirdPartyAPIs
-    ColdWorkers -- Syncs Data --> ThirdPartyAPIs
-    HotWorkers -- Calls for intelligence --> AI_Service
-    ColdWorkers -- Calls for intelligence --> AI_Service
+
+    EventBridge -- "Rule for real-time jobs" --> HotQueue
+    HotQueue -- Triggers --> WorkerLambdas
+
+    EventBridge -- "Rule for historical jobs" --> HistoricalOrchestrator
+    HistoricalOrchestrator -- Orchestrates & Invokes --> WorkerLambdas
+
+    WorkerLambdas -- Read/Write --> DynamoDB
+    WorkerLambdas -- Syncs Data --> ThirdPartyAPIs
+    WorkerLambdas -- Calls for intelligence --> AI_Service
     HotQueue -- On Failure --> DLQ_S3
-    ColdQueue -- On Failure --> DLQ_S3
 ```
 
 ### Sequence Diagram for Delta Sync (with AI-Powered Merge)

@@ -62,6 +62,11 @@ As defined in `06-technical-architecture.md`, we will operate in an **active-act
     *   We will configure **cross-region replication** for our secrets. When a secret is updated in the primary region (e.g., a refreshed token), Secrets Manager automatically replicates that change to the replica secret in the secondary region.
     *   This ensures that if the primary region fails, the workers in the failover region have access to the up-to-date credentials needed to continue processing sync jobs.
 
+*   **Replicated Cache Data (Amazon ElastiCache Global Datastore):**
+    *   The ElastiCache for Redis cluster is a critical component for caching, rate-limiting, and distributed locking. A regional failure would lead to a "cache stampede" that could overwhelm the database.
+    *   To mitigate this, the cache will be deployed as an **ElastiCache Global Datastore**. This provides fully-managed, fast, cross-region replication from a primary region to secondary regions.
+    *   In the event of a regional failure, we can promote a secondary region to be the new primary, ensuring that the failover region has a warm, up-to-date replica of the cache. This prevents data loss and ensures the continued stability of the service.
+
 ### Disaster Recovery Flow (Regional Outage)
 ```mermaid
 graph TD
