@@ -74,7 +74,7 @@ graph TD
         subgraph "Hot Path (Real-time Syncs)"
             HotPathEventBus[EventBridge Event Bus]
             RealtimeSyncQueue[SQS for Real-time Jobs]
-            WorkerLambda[Worker Service (AWS Lambda)]
+            WorkerLambda["Worker Service (AWS Lambda)"]
         end
 
         subgraph "Cold Path (Historical Syncs)"
