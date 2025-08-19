@@ -213,19 +213,20 @@ sequenceDiagram
     participant SecretsManager as AWS Secrets Manager
     participant ExtProvider as External Provider
 
-    Worker->>SecretsManager: 1. Get Tokens
     activate Worker
-    SecretsManager-->>Worker: 2. Return Tokens
-    Worker->>Worker: 3. Check if token is expired
+    Worker->>SecretsManager: Get Tokens
+    SecretsManager-->>Worker: Return Tokens
+    Worker->>Worker: Check if token is expired
+
     alt Token is Expired
-        Worker->>ExtProvider: 4. Request new token using Refresh Token
-        ExtProvider-->>Worker: 5. Return new Access & Refresh Tokens
-        Worker->>SecretsManager: 6. Update stored tokens
+        Worker->>ExtProvider: Request new token using Refresh Token
+        ExtProvider-->>Worker: Return new Access & Refresh Tokens
+        Worker->>SecretsManager: Update stored tokens
     end
-    Worker->>ExtProvider: 7. Make API call with valid token
+
+    Worker->>ExtProvider: Make API call with valid token
     deactivate Worker
 
-*(Section 8 has been removed to align with the decision to standardize on the AWS-native serverless architecture and avoid the operational complexity of a self-hosted open-source stack.)*
 ```
 
 ## 8. Managing Unstable & Poorly Documented APIs

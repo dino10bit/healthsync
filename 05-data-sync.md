@@ -79,7 +79,7 @@ Only if all these conditions are met are the two activity records sent to the AI
 *   **`AI-Powered Merge` (Activities Only - Pro Feature):** This advanced strategy uses a machine learning model to create the best possible "superset" of the data. Instead of fixed rules, it makes an intelligent prediction.
     *   **Data Privacy & Anonymization:** To protect user privacy, all data sent to the AI service for merging **must** be anonymized in real-time. The detailed technical implementation of this critical privacy feature, including the real-time anonymization proxy, latency considerations, and PII stripping strategy, is specified in `06-technical-architecture.md`, Section "Real-Time Anonymization for Operational AI".
     *   **API Contract:** The request from the worker to the Anonymizer Proxy will conform to the following contract:
-        ```json
+        ```
         // POST /v1/merge-activities
         {
           "sourceActivity": { ... }, // CanonicalWorkout model
@@ -87,7 +87,7 @@ Only if all these conditions are met are the two activity records sent to the AI
         }
         ```
         The expected success response will be:
-        ```json
+        ```
         // 200 OK
         {
           "mergedActivity": { ... } // CanonicalWorkout model
@@ -150,7 +150,7 @@ graph TD
             HistoricalOrchestrator[AWS Step Functions]
         end
 
-        WorkerLambda[Worker Service (Lambda)]
+        WorkerLambda["Worker Service (Lambda)"]
         DynamoDB[DynamoDB]
         AI_Service[AI Insights Service]
     end
