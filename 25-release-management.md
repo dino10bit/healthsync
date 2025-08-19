@@ -121,6 +121,29 @@ This approach is referenced in several user stories:
 *   **Dynamic Configuration:** The list of supported apps for connection (**US-02**) will be managed remotely. This allows us to add a new app to the list or temporarily disable a misbehaving integration without forcing users to update the app.
 *   **Kill Switches:** If a feature is discovered to have a critical bug in production, a "kill switch" in Remote Config can be used to disable it immediately for all users while a hotfix is prepared.
 
+### 7.1. Feature Flag Lifecycle Management
+
+To prevent technical debt and ensure that feature flags are managed in a consistent and sustainable way, the following lifecycle process will be followed:
+
+1.  **Creation:**
+    *   A new feature flag is created in Firebase Remote Config.
+    *   **Naming Convention:** Flags will follow a consistent naming convention: `feature_[feature_name]_[platform]`, e.g., `feature_new_strava_api_android`.
+    *   A corresponding ticket is created in the issue tracker to track the flag's lifecycle, with a target removal date.
+2.  **Implementation:**
+    *   The flag is implemented in the codebase, with the new code path disabled by default.
+3.  **Testing:**
+    *   Both the "on" and "off" states of the feature flag must be tested as part of the normal development and QA process.
+    *   E2E tests will be written to cover both states where feasible.
+4.  **Rollout:**
+    *   The feature is rolled out to users by gradually increasing the percentage of users for whom the flag is enabled in Firebase Remote Config.
+5.  **Removal (Cleanup):**
+    *   Once a feature has been fully rolled out to 100% of users and has been deemed stable for a sufficient period (e.g., one full release cycle), the feature flag **must be removed**.
+    *   The cleanup process involves:
+        *   Removing the feature flag from Firebase Remote Config.
+        *   Removing the conditional logic (`if/else`) from the application code, leaving only the new code path.
+        *   Deleting the associated lifecycle ticket from the issue tracker.
+    *   This final step is crucial to prevent the accumulation of dead code and complexity in the codebase.
+
 ## 8. Optional Visuals / Diagram Placeholders
 *   **[Diagram] GitFlow Branching Strategy:** A clear, visual diagram of the GitFlow model.
 *   **[Diagram] CI/CD Pipeline:** A detailed flowchart showing the stages and triggers for the different CI/CD jobs.
