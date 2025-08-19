@@ -41,7 +41,8 @@ This document defines the performance, scalability, and reliability requirements
 | **Worker Lambda Duration (P90)**| < 15 seconds | AWS CloudWatch |
 | **Worker Lambda Error Rate** | < 0.5% | AWS CloudWatch |
 | **SQS Message Age (P99, Hot Path)**| < 10 minutes | AWS CloudWatch |
-| **Cache Hit Rate (ElastiCache)** | > 90% | AWS CloudWatch |
+| **Cache Hit Rate (API Gateway Authorizer)** | > 95% | AWS CloudWatch |
+| **Cache Hit Rate (ElastiCache User Config)** | > 90% | AWS CloudWatch |
 
 ## 3. Architecture for Performance at Scale (1M DAU)
 
@@ -61,11 +62,13 @@ To ensure the system can handle the load from 1M DAU, we have projected the requ
 
 *   **Total Daily Jobs:** ~90 million jobs per day (real-time and historical).
 *   **Peak Throughput:** The system is designed to handle a peak of **3,000 requests per second (RPS)**.
-*   **Required Lambda Concurrency:** Based on the 3,000 RPS target and an average job duration of 5 seconds, the projected peak concurrency is **~15,000 concurrent Lambda executions**.
+*   **Required Lambda Concurrency:** The concurrency calculation must be based on the **P90 SLO**, not an optimistic average, to ensure the system can meet its performance targets under realistic conditions.
+    *   **Calculation:** `3,000 jobs/s * 15s/job (P90 SLO) = 45,000 concurrent Lambda executions`.
+    *   **Implication:** This projection of **~45,000 concurrent executions** is a worst-case scenario that the system must be able to withstand. This number has catastrophic implications for cost and technical feasibility, and it dramatically increases the project's risk profile. The feasibility actions below are therefore not recommendations; they are critical, project-blocking prerequisites.
 
 **Mandatory Feasibility Actions:**
-The projection of ~15,000 concurrent executions is a significant technical risk. To ensure the system is financially viable and operationally stable at this scale, the following actions are mandatory prerequisites before launch:
-1.  **Create Detailed Cost Model:** A full cost analysis for 15,000 provisioned concurrency Lambda instances must be completed and approved.
+The projection of up to 45,000 concurrent executions is a critical threat to the project's viability. To ensure the system is financially viable and operationally stable at this scale, the following actions are **mandatory, blocking prerequisites** before any significant implementation work proceeds:
+1.  **Create Detailed Cost Model:** A full cost analysis for **45,000** provisioned concurrency Lambda instances must be completed and approved.
 2.  **Conduct Downstream Load Tests:** A proof-of-concept load test must be performed, specifically targeting the validation of downstream dependencies (third-party APIs, ElastiCache, etc.) under the projected parallel load.
 3.  **Secure Service Limit Increases:** The AWS account limits for Lambda concurrency and other relevant services must be formally increased.
 4.  **Architectural Assessment:** Alternatives that could lower concurrency for the same throughput (e.g., batching jobs in a single Lambda, exploring Fargate) should be assessed for future cost optimization.
@@ -111,5 +114,7 @@ The SyncWell architecture is designed from the ground up for massive, automatic 
 *   **Scalable Analytics Ingestion:** For backend-generated analytics events, the architecture uses **Amazon Kinesis Data Firehose**. This provides a fully managed, scalable ingestion pipeline that automatically handles buffering, batching, and compression of data. This is far more performant and resilient at scale than sending individual events to an analytics endpoint.
 
 ## 6. Visual Diagrams
-*   **[Diagram] Caching Architecture:** A diagram showing how Lambda worker functions interact with ElastiCache for config caching, distributed locking, and rate limiting before accessing DynamoDB or third-party APIs.
-*   **[Diagram] Job Chunking Flow:** A visual representation of how a large historical sync request is broken into multiple jobs that are placed on the SQS queue for processing by the Lambda service.
+*   **Caching Architecture:**
+    *   *A diagram showing how Lambda worker functions interact with ElastiCache for config caching, distributed locking, and rate limiting before accessing DynamoDB or third-party APIs. [Placeholder - Diagram to be created]*
+*   **Job Chunking Flow:**
+    *   *A visual representation of how a large historical sync request is broken into multiple jobs that are placed on the SQS queue for processing by the Lambda service. [Placeholder - Diagram to be created]*

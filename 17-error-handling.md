@@ -38,6 +38,7 @@ The backend's error handling strategy is designed for maximum resilience and mes
         *   **Visual Monitoring:** The visual workflow in the AWS Console provides a real-time graph of each execution, allowing operators to instantly identify which step in a long-running job has failed.
         *   **Detailed Execution History:** Every state transition, including the full input and output payload for each step, is logged. This provides an invaluable audit trail for debugging, eliminating the need to manually add extensive logging inside the business logic.
         *   **Integrated Tracing:** With AWS X-Ray enabled, it's possible to get a complete service map of the entire workflow, including the time spent in each state and in the invoked Lambda functions.
+        *   **Centralized Dashboards:** To provide a single pane of glass for operators, key Step Functions execution metrics (e.g., success rate, failure rate, P95 duration) **must** be exported to CloudWatch and integrated into the primary Grafana dashboards alongside other system metrics.
 
 3.  **Isolating Persistent Failures with a Dead-Letter Queue (DLQ):** If a job fails all of its retry attempts, it is considered a persistent failure (e.g., due to a bug in the code, malformed data that causes a crash, or a permanent issue with a third-party API).
     *   To prevent this single bad message from blocking the queue and being retried indefinitely, SQS automatically moves it to a pre-configured **Dead-Letter Queue (DLQ)**.
@@ -63,15 +64,20 @@ This semi-automated strategy ensures that engineers are only alerted for novel a
 
 #### Runbook for Manual Handling of Unknown DLQ Messages
 
-When an on-call engineer is paged for an unknown DLQ message, they must follow this runbook:
+When an on-call engineer is paged for an unknown DLQ message (i.e., a message the `DLQAnalyzer` could not triage automatically), they must follow this runbook:
 
-1.  **Inspection:** The engineer navigates to the SQS console in AWS to view the message(s) that triggered the alert. The message body and attributes are inspected to understand the job context and the reason for failure.
-2.  **Diagnosis:** The engineer uses the `correlationId` from the message to query CloudWatch Logs Insights for all related logs. This provides the full context of the failure, allowing the engineer to diagnose the root cause (e.g., a new bug in the worker, a new breaking change in a third-party API).
-3.  **Archiving:** Before taking any action, all messages in the DLQ **must be archived** to a dedicated S3 bucket for long-term analysis and auditing. This can be done using a small, purpose-built Lambda function or a script.
-4.  **Decision and Action:**
+1.  **Verify Archiving:** The first step is to confirm that the `DLQAnalyzer` successfully archived the message to S3. The `correlationId` can be used to find the archived message.
+2.  **Inspection & Diagnosis:** The engineer navigates to the SQS console to view the message and uses the `correlationId` to query CloudWatch Logs Insights for all related logs. This provides the full context of the failure.
+3.  **Decision and Action:**
     *   **If the error is due to a transient issue that has since been resolved:** The engineer can use the "Start DLQ redrive" feature in the SQS console to move the messages back to the main source queue for reprocessing.
-    *   **If the error is due to a bug in the worker code:** A high-priority ticket is created. Once a fix is deployed, the messages can be redriven from the DLQ. The new error pattern should be added to the `DLQAnalyzer`'s logic to prevent future alerts for the same issue.
-    *   **If the error is due to malformed data or a permanent, unrecoverable issue:** The messages are left in the archive S3 bucket, and the issue is logged for product/engineering review. The messages are then purged from the DLQ.
+    *   **If the error is due to a bug in the worker code:** A high-priority ticket is created. Once a fix is deployed, the messages can be redriven from the DLQ. The new error pattern should be added to the `DLQAnalyzer`'s configuration file in S3 to prevent future alerts for the same issue.
+    *   **If the error is due to malformed data or a permanent, unrecoverable issue:** The issue is logged for product/engineering review. The message, already archived in S3, is then purged from the DLQ.
+
+#### Runbook for EventBridge DLQ
+The EventBridge DLQ is a critical defense-in-depth measure. An alert on this queue is extremely rare and indicates a potential misconfiguration or major service issue between EventBridge and SQS.
+1.  **Alert:** This triggers a high-priority PagerDuty alert.
+2.  **Diagnosis:** An engineer must investigate the health of the SQS service and the configuration of the EventBridge rule and its target.
+3.  **Action:** The messages should be manually moved from the EventBridge DLQ back to the main SQS queue for processing once the underlying issue is resolved.
 
 ## 3. Unified Error Code Dictionary
 
@@ -88,6 +94,11 @@ A version-controlled dictionary will be the single source of truth for error def
   "GARMIN_API_UNAVAILABLE": {
     "logLevel": "ERROR",
     "userMessageKey": "error_service_unavailable_garmin",
+    "userAction": "SHOW_SUPPORT_CONTACT"
+  },
+  "INTERNAL_SERVER_ERROR": {
+    "logLevel": "ERROR",
+    "userMessageKey": "error_generic_internal_server",
     "userAction": "SHOW_SUPPORT_CONTACT"
   }
 }
@@ -118,7 +129,7 @@ All backend Lambda functions will output structured JSON logs to **AWS CloudWatc
   }
 }
 ```
-*   **PII Scrubbing & Traceability:** No sensitive data (e.g., OAuth tokens, PII) will ever be logged. To align with the strict privacy policy in `19-security-privacy.md`, permanent identifiers like `userId` **must not** be logged. The mandated Powertools library will automatically handle the injection and propagation of a temporary `correlationId` across all logs, ensuring full request traceability without compromising user privacy. For the rare cases where debugging a specific user's issue is required, a secure, audited "break-glass" procedure, as defined in `19-security-privacy.md`, must be followed by authorized personnel.
+*   **PII Scrubbing & Traceability:** No sensitive data (e.g., OAuth tokens, PII) will ever be logged. To align with the strict privacy policy in `19-security-privacy.md`, permanent identifiers like `userId` **must not** be logged. The mandated Powertools library will automatically handle the injection and propagation of a temporary `correlationId` across all logs, ensuring full request traceability without compromising user privacy. For the rare cases where debugging a specific user's issue is required, a secure, audited "break-glass" procedure must be followed by authorized personnel. This involves using the `SyncWellBreakGlassIndex` (as defined in `19-security-privacy.md`) to map the `correlationId` back to the `userId` under strict audit controls.
 
 ## 5. Monitoring & Alerting Strategy
 
@@ -129,7 +140,7 @@ The comprehensive observability strategy, including the full tooling stack (Clou
 *   **Focus:** Monitoring for app crashes, non-fatal errors, and UI performance issues.
 *   **Critical Alerts:**
     *   A newly detected crash type.
-    *   A significant regression in the crash-free user rate below the target of 99.9%.
+    *   A significant regression in the crash-free user rate. The aspirational goal is **99.9%**, but a more realistic initial launch target will be **99.5%**. The alert will be triggered if the rate falls below this initial target.
 
 ### 5.2. Backend-Side Monitoring
 *   **Tooling:** The primary backend monitoring stack consists of AWS CloudWatch, AWS X-Ray, and Grafana for dashboards.

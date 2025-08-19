@@ -87,9 +87,10 @@ interface DataProvider {
      * Pushes a list of canonical data models to the provider's API, transforming them into the
      * provider-specific format required by the destination service.
      *
-     * **IMPORTANT:** This method should only be called if the provider's `capabilities` set
-     * contains `Capability.WRITE`. Calling this on a read-only provider will result
-     * in a `NotImplementedError` or a similar exception.
+     * **IMPORTANT:** The core `SyncManager` is responsible for checking the provider's
+     * `capabilities` set *before* attempting to call this method. This prevents runtime
+     * errors by not attempting to write to a provider that has declared itself as
+     * read-only (e.g., `setOf(Capability.READ)`).
      */
     suspend fun pushData(tokens: ProviderTokens, data: List<CanonicalData>): PushResult
 }
@@ -116,9 +117,7 @@ To ensure that all `DataProvider` implementations use a consistent set of tools 
 *   **Versioning:** The SDK will follow Semantic Versioning (SemVer). All worker tasks will declare a dependency on a specific version of the SDK.
 *   **Distribution:** The package will be hosted in a private artifact repository (e.g., AWS CodeArtifact or a private GitHub Packages repository). The CI/CD pipeline for the backend services will be configured to pull the specified version of the SDK during the build process.
 
-This approach ensures that updates to the core SDK logic can be rolled out in a controlled and predictable manner, and it prevents individual `DataProvider` implementations from falling out of sync with the core framework.
-
-This approach ensures that updates to the core SDK logic can be rolled out in a controlled and predictable manner, and it prevents individual `DataProvider` implementations from falling out of sync with the core framework.
+This approach ensures that updates to the core SDK logic can be rolled out in a controlled and predictable manner, and it prevents individual `DataProvider` implementations from falling out of sync with the core framework. While this adds some operational overhead compared to a monorepo, it is a worthwhile trade-off for ensuring stability and clear dependency management as the number of integrations grows. For the MVP, a simpler approach of keeping the SDK as a shared module in the main repository could be considered if speed is paramount.
 
 ### 2.4. Network Environment & Security
 All backend `DataProvider` logic runs within the main application's VPC on AWS. As a critical security measure, all outbound traffic from this VPC is routed through an **AWS Network Firewall**. This means that for a new `DataProvider` to function, the domain name(s) of the third-party API it needs to call **must** be added to the firewall's allow-list. This enforces a "least privilege" model at the network level and is a mandatory part of the process for enabling a new provider.
@@ -209,7 +208,7 @@ sequenceDiagram
 ### Sequence Diagram for Token Refresh (Backend)
 ```mermaid
 sequenceDiagram
-    participant Worker as Worker Task (Fargate)
+    participant Worker as Worker Task (Lambda)
     participant SecretsManager as AWS Secrets Manager
     participant ExtProvider as External Provider
 
@@ -237,7 +236,7 @@ While the `DataProvider` architecture provides a solid foundation, a key risk is
 *   **Circuit Breaker Pattern:** For notoriously unstable APIs, a Circuit Breaker pattern will be implemented within the `DataProvider` SDK.
     *   **Mechanism:** The circuit breaker monitors for failures. If the failure rate for a specific provider's API calls exceeds a configured threshold, the circuit "trips" or "opens".
     *   **Action:** Once the circuit is open, all subsequent calls to that provider's API will fail fast for a "cooldown" period, without making a network call. This prevents the system from wasting resources on an API that is clearly down and reduces the load on the failing service. After the cooldown, the circuit moves to a "half-open" state, allowing a single request to test if the service has recovered.
-    *   **Configuration:** The thresholds for the circuit breaker **must be configurable per-provider** via AWS AppConfig. This allows for fine-tuning based on the known stability of each third-party API. The default values will be:
+    *   **Configuration:** The thresholds for the circuit breaker **must be configurable per-provider** via AWS AppConfig. This allows for fine-tuning based on the known stability of each third-party API. The default values below are placeholders and must be tuned for each provider based on observed stability during testing.
         *   **Failure Threshold:** 25% of requests failing over a 5-minute window.
         *   **Cooldown Period:** 5 minutes.
 *   **Graceful Degradation via Feature Flags:** If a provider's API is causing persistent, critical problems, a remote feature flag will be used to gracefully degrade the integration.

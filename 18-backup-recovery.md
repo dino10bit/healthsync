@@ -48,7 +48,7 @@ This strategy yields different recovery objectives depending on the nature of th
 | :--- | :--- | :--- | :--- |
 | **Full Regional Outage** | **< 5 minutes** | **< 2 seconds** | **Automated Failover.** Amazon Route 53 health checks detect the failure and automatically redirect traffic to a healthy region. The RPO is governed by the replication lag of DynamoDB Global Tables. |
 | **Cache Cluster Failure** | **< 60 minutes** | **< 1 minute** | **Manual Promotion.** An on-call engineer promotes a secondary ElastiCache replica to primary. The RPO is governed by the ElastiCache Global Datastore replication lag. |
-| **Data Corruption Event** (e.g., bad code deployment) | **< 4 hours** | **< 5 minutes** | **Manual Restore.** An engineer initiates a DynamoDB Point-in-Time Recovery (PITR) to restore the table to a state before the corruption. RPO is governed by the continuous backup window of PITR. This is a last-resort, manual process. |
+| **Data Corruption Event** (e.g., bad code deployment) | **< 4 hours** | **< 5 minutes** | **Manual Restore.** An engineer initiates a DynamoDB Point-in-Time Recovery (PITR) and uses AWS AppConfig to redirect traffic to the restored table. RPO is governed by the continuous backup window of PITR. See the detailed runbook below. |
 
 ### Recovery Mechanisms:
 
@@ -67,10 +67,13 @@ This strategy yields different recovery objectives depending on the nature of th
     *   We will configure **cross-region replication** for our secrets. When a secret is updated in the primary region (e.g., a refreshed token), Secrets Manager automatically replicates that change to the replica secret in the secondary region.
     *   This ensures that if the primary region fails, the workers in the failover region have access to the up-to-date credentials needed to continue processing sync jobs.
 
-*   **Replicated Cache Data (Amazon ElastiCache Global Datastore):**
-    *   The ElastiCache for Redis cluster is a critical component for caching, rate-limiting, and distributed locking. A regional failure would lead to a "cache stampede" that could overwhelm the database.
-    *   To mitigate this, the cache will be deployed as an **ElastiCache Global Datastore**. This provides fully-managed, fast, cross-region replication from a primary region to secondary regions.
-    *   In the event of a regional failure, we can promote a secondary region to be the new primary, ensuring that the failover region has a warm, up-to-date replica of the cache. This prevents data loss and ensures the continued stability of the service.
+*   **Distributed Locking (DynamoDB Conditional Writes):**
+    *   To prevent race conditions (e.g., two workers processing the same sync job concurrently), a distributed locking mechanism is required.
+    *   **Anti-Pattern Avoidance:** Using a replicated cache (like ElastiCache Global Datastore) for distributed locking in an active-active, multi-region setup is a known anti-pattern. The inherent replication lag can break the mutual exclusion guarantee of a lock, leading to data corruption.
+    *   **Correct Implementation:** We will use **DynamoDB's conditional write** functionality to implement a robust, consistent distributed lock. A worker will attempt to acquire a lock by creating a specific lock item in the `SyncWellMetadata` table with a condition that fails if the item already exists. This leverages DynamoDB's strong consistency for a single-region write, providing a reliable locking mechanism. The lock item will have a short TTL to prevent deadlocks.
+*   **Replicated Cache Data (Amazon ElastiCache):**
+    *   The ElastiCache for Redis cluster is a critical component for **caching and rate-limiting**. A regional failure would lead to a "cache stampede" that could overwhelm the database.
+    *   To mitigate this, each regional ElastiCache cluster will operate independently. In the event of a regional failover, the cache in the newly active region will be cold. This is an acceptable trade-off, as the system will gracefully handle the initial cache misses, and the cache will warm up quickly, preventing a prolonged service degradation.
 
 ### Disaster Recovery Flow (Regional Outage)
 ```mermaid
@@ -100,5 +103,29 @@ graph TD
 | :--- | :--- | :--- | :--- | :--- |
 | **R-50** | A bug in our code corrupts user configuration data in DynamoDB. | Low | High | Use DynamoDB Point-in-Time Recovery (PITR) to restore the table to a state before the corruption occurred. This is a manual recovery process, separate from the automated HA failover. |
 | **R-51** | A full AWS regional outage makes one of our backend deployments unavailable. | Low | Critical | **Mitigated by Design.** The active-active multi-region architecture with Route 53 failover, DynamoDB Global Tables, and replicated secrets ensures the service remains available. |
-| **R-52** | User loses access to their Apple/Google account. | Medium | Medium | Provide a clear path to contact support for a potential manual account recovery process. |
+| **R-52** | User loses access to their Apple/Google account. | Medium | Medium | Provide a clear path to contact support for a defined manual account recovery process. See Section 6. |
 | **R-53** | Cross-region replication lag for DynamoDB or Secrets Manager exceeds the RPO. | Low | Medium | Monitor replication lag metrics in CloudWatch. Configure alarms to notify the on-call team of unusual delays. |
+
+## 6. Detailed Recovery Runbooks
+
+### Runbook: Data Corruption Recovery (PITR)
+This is a last-resort, high-risk manual procedure to be followed in the event of widespread data corruption.
+
+1.  **Declare Incident & Halt Writes:** A major incident is declared. If possible, writes to the DynamoDB table are temporarily disabled to prevent further corruption.
+2.  **Identify Restore Point:** This is the most critical and difficult step. Engineers must use logs and metrics to identify the precise moment *before* the corruption began. This determines the restore timestamp. All data written between this point and the incident declaration will be lost. This data loss must be acknowledged and accepted before proceeding.
+3.  **Initiate PITR:** An authorized engineer initiates a Point-in-Time Recovery of the `SyncWellMetadata` DynamoDB table from the AWS console, using the identified restore timestamp. This creates a new table (e.g., `SyncWellMetadata-restored-YYYY-MM-DD`).
+4.  **Validate Restored Data:** The engineer must run validation scripts against the new table to ensure the data is consistent and the corruption is gone.
+5.  **Update AppConfig & Redirect Traffic:** The application code does not contain a hardcoded table name. Instead, it fetches the table name from **AWS AppConfig**. To redirect all application traffic to the newly restored table, the engineer updates the `tableName` configuration value in AppConfig and deploys the configuration change. This is a fast and safe way to repoint the entire application without a code deployment.
+6.  **Post-Mortem:** A full post-mortem analysis is conducted to understand the root cause and prevent recurrence.
+
+### Runbook: Manual Account Recovery
+This process is for the rare case where a user permanently loses access to their social sign-in account and needs to link their SyncWell data to a new social account. This has significant security implications and must be handled with extreme care.
+
+1.  **User Verification:** The user must contact support and provide sufficient proof of identity. This includes:
+    *   A receipt of their Pro subscription purchase.
+    *   Answering specific questions about their sync configurations that only the true user would know.
+2.  **Engineering Ticket:** Once support has verified the user's identity to a high degree of confidence, they will create a high-priority engineering ticket with all verification details.
+3.  **Manual Data Migration:** An authorized engineer will run a peer-reviewed, version-controlled script that performs the following actions:
+    *   Assigns the user's existing data (identified by their old `userId`) to their new `userId`.
+    *   This is a delicate operation that involves updating the Partition Key on all of the user's items in DynamoDB.
+4.  **Confirmation:** The engineer confirms with the support team that the migration is complete, and the user is notified.
