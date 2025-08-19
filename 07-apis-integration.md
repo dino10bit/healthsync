@@ -41,6 +41,40 @@ Each `DataProvider` implementation will focus purely on the provider-specific bu
 *   **Data Mapping:** Transforming the provider's unique data model into SyncWell's canonical data model, and vice-versa.
 *   **Endpoint Logic:** Knowing which specific API endpoints to call for reading and writing data.
 
+To enforce this separation of concerns, every provider must implement the `DataProvider` interface defined in the KMP shared module. This creates a standardized contract for all integrations.
+
+```kotlin
+// Simplified for documentation purposes.
+interface DataProvider {
+    /**
+     * A unique, machine-readable key for the provider (e.g., "strava", "fitbit").
+     */
+    val providerKey: String
+
+    /**
+     * Handles the initial OAuth 2.0 authorization flow to acquire tokens.
+     */
+    suspend fun authenticate(authCode: String): ProviderTokens
+
+    /**
+     * Refreshes an expired access token using a refresh token.
+     */
+    suspend fun refreshAccessToken(refreshToken: String): ProviderTokens
+
+    /**
+     * Fetches data (e.g., workouts) from the provider's API for a given time range
+     * and transforms it into the application's `CanonicalWorkout` model.
+     */
+    suspend fun fetchData(tokens: ProviderTokens, dateRange: DateRange): List<CanonicalWorkout>
+
+    /**
+     * Pushes a canonical data model to the provider's API, transforming it into the
+     * provider-specific format required by the destination service.
+     */
+    suspend fun pushData(tokens: ProviderTokens, data: CanonicalWorkout): PushResult
+}
+```
+
 ## 3. Authentication: A Secure Hybrid Flow
 
 All cloud-based APIs will use the **OAuth 2.0 Authorization Code Flow with PKCE**. The key security principle is that **long-lived tokens never touch the user's device**.

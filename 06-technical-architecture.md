@@ -184,6 +184,75 @@ The KMP module contains the core business logic. This code can be executed **on 
 *   **`ApiClient`:** Handles HTTP calls to backend and third-party services.
 *   **`SecureStorageWrapper`:** Abstraction for Keychain/Keystore (on-device) and AWS Secrets Manager (on-backend).
 
+### Level 3: Extensible Provider Integration Architecture
+
+The core value of the application is its ability to connect with various third-party health services. To support rapid and reliable addition of new providers, the architecture defines a "plug-in" model. This model ensures that adding a new integration (e.g., for "Polar") is a predictable process that does not require changes to the core sync engine. This is achieved through a standardized interface, a factory for dynamic loading, and a secure configuration management strategy.
+
+#### 1. The `DataProvider` Interface
+
+All provider-specific logic is encapsulated in a class that implements the `DataProvider` interface. This interface, defined in the KMP shared module, creates a standardized contract for all integrations.
+
+```kotlin
+// Simplified for documentation purposes.
+interface DataProvider {
+    /**
+     * A unique, machine-readable key for the provider (e.g., "strava", "fitbit").
+     */
+    val providerKey: String
+
+    /**
+     * Handles the initial OAuth 2.0 authorization flow to acquire tokens.
+     */
+    suspend fun authenticate(authCode: String): ProviderTokens
+
+    /**
+     * Refreshes an expired access token using a refresh token.
+     */
+    suspend fun refreshAccessToken(refreshToken: String): ProviderTokens
+
+    /**
+     * Fetches data (e.g., workouts) from the provider's API for a given time range
+     * and transforms it into the application's `CanonicalWorkout` model.
+     */
+    suspend fun fetchData(tokens: ProviderTokens, dateRange: DateRange): List<CanonicalWorkout>
+
+    /**
+     * Pushes a canonical data model to the provider's API, transforming it into the
+     * provider-specific format required by the destination service.
+     */
+    suspend fun pushData(tokens: ProviderTokens, data: CanonicalWorkout): PushResult
+}
+```
+
+#### 2. Dynamic Loading with a Factory Pattern
+
+The `ProviderManager` component acts as a factory to dynamically instantiate and manage provider-specific logic based on user configuration. This decouples the core sync engine from the individual provider implementations.
+
+*   **Process:**
+    1.  The `SyncWorker` receives a job (e.g., "sync steps from 'fitbit' to 'strava'").
+    2.  It requests the `DataProvider` for "fitbit" from the `ProviderManager`.
+    3.  The `ProviderManager` consults its internal registry, finds the `FitbitProvider` class, instantiates it, and returns the object to the worker.
+    4.  The worker then uses this object to perform the data fetch.
+
+```mermaid
+graph TD
+    SyncWorker -- "Requests provider for 'fitbit'" --> ProviderManager;
+    ProviderManager -- "Looks up 'fitbit' in registry" --> Registry((Registry));
+    Registry -- "Returns FitbitProvider class" --> ProviderManager;
+    ProviderManager -- "Instantiates and returns" --> FitbitProvider_instance(FitbitProvider);
+    ProviderManager -- "Returns instance to worker" --> SyncWorker;
+```
+
+This design means that to add a new provider, a developer only needs to implement the `DataProvider` interface and register the new class with the `ProviderManager`. No other code changes are needed.
+
+#### 3. Secure Configuration and Secret Management
+
+A secure and scalable strategy is essential for managing provider-specific configurations and API credentials.
+
+*   **Provider-Specific Configuration:** Non-sensitive configuration, such as API endpoint URLs or supported data types, is stored in a configuration file co-located with the provider's implementation in the codebase.
+*   **Application API Credentials:** The OAuth `client_id` and `client_secret` for each third-party service are highly sensitive. These are stored securely in **AWS Secrets Manager**. The backend services retrieve these credentials at runtime using a narrowly-scoped IAM role that grants access only to the secrets required for that service.
+*   **User OAuth Tokens:** User-specific `access_token` and `refresh_token` are never stored directly in the database. They are encrypted and stored in **AWS Secrets Manager**. The Amazon Resource Name (ARN) of this secret is then stored in the user's `Connection` item in the `SyncWellMetadata` DynamoDB table. When a `WorkerLambda` processes a job, its IAM role grants it permission to retrieve *only* the specific secret for the connection it is working on, enforcing the principle of least privilege.
+
 ### Level 3: Components (Future AI Insights Service)
 
 When implemented, the AI Insights Service will be composed of several components. The exact implementation details will be defined closer to the feature's development phase and will undergo a rigorous security and privacy review. The initial high-level concepts include:
