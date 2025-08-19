@@ -68,6 +68,7 @@ This level zooms into the system boundary to show the high-level technical conta
 graph TD
     subgraph "AWS Cloud (Multi-Region)"
         APIGateway[API Gateway]
+        AuthorizerLambda[Lambda Authorizer]
         ElastiCache[ElastiCache for Caching & Rate Limiting]
         RequestLambda[Request Lambda]
         SQSQueue[SQS Queue]
@@ -76,6 +77,10 @@ graph TD
         SecretsManager[Secrets Manager for Tokens]
         S3[S3 for DLQ]
         Observability["Monitoring & Observability (CloudWatch)"]
+    end
+
+    subgraph "Google Cloud"
+        FirebaseAuth[Firebase Authentication]
     end
 
     subgraph "Future Capabilities"
@@ -87,7 +92,10 @@ graph TD
         MobileApp[Mobile Application w/ KMP Module]
     end
 
-    MobileApp -- HTTPS Request --> APIGateway
+    MobileApp -- Signs up / signs in with --> FirebaseAuth
+    MobileApp -- "HTTPS Request (with Firebase JWT)" --> APIGateway
+    APIGateway -- "Validates JWT with" --> AuthorizerLambda
+    AuthorizerLambda -- "Caches and validates against Google's public keys"--> FirebaseAuth
     APIGateway -- Invokes --> RequestLambda
     RequestLambda -- Puts job --> SQSQueue
     WorkerLambda -- Polls for jobs --> SQSQueue
@@ -99,19 +107,25 @@ graph TD
 
     RequestLambda -- Logs & Metrics --> Observability
     WorkerLambda -- Logs & Metrics --> Observability
+    AuthorizerLambda -- Logs & Metrics --> Observability
 ```
 
 1.  **Mobile Application (Kotlin Multiplatform & Native UI)**
     *   **Description:** The user-facing application that runs on iOS or Android. It handles all user interactions and is a key component of the hybrid sync model.
     *   **Technology:** Kotlin Multiplatform (KMP) for shared business logic, SwiftUI for iOS, Jetpack Compose for Android.
-    *   **Responsibilities:** Provides the UI, manages the start of the auth flow, and handles on-device syncs (e.g., HealthKit).
+    *   **Responsibilities:** Provides the UI, integrates with the Firebase Authentication SDK to manage the user sign-up/sign-in flows, securely stores JWTs, and handles on-device syncs (e.g., HealthKit).
 
-2.  **Scalable Serverless Backend (AWS)**
-    *   **Description:** An event-driven, serverless backend on AWS that orchestrates all syncs. It does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
-    *   **Technology:** AWS Lambda, API Gateway, SQS, DynamoDB Global Tables.
-    *   **Responsibilities:** Orchestrates sync jobs, executes cloud-to-cloud syncs, securely stores credentials, and stores user metadata.
+2.  **Authentication Service (Firebase Authentication)**
+    *   **Description:** A managed, third-party service that handles all aspects of user identity, including sign-up, sign-in, and social provider integration (Google/Apple).
+    *   **Technology:** Firebase Authentication (Google Cloud).
+    *   **Responsibilities:** Manages user credentials, issues short-lived JWTs to the mobile client after a successful authentication event, and provides public keys for backend token verification.
 
-3.  **Distributed Cache (Amazon ElastiCache for Redis)**
+3.  **Scalable Serverless Backend (AWS)**
+    *   **Description:** An event-driven, serverless backend on AWS that orchestrates all syncs. All incoming requests are secured by a **Lambda Authorizer** that validates the JWT provided by the client. The backend does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
+    *   **Technology:** AWS Lambda, API Gateway with Lambda Authorizer, SQS, DynamoDB Global Tables.
+    *   **Responsibilities:** Orchestrates sync jobs, executes cloud-to-cloud syncs, securely stores third-party integration credentials, and stores user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
+
+4.  **Distributed Cache (Amazon ElastiCache for Redis)**
     *   **Description:** An in-memory caching layer to improve performance and reduce load on downstream services.
     *   **Technology:** Amazon ElastiCache for Redis.
     *   **Responsibilities:**
@@ -119,12 +133,12 @@ graph TD
         *   Acts as a distributed lock manager to prevent concurrent sync job collisions for the same user.
         *   Powers the rate-limiting engine to manage calls to third-party APIs.
 
-4.  **(Future) AI Insights Service (AWS)**
+5.  **(Future) AI Insights Service (AWS)**
     *   **Description:** A service planned for a future release to provide intelligence to the platform. It will encapsulate machine learning models and LLM integrations, allowing the core sync engine to remain deterministic and focused.
     *   **Technology:** Amazon SageMaker, Amazon Bedrock, AWS Lambda.
     *   **Responsibilities:** The initial design considers providing intelligent conflict resolution, an LLM-based troubleshooter, and personalized summaries.
 
-5.  **Monitoring & Observability (AWS CloudWatch)**
+6.  **Monitoring & Observability (AWS CloudWatch)**
     *   **Description:** A centralized system for collecting logs, metrics, and traces from all backend services.
     *   **Technology:** AWS CloudWatch (Logs, Metrics, Alarms), AWS X-Ray.
     *   **Responsibilities:** Provides insights into system health, performance, and error rates. Triggers alarms for critical issues.
@@ -418,6 +432,7 @@ data class CanonicalSleepSession(
 
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
+| **Authentication Service** | **Firebase Authentication** | **Cost-Effective & Developer-Friendly.** Provides a fully managed authentication backend with a generous free tier, excellent mobile SDKs, and built-in support for social logins, as detailed in `46-user-authentication.md`. |
 | **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) across the mobile app and a potential JVM backend, while maintaining native UI performance. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Serverless Backend** | **AWS (Lambda, SQS, DynamoDB)** | **Massive Scalability & Reliability.** Event-driven architecture to meet our 1M DAU target with pay-per-use cost efficiency. |
