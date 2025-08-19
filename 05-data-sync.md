@@ -45,13 +45,13 @@ The core components are:
 
 The `Worker Lambda` will follow this algorithm for each job pulled from the SQS queue:
 
-1.  **Job Dequeue:** The Lambda function receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
+1.  **Job Dequeue:** The Lambda function receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit"). (Note: A sync *from* a provider is a "read" operation, which is consistent with that provider's capabilities).
 2.  **Get State from DynamoDB:** The worker task performs a `GetItem` call on the `SyncWellMetadata` table to retrieve the `SyncConfig` item.
     *   **PK:** `USER#{userId}`
     *   **SK:** `SYNCCONFIG#{sourceId}#to#{destId}#{dataType}`
     *   This single read provides the `lastSyncTime` and the user's chosen `conflictResolutionStrategy`.
 3.  **Fetch New Data:** It calls the `fetchData(since: lastSyncTime)` method on the source `DataProvider` (e.g., `FitbitProvider`). If new data is found, the algorithm proceeds.
-4.  **Fetch Destination Data for Conflict Resolution:** To enable conflict resolution, the worker fetches potentially overlapping data from the destination `DataProvider`. The time range for this query is calculated based on the timestamps of the new data fetched from the source, plus a small buffer to account for potential clock skew (e.g., `[min_source_timestamp - 5_minutes, max_source_timestamp + 5_minutes]`). (Note: This buffer is a configurable parameter that will be tuned based on real-world clock skew observations.)
+4.  **Fetch Destination Data for Conflict Resolution:** To enable conflict resolution, the worker fetches potentially overlapping data from the destination `DataProvider`. The time range for this query should be the exact time range of the new data fetched from the source (i.e., from the minimum to the maximum timestamp of the new records). Any tolerance for clock skew will be applied by the `ConflictResolutionEngine` during the comparison logic, not during the data fetch.
 5.  **Smart Conflict Resolution:** The `Smart Conflict Resolution Engine` is invoked. It compares the source and destination data and applies the user's chosen strategy. If the strategy is `AI-Powered Merge`, it calls the **AI Insights Service**. It outputs a final, clean list of data points to be written.
 6.  **Write Data:** The worker calls the `pushData()` method on the destination provider with the conflict-free data.
 7.  **Handle Partial Failures:** The worker **must** inspect the `PushResult` returned from the `pushData` call.
@@ -98,8 +98,8 @@ Only if all these conditions are met are the two activity records sent to the AI
         ```
     *   **Intelligence:** The service's ML model, trained on thousands of examples of merged activities, analyzes the data. It might learn, for example, that a user's Garmin device provides more reliable GPS data, while their Wahoo chest strap provides more accurate heart rate data.
     *   **Output:** The AI service returns a single, merged activity record that combines the best attributes of both sources. For example, it could take the GPS track from a Garmin device and combine it with Heart Rate data from a Wahoo chest strap for the same activity, creating a single, more complete workout file. This is far more flexible and powerful than hard-coded rules.
-    *   **Fallback Mechanism:** **Reliability of the core sync is paramount.** If the `AI Insights Service` is unavailable, times out, or returns an error, the Conflict Resolution Engine **will not fail the sync job**. Instead, it will log the error and automatically fall back to the default `Prioritize Source` strategy.
-    *   **User Transparency:** To ensure transparency for this premium feature, the result of the sync job will be stored in a `SyncHistory` record with a `resolution` attribute set to either `AI_MERGE` or `FALLBACK_PRIORITIZE_SOURCE`. The mobile client will read this history and display an informational icon next to any sync that used the fallback, with a tooltip explaining what happened. This maintains a high level of trust with our paying users.
+    *   **Fallback Mechanism:** **Reliability of the core sync is paramount.** If the `AI Insights Service` is unavailable, times out, or returns an error, this is treated as a special case. The Conflict Resolution Engine **must not fail the sync job**. Instead, it must log the error and automatically fall back to the default `Prioritize Source` strategy for the conflicting items. This ensures that a failure in a non-essential enhancement service does not prevent the user's core data from syncing.
+    *   **User Transparency:** To ensure transparency for this premium feature, the result of the sync job will be stored in a `SyncHistory` record. This record will be a new item type in the main `SyncWellMetadata` DynamoDB table, created by the Worker Lambda upon job completion. It will include the `jobId`, a `timestamp`, and a `resolution` attribute set to either `AI_MERGE` or `FALLBACK_PRIORITIZE_SOURCE`. The mobile client will read this history and display an informational icon (the specific icon and tooltip text will be defined in the UX Design Specification) next to any sync that used the fallback. This maintains a high level of trust with our paying users.
 
 ## 5. Data Integrity
 
@@ -114,11 +114,12 @@ Handling a user's request to sync several years of historical data (User Story *
 1.  **Workflow Orchestration with AWS Step Functions:** When a user requests a historical sync via the API, a direct integration between **API Gateway and AWS Step Functions** initiates a new execution of a pre-defined state machine. This approach provides superior reliability, state management, and observability compared to a manual orchestration solution, while reducing cost and latency by removing an unnecessary Lambda invocation.
 
 2.  **State Machine Logic:** The state machine, as detailed in `06-technical-architecture.md`, will perform the following steps:
-    *   **Initiate and Chunk Sync Job:** A Lambda function prepares the sync. To avoid timeouts and handle users with high data density, a **dynamic chunking algorithm** is used instead of a fixed time window. The logic is as follows:
-        1.  The function first queries the source provider for an estimated count of records in the requested historical date range.
-        2.  It then divides this total count by a maximum number of records per chunk (e.g., 5,000 records), a configurable value.
-        3.  This calculation determines the total number of chunks required. The state machine will then be invoked to process this array of chunks, where each chunk is defined by a start and end date calculated to contain approximately the maximum number of records.
-        4.  This dynamic approach ensures that chunks for a very active user cover shorter time periods, while chunks for a less active user cover longer periods, optimizing for a consistent job size rather than a fixed duration.
+    *   **Initiate and Chunk Sync Job:** A Lambda function prepares the sync. To avoid timeouts and handle providers that don't support record counts, a **time-based, dynamic splitting algorithm** must be used.
+        1.  The function starts with a large time window (e.g., one month).
+        2.  It fetches the first page of data for that window from the source provider.
+        3.  It checks if the number of records on that page exceeds the per-chunk processing limit (e.g., 5,000 records).
+        4.  **If the limit is exceeded**, the algorithm does not proceed. Instead, it splits the current time window into a smaller range (e.g., from one month to one week) and repeats the process. This dynamic splitting continues until a time window is found that contains a manageable number of records.
+        5.  This approach is more robust as it does not rely on a "total count" feature and adapts to varying data density for different users and time periods. The output of this initial step is a list of manageable time-based chunks for the state machine to process.
     *   **Map State for Parallel Processing:** The state machine will use a `Map` state to iterate over the array of chunks. This allows for parallel execution of the sync task for each chunk, dramatically improving performance.
     *   **Process One Chunk:** For each chunk, a dedicated `Worker Lambda` function is invoked. It fetches the data from the source, transforms it, and writes it to the destination. This use of Lambda is ideal for the highly parallel, on-demand nature of this task.
     *   **Built-in Error Handling & Retries:** Step Functions provides robust, configurable retry logic for transient errors. If a chunk fails repeatedly, it can be caught and logged to a Dead-Letter Queue without halting the entire workflow.
@@ -213,8 +214,8 @@ sequenceDiagram
     deactivate Worker
 ```
 
-### State Machine for a Sync Job
-*(Unchanged)*
+### Lifecycle of a Hot Path Sync Job Message
+*(This diagram illustrates the lifecycle of a single message in the SQS queue, not an AWS Step Functions state machine)*
 ```mermaid
 graph TD
     A[Queued] --> B{In Progress};

@@ -25,7 +25,7 @@ This internal specification is a blueprint for the **engineering team** to imple
 
 *   **Data Minimization:** We only request and handle data that is absolutely essential.
 *   **Privacy by Design:** The system is architected from the ground up to protect user data.
-*   **Ephemeral Backend Processing:** This is our core privacy promise. SyncWell's backend services **never persist user health data**. Health data is only ever held in-memory on our backend servers during an active sync job and is immediately discarded.
+*   **Ephemeral Backend Processing:** This is our core privacy promise. SyncWell's backend services do not persist raw user health data. As detailed later in this document, the only user-related data stored is a temporary, time-limited mapping of `userId` to a `correlationId` in the `SyncWellBreakGlassIndex` for debugging. Health data itself is only ever held in-memory on our backend servers during an active sync job and is immediately discarded.
 *   **Radical Transparency:** We are open and honest with users about what data we handle and why.
 
 ## 3. Threat Modeling & Countermeasures
@@ -33,7 +33,7 @@ This internal specification is a blueprint for the **engineering team** to imple
 | Threat Scenario | Description | Countermeasure(s) |
 | :--- | :--- | :--- |
 | **Backend Server Compromise** | An attacker gains access to the backend infrastructure. | - **Strict IAM Roles & Least Privilege:** All compute services (Lambda functions) have narrowly scoped roles that grant access only to the specific resources they need. <br>- **AWS Secrets Manager:** User OAuth tokens are stored encrypted in a dedicated, secure service. <br>- **VPC & Security Groups:** Backend services are isolated from the public internet where possible. <br>- **Regular Audits & Pen Testing:** Proactively identify and fix vulnerabilities. |
-| **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** This is the primary countermeasure for protecting on-device secrets, as it utilizes hardware-backed secure storage. <br>- **Jailbreak/Root Detection (Defense-in-Depth):** The app will make a best effort to detect if it is running on a compromised OS. While this is not a foolproof countermeasure and can be bypassed, it serves as a valuable deterrent and an additional layer of security. |
+| **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** This is the primary countermeasure for protecting on-device secrets, as it utilizes hardware-backed secure storage. <br>- **Jailbreak/Root Detection (Defense-in-Depth):** The app will make a best effort to detect if it is running on a compromised OS. If a compromised OS is detected, the app **will display a persistent warning** to the user and **log the event** to the backend for monitoring. It will not block functionality, acknowledging the risk of false positives. |
 | **Man-in-the-Middle (MitM) Attack** | An attacker intercepts traffic between the app and the backend. | - **TLS 1.2+:** All network traffic is encrypted. This is the primary and sufficient countermeasure for the MVP. <br>- **(Future) Dynamic Certificate Pinning:** While providing an additional layer of security, dynamic certificate pinning adds significant operational complexity and risk (e.g., "bricking" older app versions). This feature is **deferred for the MVP** and will be re-assessed for a future release when the product's risk profile justifies the added complexity. |
 | **Insecure Data Storage** | Sensitive data is stored insecurely. | - **Backend:** All user tokens are stored encrypted in AWS Secrets Manager. <br>- **On-Device:** The local settings database is encrypted. |
 | **Vulnerable Third-Party Dependency (Supply Chain Attack)** | A library used by the app or backend has a known security vulnerability, or a build tool/dependency is compromised. | - **Automated Dependency Scanning:** The CI/CD pipeline **must** be configured to use Snyk/Dependabot to scan for known CVEs. The pipeline **must** be configured to fail the build if a new critical or high-severity vulnerability is detected, preventing vulnerable code from being deployed. <br>- **Dependency Pinning:** All dependencies will be pinned to specific, audited versions. <br>- **Reproducible Builds:** Build environments will be scripted and version-controlled to detect unauthorized changes. |
@@ -95,6 +95,9 @@ The lifecycle of user credentials is managed by the backend to maximize security
 *   **Creation:** Tokens are acquired via the secure hybrid OAuth 2.0 flow detailed in `07-apis-integration.md`.
 *   **Storage:** Tokens are stored encrypted in **AWS Secrets Manager**.
 *   **Usage:** Worker Lambda functions are granted temporary, role-based access to retrieve the tokens they need for a specific job.
+*   **Re-authentication:** When a connection is marked as `needs_reauth` (e.g., after a 401 error), the mobile client will prompt the user to reconnect. To initiate this flow, the client will call a dedicated API endpoint to get a new provider authorization URL.
+    *   **API Endpoint:** `POST /v1/connections/{connectionId}/reauth`
+    *   **Response:** A `200 OK` with the new `authorizationUrl` in the response body.
 *   **Deletion:** When a user de-authorizes an app via the mobile client:
     1.  The mobile app sends a "revoke" request to the SyncWell backend.
     2.  The backend retrieves the token from Secrets Manager.
@@ -123,7 +126,7 @@ The backend is a core component and must be secured accordingly.
 To comply with privacy regulations like GDPR and to protect user anonymity, our logging strategy will adhere to the following principles:
 
 *   **No Persistent User Identifiers:** We will **not** log the permanent `userId` in any backend service. Logging unique identifiers that can be tied to a specific person is a violation of our privacy promise and can be a legal liability.
-*   **Use of Correlation IDs:** For debugging and tracing purposes, each request will be assigned a temporary, randomly generated `correlationId`. This ID can be used to trace a single request's journey through our backend systems. This ID will have no link to the user's permanent ID and should be considered ephemeral.
+*   **Use of Correlation IDs:** For debugging and tracing purposes, each request will be assigned a temporary, randomly generated `correlationId`. This ID can be used to trace a single request's journey through our backend systems. Any other temporary IDs used for a specific process (e.g., a `jobId` which may be the client-provided `Idempotency-Key`) should be logged alongside the `correlationId` to ensure a unified trace. The `userId` itself must never be logged.
 *   **Strict PII Scrubbing:** All logging libraries and services will be configured with strict scrubbing rules to remove any potential PII (names,emails, locations, etc.) that might accidentally be captured in error messages or stack traces.
 
 #### 6.1.1. "Break-Glass" Procedure for User-Specific Debugging
@@ -140,7 +143,7 @@ While `userId` is never logged by default, a critical operational gap exists for
     2.  **Approval:** The engineer creates a pull request containing the script to be run (e.g., a simple AWS CLI command to query a purpose-built lookup index) and the `userId` as a parameter. To ensure a timely review for a critical support issue, the requestor **must** notify the secondary on-call engineer via a direct PagerDuty alert or by posting the request in a dedicated, monitored Slack channel (`#break-glass-requests`). A second authorized engineer reviews the PR, verifies the legitimacy of the support ticket, and approves the PR.
     3.  **Execution:** Once approved, the engineer executes the peer-reviewed script from their local machine using their MFA-authenticated AWS credentials. The script performs a temporary lookup to find recent `correlationId`s associated with that `userId`.
     4.  **Debugging:** The engineer uses the retrieved `correlationId`s to find the relevant logs in CloudWatch to diagnose the issue. The mapping between `userId` and `correlationId` is not stored permanently; it is only available for a short time in the secure lookup index as described below.
-*   **Future Enhancement:** The manual, PR-based workflow is recognized as having significant operational friction that could slow down support response times. While acceptable for an MVP, replacing this process with a dedicated internal web tool that automates the approval and lookup workflow is a high-priority follow-up item for the first quarter post-launch. The core security principles (MFA, peer approval, auditing) will remain the same in the automated tool.
+*   **Future Enhancement:** The manual, PR-based workflow is recognized as having significant operational friction that could unacceptably slow down support response times during a live incident. While a necessary trade-off for the MVP, replacing this process with a dedicated internal web tool that automates the approval and lookup workflow is a high-priority follow-up item for the first quarter post-launch. The core security principles (MFA, peer approval, auditing) will remain the same in the automated tool.
 
 #### 6.1.2. Break-Glass Lookup Index Design
 
@@ -187,12 +190,12 @@ To comply with privacy regulations such as GDPR, the system must provide users w
 Users will be able to request an export of all their configuration data stored by SyncWell.
 
 *   **Workflow:**
-    1.  A user initiates a data export from the app settings.
+    1.  A user initiates a data export from the app settings, which requires re-authentication.
     2.  The app sends a request to a dedicated backend API endpoint.
-    3.  A `DataExportLambda` is triggered, which queries the `SyncWellMetadata` table in DynamoDB to retrieve all items associated with that `USER#{userId}`.
-    4.  The function formats this data into a human-readable JSON file.
-    5.  The JSON file is saved to a secure, private S3 bucket with a randomly generated, time-limited path.
-    6.  The user is sent a push notification (see `29-notifications-alerts.md`) with a secure, pre-signed S3 URL to download their data export. This URL will have a short expiry (e.g., 24 hours).
+    3.  An asynchronous `DataExportLambda` is triggered to prepare the export file and save it to a secure S3 bucket.
+    4.  Once the export is ready, the user is sent a push notification.
+    5.  Crucially, the notification **does not contain the download link**. It instructs the user to return to the app.
+    6.  Within the app, the user can now access the secure, pre-signed S3 URL to download their data. This additional step of requiring the user to be authenticated in the app to get the link prevents an attacker from gaining access to the data export via a compromised email or notification channel.
 *   **S3 Bucket Security:** The S3 bucket used to temporarily store data exports **must** be configured with the following security settings:
     *   **Block Public Access:** All "Block Public Access" settings must be enabled at the bucket level.
     *   **Default Encryption:** Server-side encryption with AWS-managed keys (SSE-S3) must be enabled by default.
@@ -201,15 +204,21 @@ Users will be able to request an export of all their configuration data stored b
 
 ### 8.2. Account Deletion ("Right to be Forgotten")
 
-Users will have a clear and irreversible option to delete their account. This process must be comprehensive, ensuring all user-related metadata and credentials are purged from our systems.
+Users will have a clear and irreversible option to delete their account. This process must be comprehensive and robust against partial failures, ensuring all user-related metadata and credentials are purged from our systems.
 
 *   **Workflow:**
     1.  A user confirms their intent to delete their account from the app settings. This is a high-friction action requiring re-authentication.
-    2.  The app sends a request to a dedicated `DELETE /v1/user/me` endpoint.
-    3.  An `AccountDeletionLambda` is triggered with the user's validated `userId`.
-    4.  The Lambda function executes a "scorched earth" policy in the following order:
-        a. **Revoke and Delete Credentials:** It iterates through all `CONN#{connectionId}` items for the user. For each, it retrieves the `CredentialArn`, fetches the tokens from AWS Secrets Manager, calls the third-party provider's token revocation endpoint, and then permanently deletes the secret from Secrets Manager.
-        b. **Delete DynamoDB Data:** It deletes all items from the `SyncWellMetadata` table with the partition key `USER#{userId}`. This includes the user profile, all connections, and all sync configurations.
-    5.  Once the process is complete, the user is logged out of the mobile app.
+    2.  The app sends a request to a dedicated `DELETE /v1/users/me` endpoint. The backend immediately returns a `202 Accepted` response and queues an asynchronous deletion job.
+    3.  The `AccountDeletionLambda` is triggered with the user's validated `userId`.
+    4.  **Mark for Deletion:** The first step is to update the user's `PROFILE` item in DynamoDB, setting a `status` attribute to `DELETING`. This makes the process idempotent and prevents other operations from occurring on the account during deletion.
+    5.  **Revoke and Delete Credentials:** The function then proceeds with the "scorched earth" policy. It iterates through all `CONN#{connectionId}` items, revokes the tokens with the third-party providers, and deletes the secrets from Secrets Manager. This process should be idempotent, gracefully handling already-revoked tokens.
+    6.  **Delete DynamoDB Data:** After all credentials have been successfully revoked, the function deletes all items from the `SyncWellMetadata` table with the partition key `USER#{userId}`.
+    7.  Once the process is complete, any active sessions for the user are invalidated.
 
 *   **Data in Backups:** User data will remain in DynamoDB backups (e.g., PITR) for their retention period (e.g., 35 days). This is an accepted practice under GDPR, provided the data is not used for any purpose and is overwritten in due course. This will be clearly stated in our public privacy policy.
+
+### 8.3. Manual Account Recovery
+
+As detailed in the risk advisory in `18-backup-recovery.md`, a manual process for migrating user data between identity providers is exceptionally high-risk and prone to social engineering.
+
+*   **MVP Policy: Not Supported.** For the MVP, manual account recovery is **not supported**. If a user loses access to their primary authentication method (e.g., their Google account), they will lose access to their SyncWell data. This is a deliberate product decision to eliminate the significant security risks associated with manual, script-based data migration.

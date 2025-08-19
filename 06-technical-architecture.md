@@ -62,7 +62,9 @@ graph TD
 
 ### Level 2: Containers
 
-This level zooms into the system boundary to show the high-level technical containers. The architecture is composed of two primary workflows: a low-latency "hot path" for real-time syncs, and a robust "cold path" for long-running historical syncs, both powered by a unified AWS Lambda compute model.
+This level zooms into the system boundary to show the high-level technical containers. The architecture is composed of two primary workflows: a low-latency "hot path" for real-time syncs, and a robust "cold path" for long-running historical syncs, both powered by a unified AWS Lambda compute model. A core technology used is **Kotlin Multiplatform (KMP)**, which allows for sharing code between the mobile application and the backend.
+
+**Note on Diagram Clarity:** The following diagram is a high-level overview intended to show the primary components and their most critical interactions. It is dense by nature. More detailed diagrams for specific workflows (e.g., Idempotency, Scheduling, Rate Limiting) are provided in the relevant sections below to explain those flows with greater clarity.
 
 ```mermaid
 graph TD
@@ -78,13 +80,13 @@ graph TD
         ThirdPartyAPIs["Third-Party Health APIs"]
     end
 
-    subgraph "AWS Cloud (Multi-Region)"
+    subgraph "AWS Cloud (Single Region MVP)"
         WAF[AWS WAF]
         APIGateway[API Gateway]
-        AuthorizerLambda[Lambda Authorizer]
+        AuthorizerLambda[Authorizer Lambda]
         HotPathEventBus[EventBridge Event Bus]
-        HistoricalOrchestrator[Step Functions State Machine]
-        DynamoDB[DynamoDB Global Table]
+        HistoricalOrchestrator[Step Functions Orchestrator]
+        DynamoDB[DynamoDB Table]
         SecretsManager[Secrets Manager]
         S3[S3 for Archiving]
         Observability["CloudWatch Suite"]
@@ -94,15 +96,15 @@ graph TD
             style VPC fill:#f5f5f5,stroke:#333
             NetworkFirewall[AWS Network Firewall]
             subgraph "Private Subnets"
-                WorkerLambda["Worker Service (AWS Lambda)"]
+                WorkerLambda["Worker Lambda"]
                 AnonymizerProxy["Anonymizer Proxy (Lambda)"]
                 ElastiCache[ElastiCache for Redis]
             end
         end
 
         subgraph "SQS Queues"
-            RealtimeSyncQueue[SQS for Real-time Jobs]
-            RealtimeSyncDLQ[SQS DLQ for Failures]
+            HotPathQueue[SQS for Hot Path Jobs]
+            HotPathDLQ[SQS DLQ for Failures]
         end
     end
 
@@ -146,9 +148,9 @@ graph TD
 
 3.  **Scalable Serverless Backend (AWS)**
     *   **Description:** A decoupled, event-driven backend on AWS that uses a **unified AWS Lambda compute model** to orchestrate all syncs. This serverless-first approach maximizes developer velocity and minimizes operational overhead.
-    *   The backend does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
+    *   The backend does not persist any raw user health data; any temporary diagnostic metadata containing user identifiers is stored in a secure, audited, time-limited index, as detailed in `19-security-privacy.md`. Data is otherwise only processed ephemerally in memory during active sync jobs.
     *   **Technology:** AWS Lambda, API Gateway, **Amazon EventBridge**, **Amazon SQS**, **AWS Step Functions**, DynamoDB Global Tables.
-    *   **Responsibilities:** The API Layer (**API Gateway**) is responsible for request validation, authorization, and routing. To ensure maximum performance and cost-effectiveness, it will leverage **API Gateway's built-in caching for the Lambda Authorizer**. The authorizer's response (the IAM policy) will be cached based on the user's identity token for a configurable TTL (e.g., 5 minutes). For subsequent requests within this TTL, API Gateway will use the cached policy and will not invoke the `AuthorizerLambda`, dramatically reducing latency and cost. The Worker Service (also Lambda) is responsible for executing all cloud-to-cloud sync jobs, securely storing credentials, and storing user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
+    *   **Responsibilities:** The API Layer (**API Gateway**) is responsible for initial request validation (e.g., format), authorization via the `AuthorizerLambda`, and routing requests to the appropriate backend service. It does not handle business-level validation like idempotency checks. To ensure maximum performance and cost-effectiveness, it will leverage **API Gateway's built-in caching for the Lambda Authorizer**. The authorizer's response (the IAM policy) will be cached based on the user's identity token for a configurable TTL (e.g., 5 minutes). For subsequent requests within this TTL, API Gateway will use the cached policy and will not invoke the `AuthorizerLambda`, dramatically reducing latency and cost. The Worker Service (also Lambda) is responsible for executing all cloud-to-cloud sync jobs, securely storing credentials, and storing user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
 
 4.  **Distributed Cache (Amazon ElastiCache for Redis)**
     *   **Description:** An in-memory caching layer to improve performance and reduce load on downstream services. The cluster must be sized appropriately to handle the high volume of requests from the worker fleet, particularly for the rate-limiting functions which will be under heavy load at 10,000 RPS.
@@ -232,7 +234,7 @@ A secure and scalable strategy is essential for managing provider-specific confi
 
 *   **Provider-Specific Configuration:** Non-sensitive configuration, such as API endpoint URLs or supported data types, is stored in a configuration file co-located with the provider's implementation in the codebase.
 *   **Application API Credentials:** The OAuth `client_id` and `client_secret` for each third-party service are highly sensitive. These are stored securely in **AWS Secrets Manager**. The backend services retrieve these credentials at runtime using a narrowly-scoped IAM role that grants access only to the secrets required for that service.
-    *   **User OAuth Tokens:** User-specific `access_token` and `refresh_token` are never stored directly in the database. They are encrypted and stored in **AWS Secrets Manager**. The Amazon Resource Name (ARN) of this secret is then stored in the user's `Connection` item in the `SyncWellMetadata` DynamoDB table. When a worker Lambda processes a job, its IAM role grants it permission to retrieve *only* the specific secret for the a connection it is working on, enforcing the principle of least privilege.
+    *   **User OAuth Tokens:** User-specific `access_token` and `refresh_token` are never stored directly in the database. They are encrypted and stored in **AWS Secrets Manager**. To avoid storing a predictable ARN, the `Connection` item in DynamoDB will store a randomly generated UUID as the pointer to the secret. The application will then use this UUID to look up the full ARN from a secure mapping, adding a layer of indirection and security. When a Worker Lambda processes a job, its IAM role grants it permission to retrieve *only* the specific secret for the a connection it is working on, enforcing the principle of least privilege.
 
 ### Level 3: Components (Future AI Insights Service)
 
@@ -250,7 +252,7 @@ The following table clarifies the integration model for each provider supported 
 | Provider | Integration Model | Rationale |
 | :--- | :--- | :--- |
 | **Apple Health** | Device-to-Cloud / Cloud-to-Device | HealthKit is a device-native framework with no cloud API. All processing must happen on the user's device. |
-| **Google Fit** | Hybrid (Device & Cloud) | While Google Fit has a REST API, the new Health Connect SDK is the preferred, modern way to integrate on Android. The implementation will be device-first, using the cloud API as a fallback. |
+| **Google Fit** | Hybrid (Device & Cloud) | While Google Fit has a REST API, the new Health Connect SDK is the preferred, modern way to integrate on Android. The implementation will be device-first. The cloud API will only be used as a fallback under specific, defined conditions, such as when a sync fails with an error indicating the on-device provider is unavailable, or for data types that are only available via the cloud API. |
 | **Fitbit** | Cloud-to-Cloud | Fitbit provides a comprehensive REST API for all data types. No on-device component is needed. |
 | **Garmin** | Cloud-to-Cloud | Garmin provides a cloud-based API. No on-device component is needed. |
 | **Strava** | Cloud-to-Cloud | Strava provides a cloud-based API. No on-device component is needed. |
@@ -259,20 +261,20 @@ The following table clarifies the integration model for each provider supported 
 
 Cloud-to-cloud syncs are handled by two distinct architectural patterns depending on the use case.
 
-#### **Real-time Sync (Hot Path)**
+#### **Hot Path Sync**
 *   **Use Case:** Handling frequent, automatic, and user-initiated manual syncs for recent data.
 *   **Flow:**
     1.  The Mobile App sends a request to API Gateway to start a sync.
-    2.  **API Gateway** uses a direct service integration (labeled in the diagram above) to validate the request and publish a semantic `RealtimeSyncRequested` event to the **EventBridge Event Bus**.
-    3.  An EventBridge rule filters for these events and sends them to the primary **Amazon SQS queue**. This queue acts as a buffer, protecting the system from load spikes.
-    4.  The SQS queue triggers the `WorkerLambda`, which processes the job.
-    5.  **Failure Handling:** The worker's logic is simplified. On a non-transient processing error, it throws an exception. The primary SQS queue is configured with a **Dead-Letter Queue (DLQ)**. After a configured number of retries (`maxReceiveCount`), SQS automatically moves the failed message to the DLQ for out-of-band analysis, improving reliability and observability.
-    6.  Upon successful completion, the `WorkerLambda` can publish a result event back to the bus for other services to consume.
-*   **Advantage:** This is a highly reliable and extensible model. Leveraging the native SQS DLQ feature simplifies the worker logic, increases reliability, and improves observability through standard CloudWatch metrics on the DLQ.
+    2.  **API Gateway** uses a direct service integration to validate the request and publish a semantic `HotPathSyncRequested` event to the **EventBridge Event Bus**.
+    3.  An EventBridge rule filters for these events and sends them to the primary **Amazon SQS queue** for Hot Path jobs. This queue acts as a buffer, protecting the system from load spikes.
+    4.  The SQS queue triggers the `Worker Lambda`, which processes the job.
+    5.  **Failure Handling:** The worker's logic is simplified. On a non-transient processing error, it throws an exception. The primary SQS queue is configured with a **Dead-Letter Queue (DLQ)**. After a configured number of retries (`maxReceiveCount` will be set to **5**), SQS automatically moves the failed message to the DLQ for out-of-band analysis. This value balances allowing recovery from transient errors against not waiting too long to detect a persistent failure.
+    6.  Upon successful completion, the `Worker Lambda` can publish a result event back to the bus for other services to consume.
+*   **Advantage:** This is a highly reliable and extensible model. Leveraging the native SQS DLQ feature simplifies the worker logic, increases reliability, and improves observability.
 
 ```mermaid
 graph TD
-    subgraph "Real-time Sync Flow"
+    subgraph "Hot Path Sync Flow"
         A[Mobile App] -- 1. Initiate --> B[API Gateway]
         B -- 2. Publishes event --> C[EventBridge]
         C -- 3. Forwards to --> SQS[SQS Queue]
@@ -283,6 +285,7 @@ graph TD
 ```
 
 #### **Historical Sync (Cold Path)**
+*   **Terminology Note:** A "Historical Sync" is a long-running *workflow*. The individual tasks processed by this workflow are assigned a *low priority* for rate-limiting purposes to ensure they do not interfere with real-time user jobs.
 *   **Use Case:** Handling user-initiated requests to backfill months or years of historical data.
 *   **Flow:**
     1.  The Mobile App sends a request to a dedicated API Gateway endpoint to start a historical sync.
@@ -309,11 +312,9 @@ In a distributed, event-driven system, operations can be retried at multiple lev
 *   **End-to-End Flow:**
     1.  **API Request:** The client sends a `POST` request, including the `Idempotency-Key` in the HTTP header.
     2.  **API Gateway:** Using a direct service integration, API Gateway passes the request payload and the `Idempotency-Key` directly to the backend service (EventBridge for real-time syncs, Step Functions for historical syncs). It does not perform any idempotency checks itself.
-    3.  **Asynchronous Worker Execution:** The worker (Lambda) receives the event, which includes the `Idempotency-Key` from the original request. Before starting any processing, it performs its own check against the central idempotency store (Redis).
-        *   If the key is found, it means the job has already been processed (e.g., due to a client retry or an SQS redelivery). The worker logs this and exits gracefully without reprocessing.
-        *   If the key is not found, the worker stores the key in the idempotency store and begins processing the job.
+    3.  **Asynchronous Worker Execution:** The worker (Lambda) receives the event, which includes the `Idempotency-Key`. Before starting any processing, it implements a **two-phase idempotency lock** against the central store (Redis), as detailed in the sequence diagram below. This robust pattern ensures that a job is not only prevented from being processed twice, but also handles race conditions where two workers attempt to process the same job simultaneously.
 
-*   **Benefit:** This approach simplifies the architecture by removing the `RequestLambda` and consolidating all idempotency logic within the asynchronous worker. While this means a duplicate request consumes minimal resources until it is checked by the worker, it is a sound trade-off for the reduced latency and operational simplicity at the API layer.
+*   **Benefit:** This approach simplifies the architecture by consolidating all idempotency logic within the asynchronous worker. While this means a duplicate request consumes minimal resources until it is checked by the worker, it is a sound trade-off for the reduced latency and operational simplicity at the API layer.
 
 #### Idempotency for Historical Syncs (Step Functions)
 For long-running historical syncs initiated via Step Functions, an additional layer of idempotency is applied at the orchestration level:
@@ -368,76 +369,43 @@ sequenceDiagram
 
 The flow in this diagram can be broken down as follows:
 1.  **Client Request:** The client initiates a request, providing a unique `Idempotency-Key`.
-2.  **API Gateway:** The gateway immediately accepts the request and forwards the job for asynchronous processing, returning `202 Accepted` to the client. It does not perform any idempotency check.
-3.  **Worker Processing:** When a worker receives the job, it attempts to create a lock by setting the key's state to `INPROGRESS` in the idempotency store, but only if the key doesn't already exist.
-4.  **Duplicate Suppression:** If this state-setting operation fails, it means another worker is already processing this exact job (or it has already completed), so the current worker exits. This prevents race conditions and duplicate processing.
-5.  **Execution and Finalization:** If the worker successfully acquires the lock, it executes the business logic. Upon success, it updates the key's state to `COMPLETED`. If it fails, it deletes the key to allow a clean retry by another worker.
+2.  **API Gateway:** The gateway immediately accepts the request and forwards the job for asynchronous processing, returning `202 Accepted` to the client.
+3.  **Worker Lock Acquisition:** When a worker receives the job, it first attempts to acquire a lock. It tries to atomically `SET` the idempotency key in Redis with a value of `INPROGRESS` and a short TTL, but only if the key does not already exist (`NX` option).
+4.  **Duplicate/In-Progress Check:**
+    *   If the `SET` operation succeeds, the worker has acquired the lock and can begin processing.
+    *   If the `SET` operation fails, the key already exists. The worker should then `GET` the key's value. If the value is `COMPLETED`, the job is a duplicate, and the worker can exit gracefully. If the value is `INPROGRESS`, another worker is currently processing the job, and the current worker can also exit.
+5.  **Execution and Finalization:** If the worker successfully acquired the lock, it executes the business logic.
+    *   **On Success:** It updates the key's value to `COMPLETED` and sets a longer TTL (e.g., 24 hours).
+    *   **On Failure:** It `DEL`etes the key entirely. This removes the `INPROGRESS` lock, allowing a subsequent retry (e.g., from SQS) to attempt the job cleanly.
 
 ## 3b. Architecture for 1M DAU
 
 To reliably serve 1 million Daily Active Users, the architecture incorporates specific strategies for high availability, performance, and scalability.
 
-### High Availability: Global Multi-Region Architecture
+### High Availability: MVP Single-Region Architecture
 
-Given the requirement for a global launch across 5 continents, a high-availability, active-active multi-region architecture is essential to provide low-latency access for users worldwide and ensure resilience against regional outages.
+To balance cost, complexity, and time-to-market for the MVP, the SyncWell backend will be deployed to a **single AWS region**. This decision resolves a critical contradiction within the initial architecture and simplifies the compliance strategy regarding data residency. While a global multi-region architecture is the long-term goal, a single-region deployment is the pragmatic and responsible choice for the initial launch.
 
-*   **Deployment:** The entire backend infrastructure will be deployed in at least three geographically dispersed AWS regions (e.g., `us-east-1` for the Americas, `eu-west-1` for Europe/Africa, `ap-southeast-1` for Asia-Pacific). This can be expanded as the user base grows.
+*   **MVP Deployment:** The entire backend infrastructure will be deployed in a single, primary AWS region (e.g., `us-east-1`). This includes all compute (Lambda), database (DynamoDB), and networking resources.
 
-    The following diagram illustrates this multi-region, active-active architecture:
+*   **Intra-Region High Availability:** High availability will be achieved *within* the single region by deploying services across multiple Availability Zones (AZs).
+    *   **Stateless Services:** API Gateway and AWS Lambda are inherently highly available across AZs.
+    *   **Stateful Services:** The DynamoDB table and ElastiCache for Redis cluster will be configured for Multi-AZ deployment. This ensures that the failure of a single AZ does not result in a service outage.
 
-    ```mermaid
-    graph TD
-        User[User] --> R53{Amazon Route 53<br>Latency-Based Routing};
+*   **Future Multi-Region Strategy:** The architecture is designed with a future multi-region deployment in mind. Key considerations for this evolution include:
+    *   **Data Replication:** Migrating from a single-region DynamoDB table to a Global Table.
+    *   **Request Routing:** Implementing latency-based routing with Amazon Route 53.
+    *   **Data Residency & Compliance (GDPR):** The single-region MVP approach simplifies compliance with data residency regulations like GDPR. The future multi-region strategy **must** include a comprehensive plan for data residency, potentially involving region-specific infrastructure silos or fine-grained data routing policies to ensure compliance. This will be a primary workstream when the multi-region expansion is prioritized.
 
-        subgraph "AWS Global Services"
-            DynamoDB[(DynamoDB Global Table)]
-            SecretsManager[(AWS Secrets Manager<br>Replicated Secret)]
-        end
+*   **Resilience Testing (Chaos Engineering):** The practice of chaos engineering remains critical, even in a single-region setup. We will use the **AWS Fault Injection Simulator (FIS)** to validate our intra-region high availability.
 
-        R53 --> Region1[AWS Region 1<br>us-east-1];
-        R53 --> Region2[AWS Region 2<br>eu-west-1];
-
-        subgraph Region1
-            direction LR
-            APIGW1[API Gateway] --> Lambda1[Compute<br>AWS Lambda]
-        end
-
-        subgraph Region2
-            direction LR
-            APIGW2[API Gateway] --> Lambda2[Compute<br>AWS Lambda]
-        end
-
-        Lambda1 --> DynamoDB;
-        Lambda1 --> SecretsManager;
-        Lambda2 --> DynamoDB;
-        Lambda2 --> SecretsManager;
-
-        style Region1 fill:#f9f9f9,stroke:#333,stroke-width:2px
-        style Region2 fill:#f9f9f9,stroke:#333,stroke-width:2px
-    ```
-
-    This diagram shows how a user is first directed by **Amazon Route 53** to the AWS region with the lowest latency. Each region contains a full deployment of the application's stateless services, including API Gateway and AWS Lambda. The core stateful services, **DynamoDB Global Tables** and **AWS Secrets Manager**, are replicated across all regions. This ensures that no matter which region a user is routed to, the compute services have low-latency access to a consistent, up-to-date copy of the user's metadata and credentials, providing a seamless global experience and high availability.
-
-    The flow of a user request in this multi-region setup is as follows:
-    1.  A user's mobile app makes a request to the SyncWell API.
-    2.  **Amazon Route 53**, using latency-based routing, directs the request to the API Gateway endpoint in the AWS region with the lowest network latency for that user.
-    3.  The stateless compute layer (API Gateway, Lambda) in that region handles the request.
-    4.  The services access a local replica of the user's data from **DynamoDB Global Tables** and **AWS Secrets Manager**, ensuring low-latency reads and writes.
-    5.  In the event of a full regional outage, Route 53 health checks will fail, and traffic will automatically be re-routed to the next nearest healthy region, providing high availability.
-
-*   **Request Routing:** **Amazon Route 53** will be configured with **Latency-Based Routing**. This will direct users to the AWS region that provides the lowest network latency, improving their application experience. Route 53 health checks will automatically detect if a region is unhealthy and redirect traffic to the next nearest healthy region.
-*   **Data Replication & Consistency:**
-    *   **DynamoDB Global Tables:** User metadata and sync configurations will be stored in a DynamoDB Global Table. This provides built-in, fully managed, multi-master replication across all deployed regions, ensuring that data written in one region is automatically propagated to others with low latency.
-    *   **Write Conflict Resolution:** By using a multi-master database, write conflicts can occur (e.g., if a user changes a setting in two regions simultaneously). For the MVP, we will rely on DynamoDB's default "last writer wins" conflict resolution strategy. This is a high-risk approach that can lead to silent data loss and is only considered an acceptable starting point for non-critical user settings. A more robust strategy, such as using version numbers and conditional writes to detect and reject conflicting updates, **must be implemented** for critical user configuration data before the feature set expands.
-*   **Credential Storage:** **AWS Secrets Manager** secrets will be replicated to each active region. This ensures that worker tasks (AWS Lambda) in any region can access the necessary third-party OAuth tokens to perform sync jobs.
-*   **Resilience Testing (Chaos Engineering):** To proactively validate our multi-region high availability, we will practice chaos engineering. We will use the **AWS Fault Injection Simulator (FIS)** to inject faults into our pre-production environments on a regular, scheduled basis (e.g., weekly). This practice is critical for building confidence in our system's ability to withstand turbulent conditions in production.
-
-    **Example Experiment Catalog:**
+    **MVP Experiment Catalog:**
     *   **Worker Failure:** Terminate a random percentage (10-50%) of Lambda instances to ensure that SQS retries and the remaining fleet can handle the load.
     *   **API Latency:** Inject a 500ms latency into calls from a worker Lambda to a third-party API endpoint to verify that timeouts and retry logic work as expected.
     *   **DynamoDB Latency:** Inject latency on DynamoDB reads/writes to test application-level timeouts.
-    *   **Secrets Manager Unavailability:** Block access to AWS Secrets Manager for a short period to ensure that workers with cached credentials continue to function and that the failure to retrieve new credentials is handled gracefully.
-    *   **Full Regional Failover Drill:** Use FIS and Route 53 health check manipulation to simulate a full regional outage, forcing a failover and allowing us to measure the real-world RTO.
+    *   **Secrets Manager Unavailability:** Block access to AWS Secrets Manager for a short period to verify that the worker fails gracefully when it cannot retrieve credentials and that the job is correctly returned to the queue for a later retry.
+    *   **Availability Zone Failure:** Use FIS to simulate the failure of a single Availability Zone to validate that our Multi-AZ configuration for DynamoDB and ElastiCache works as expected and that the system remains operational.
+    *   **Cache Cluster Failure:** Simulate a full failure of the ElastiCache cluster to verify that the system enters a safe, degraded mode and does not overwhelm the database (i.e., test the "cache stampede" scenario).
 
 ### Performance & Scalability: Caching, Load Projections & Networking
 
@@ -452,6 +420,7 @@ Given the requirement for a global launch across 5 continents, a high-availabili
     | **Rate Limit Token Bucket** | `ratelimit##{providerKey}` | A hash containing tokens and timestamp | 60 seconds | TTL-based | Powers the distributed rate limiter for third-party APIs. |
 | **API Gateway Authorizer (L1 Cache)** | User's Identity Token | The generated IAM policy document | 5 minutes | TTL-based (in API Gateway) | The primary, most critical cache. Caches the final authorization policy at the API Gateway level, avoiding a Lambda invocation entirely for most requests. |
 | **JWT Public Keys (L2 Cache)**| `jwks##{providerUrl}` | The JSON Web Key Set (JWKS) document | 1 hour | TTL-based (in-memory) | A secondary, in-memory cache inside the authorizer Lambda. It caches the public keys from auth providers (e.g., Google) and is only used when the L1 API Gateway cache misses, further reducing latency on the first request for a given user. |
+| **Negative Lookups** | Varies | Special "not-found" value | 1 minute | TTL-based | To prevent repeated, fruitless database queries for non-existent data, negative lookups (confirming an item does not exist) will also be cached. |
 
 To visually explain the rate-limiting pattern, the following diagram shows how a worker interacts with the distributed rate limiter before calling an external service.
 
@@ -459,6 +428,7 @@ To visually explain the rate-limiting pattern, the following diagram shows how a
 sequenceDiagram
     participant Worker as "Worker Lambda"
     participant Redis as "ElastiCache for Redis\n(Rate Limiter)"
+    participant SQS as "SQS Queue"
     participant ThirdParty as "Third-Party API"
 
     Worker->>Worker: Need to call external API
@@ -470,18 +440,19 @@ sequenceDiagram
         ThirdParty-->>-Worker: 200 OK
     else Token Not Available (Rate Limit Exceeded)
         Redis-->>-Worker: FAIL
-        Worker->>Worker: Abort call and retry job later
+        Worker->>SQS: ChangeMessageVisibility(delay)
+        note right of Worker: Return job to queue with a delay
     end
 
 ```
 
-This sequence diagram shows a **Worker Lambda** needing to make an external API call. Before doing so, it first interacts with the **ElastiCache for Redis** cluster, which acts as the distributed rate limiter. The worker makes a single, atomic call (typically using a Lua script) to check and decrement the token bucket for the specific third-party service. If the script returns `OK`, a token was available, and the worker proceeds to call the **Third-Party API**. If the script returns `FAIL`, it means the rate limit has been exceeded. In this case, the worker must abort the attempt and retry the entire job later, ensuring the system respects the external API's limits.
+This sequence diagram shows a **Worker Lambda** needing to make an external API call. Before doing so, it first interacts with the **ElastiCache for Redis** cluster. If a token is available, it proceeds. If the rate limit is exceeded, the worker **must not** simply fail. Instead, it will use the SQS `ChangeMessageVisibility` API call to return the job to the queue with a visibility timeout (a delay). This is more efficient than a full failure and retry, as it provides more precise control over the backoff period.
 
 The workflow for the distributed rate limiter is as follows:
 1.  The **Worker Lambda** is about to make an API call to a third-party service.
-2.  Before making the external call, it first makes a single, atomic call to the **ElastiCache for Redis** cluster. This call (typically using a Lua script for atomicity) checks if a token is available in the bucket for that specific third-party service and, if so, decrements the token count.
-3.  **If a token was available**, the Redis script returns `OK`. The worker then proceeds to make the outbound API call to the **Third-Party API**.
-4.  **If a token was not available** (the rate limit has been exceeded), the Redis script returns `FAIL`. The worker **must not** make the external API call. Instead, it should abort the current task and allow the job to be retried later, ensuring the system respects the external API's limits.
+2.  It makes an atomic call to the **ElastiCache for Redis** cluster to check for and consume a token.
+3.  **If a token was available**, the worker proceeds to make the outbound API call to the **Third-Party API**.
+4.  **If a token was not available** (the rate limit has been exceeded), the worker **must not** make the external call. Instead, it must call the SQS `ChangeMessageVisibility` API to return the message to the queue with a calculated delay. This is the designated backoff mechanism.
 
 *   **Load Projections & Resource Estimation:**
     *   **Assumptions (Bottom-Up Estimation):**
@@ -501,14 +472,13 @@ The workflow for the distributed rate limiter is as follows:
         *   To ensure the system can meet its performance targets under realistic, worst-case conditions, the concurrency calculation **must** be based on the P90 Service Level Objective (SLO) for job duration (15 seconds), not an optimistic average.
         *   Required Concurrency (Worst-Case) = `3,000 jobs/s * 15s/job = 45,000 concurrent Lambda executions`.
         *   **Provisioned Concurrency:** Given that the `WorkerLambda` uses a KMP/JVM runtime with known cold start latencies, **Provisioned Concurrency** will be enabled for the `WorkerLambda` fleet. This keeps a specified number of execution environments warm and ready to respond instantly. This strategy is critical for eliminating cold start latency and making performance more predictable.
-    *   **Feasibility & Risk Mitigation (Critical):**
-        *   The projection of **~45,000 concurrent executions** represents a worst-case scenario that the system must be able to withstand. This number has **catastrophic implications for cost and technical feasibility**, and it dramatically increases the project's risk profile. As noted in `16-performance-optimization.md`, addressing this risk is a project-blocking prerequisite.
-        *   The following actions are **mandatory prerequisites** before any significant implementation work proceeds:
-            1.  **Create Detailed Cost Model:** A full cost analysis for **45,000** provisioned concurrency Lambda instances must be completed and approved by project stakeholders.
-            2.  **Conduct Downstream Load Tests:** A proof-of-concept load test must be performed, specifically targeting the validation of downstream dependencies (third-party APIs, ElastiCache, Secrets Manager, VPC networking) under the projected parallel load.
-            3.  **Secure Service Limit Increases:** The AWS account limits for Lambda concurrency and other relevant services must be formally requested and approved well in advance of launch.
-            4.  **Architectural Alternatives Assessment:** Alternatives that could lower concurrency for the same throughput (e.g., batching multiple jobs in a single Lambda, exploring AWS Fargate) must be seriously assessed for future cost optimization and risk reduction.
-            A phased rollout, gradually increasing user load while monitoring system performance, remains a mandatory part of the release strategy.
+    *   **Feasibility & Risk Mitigation (CRITICAL PROJECT BLOCKER):**
+        *   The projection of **~45,000 concurrent executions** represents a worst-case scenario that is financially and technically extreme. This finding is considered a **potential project-threatening risk**. The architecture must not be approved for implementation until this risk is fully mitigated.
+        *   The following actions are **mandatory, project-blocking prerequisites** before implementation can begin:
+            1.  **Halt Project & Build Cost Model:** The project **must be halted** until a detailed cost model for this level of concurrency is created, presented to, and explicitly approved by all project stakeholders. The financial viability of this approach is questionable and must be proven.
+            2.  **Mandatory Proof-of-Concept:** A proof-of-concept load test **must be executed** to validate that this level of concurrency is technically achievable and does not overwhelm downstream dependencies (especially third-party APIs). This is not a post-design task; it is a prerequisite for architectural acceptance.
+            3.  **Architectural Re-evaluation:** The architecture **must be re-evaluated** to identify and prioritize alternatives that reduce concurrency. Strategies like batching multiple sync jobs within a single Lambda invocation or moving the workload to a container-based model (e.g., AWS Fargate) must be prototyped and compared against the current Lambda-per-job model. The goal is to find a more cost-effective and less risky approach.
+            4.  **Secure Service Limit Increases:** Any approved architecture will still require significant scale. The required AWS account limits for Lambda concurrency (or other services) must be formally requested and approved well in advance of launch.
     *   **DynamoDB:**
         *   We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased via a Savings Plan to cost-effectively handle the predictable average load. **On-Demand Capacity** will handle any traffic that exceeds the provisioned throughput, providing the best of both worlds in terms of cost and elasticity.
 
@@ -541,14 +511,15 @@ Below are the different data entities, or "item types," that will be stored in t
 | :--- | :--- | :--- | :--- |
 | **User Profile** | `USER#{userId}` | `PROFILE` | `SubscriptionLevel`, `CreatedAt`. Stores top-level user attributes. A user's profile is the root item for all their related data. |
 | **Connection** | `USER#{userId}` | `CONN#{connectionId}` | `Status` (`active`, `needs_reauth`), `CredentialArn`. Represents a user's authenticated link to a 3rd party (e.g., Fitbit). This is referred to as a "Connection". |
-| **Sync Config** | `USER#{userId}` | `SYNCCONFIG#{sourceId}#to#{destId}#{dataType}` | `LastSyncTime`, `ConflictStrategy`, `IsEnabled`. Defines a single data sync flow for a user. |
+| **Sync Config** | `USER#{userId}` | `SYNCCONFIG#{sourceId}#to#{destId}##{dataType}` | `LastSyncTime`, `ConflictStrategy`, `IsEnabled`. Defines a single data sync flow for a user. |
 | **Hist. Sync Job** | `USER#{userId}` | `HISTORICAL##{orchestrationId}` | `ExecutionArn`, `StartDate`, `Status`. Acts as a pointer to the AWS Step Functions execution that orchestrates a large historical data sync. The definitive status is stored in the state machine itself. |
 
-*Example SYNCCONFIG SK:* `SYNCCONFIG#fitbit#to#googlefit#steps`.
+*Example SYNCCONFIG SK:* `SYNCCONFIG#fitbit#to#googlefit##steps`.
 
 **Note on Sparse Attributes:** This single-table design makes use of sparse attributes. Attributes that are not relevant to a particular item type (e.g., a `LastSyncTime` attribute on a `PROFILE` item) are not stored at all for that item. This is a core feature of NoSQL databases and is highly efficient, as it reduces both storage costs and the amount of data transferred for each read operation.
 
-**Note on Historical Sync Job Items:** Storing a potentially large number of `HISTORICAL` items in the same item collection as the `PROFILE` and `CONN` items can lead to performance degradation when fetching core user data. The query to "Get all settings for a user" (`PK = USER#{userId}`) will retrieve these job items, increasing payload size and read costs. To mitigate this, client-side queries for a user's core profile should explicitly filter to only retrieve items with SKs beginning with `PROFILE`, `CONN`, or `SYNCCONFIG`. This avoids fetching the potentially large list of historical job pointers unless they are explicitly needed.
+**Note on Historical Sync Job Items:** Storing a potentially large number of `HISTORICAL` items in the same item collection as the `PROFILE` and `CONN` items can lead to performance degradation when fetching core user data. The query to "Get all settings for a user" (`PK = USER#{userId}`) will retrieve these job items, increasing payload size and read costs. The initial mitigation of relying on client-side filtering is weak and error-prone.
+**Stronger Mitigation Strategy:** A more robust, backend-enforced mitigation will be used. The primary API endpoint for fetching a user's profile and settings **must not** return `HISTORICAL` job items by default. These items should only be returned if explicitly requested via a separate API endpoint (e.g., `GET /v1/users/me/historical-syncs`) or a specific query parameter. This ensures that the most common API calls remain fast and efficient.
 
 ### Supporting Operational Access Patterns
 
@@ -586,32 +557,46 @@ This single-table design efficiently serves the following critical access patter
 
 This structure provides a flexible and scalable foundation for our application's metadata needs.
 
+### Data Consistency and Conflict Resolution
+
+While the single-region architecture avoids multi-master write conflicts, race conditions can still occur with highly concurrent workers. To prevent data loss from simultaneous updates, the following strategies will be employed:
+
+*   **Distributed Locking:** For stateful processes like sync jobs, a DynamoDB-based distributed lock will be used to ensure only one worker can operate on a specific resource at a time, as detailed in the "Distributed Locking" section.
+*   **Optimistic Locking with Versioning:** For updates to critical user configuration data (e.g., a `SYNCCONFIG` item), the application **must** use optimistic locking. This will be implemented by:
+    1.  Adding a `version` attribute (a number) to the DynamoDB item.
+    2.  When reading the item, the application notes the current `version`.
+    3.  When writing an update, the application will use a **condition expression** to ensure the `version` number on the server is the same as when it was read.
+    4.  If the condition check passes, the update succeeds, and the `version` number is incremented.
+    5.  If the condition check fails, it means another process updated the item in the meantime. The client must re-read the data, re-apply its change, and try the write again.
+This approach replaces the high-risk "last writer wins" strategy with a safe, industry-standard pattern for preventing lost updates.
+
 **Mitigating "Viral User" Hot Partitions:** While the single-table design is highly efficient, it presents a "hot partition" risk for a "viral user" whose activity dramatically exceeds the norm. Because all data for one user resides on the same physical partition, their high traffic could lead to throttling. The strategy to mitigate this must be chosen carefully to balance performance and complexity.
 
 **Primary Strategy: "Hot User" Isolation via Dedicated Table**
 
 The recommended primary strategy is to isolate the hot user's data into a separate, dedicated DynamoDB table. This provides complete performance isolation with minimal architectural complexity.
 
-*   **Identification and Flagging:**
-    *   A user is identified as "hot" through a specific, automated monitoring and alerting strategy. A CloudWatch Alarm **must** be configured to detect sustained throttling for a specific partition key.
-    *   **Metric:** The alarm will monitor the `ThrottledRequests` metric for the `SyncWellMetadata` DynamoDB table.
-    *   **Threshold:** It will trigger if the sum of throttled requests for a single partition key exceeds a defined threshold (e.g., >100 throttled read/write events over a 15-minute period). The `userId` causing the throttling will be extracted from the logs or metrics for investigation.
-    *   For the MVP, flagging a user will remain a **manual operational procedure** based on this alert. An authorized engineer will set a boolean attribute, `isHot`, to `true` on the user's `PROFILE` item in the main `SyncWellMetadata` table.
+    *   **Identification and Mitigation:**
+        *   **Automated Identification:** A user is identified as "hot" via a CloudWatch Alarm on the `ThrottledRequests` metric for the `SyncWellMetadata` table. This alarm **must** be configured to use high-cardinality custom metrics (e.g., using CloudWatch Embedded Metric Format) to pinpoint the specific `userId` causing the throttling, as this is not possible with standard metrics.
+        *   **Automated Mitigation Workflow:** A manual response to a "hot user" alert is not a scalable or reliable solution. The mitigation process **must be automated**. The CloudWatch alarm will trigger a Step Functions workflow that orchestrates the entire migration process without human intervention.
+
+*   **Automated Migration Workflow (via Step Functions):**
+    1.  **Trigger:** The CloudWatch alarm on `ThrottledRequests` triggers the "Hot User Migration" Step Functions state machine, passing the `userId` as input.
+    2.  **Flag for Migration:** The first step is a Lambda function that flags the user's `PROFILE` item with a `migrationStatus: "IN_PROGRESS"` attribute. This prevents race conditions.
+    3.  **Copy Data:** A parallel step copies all items for the user from the main table to the dedicated `SyncWellMetadata_HotUsers` table.
+    4.  **Verify Data:** The workflow verifies that the data has been copied correctly.
+    5.  **Activate Redirect:** Upon successful verification, the workflow updates the user's "pointer" item in the main table, setting `isHot: true` and `migrationStatus: "COMPLETED"`. This atomically switches all new application traffic to the hot table.
+    6.  **Alerting:** The workflow sends a notification to a Slack channel to inform the engineering team that a user has been automatically migrated.
 
 *   **Application Logic:**
-    *   A centralized data access layer in the application code will be responsible for all interactions with the `SyncWellMetadata` table(s).
-    *   To determine which table to query, this layer will **always** first attempt to read a "pointer" record for the user from the **main table**. This read can be heavily cached.
-    *   **Pointer Record:** After a user is migrated, a small "pointer" or "shadow profile" item remains in the main table. This item contains only the `userId` and the `isHot: true` flag.
-    *   If this pointer record exists and `isHot` is `true`, all subsequent reads and writes for that user's full profile will be routed to the dedicated `SyncWellMetadata_HotUsers` table. If the pointer record is absent or `isHot` is false, requests are routed to the main table as normal.
+    *   The application's data access layer will check the `isHot` flag (which can be heavily cached) to determine which table to query. If the flag is true, all requests are routed to the `SyncWellMetadata_HotUsers` table.
 
-*   **Migration and Operational Management:**
-    *   **Migration Script:** The process will be handled by a version-controlled, peer-reviewed operational script. When a user is flagged as "hot," an authorized engineer will run this script, which performs the following steps:
-        1.  Reads all items for the `USER#{userId}` from the main `SyncWellMetadata` table.
-        2.  Writes all of those items to the `SyncWellMetadata_HotUsers` table.
-        3.  Verifies that the data has been copied correctly.
-        4.  Sets the `isHot: true` flag on the user's `PROFILE` item in the *main* table. This acts as the "switch" that redirects all future application traffic.
-    *   **De-migration Process:** If a user's activity level returns to normal, a similar script will be run to migrate them back. It will copy the data back to the main table and then remove the `isHot` flag from the user's profile.
-    *   **Operational Overhead:** The primary overhead is the need for manual intervention by the on-call engineer. This includes monitoring the alerts, running the peer-reviewed migration scripts, and verifying the outcome. This manual process introduces unacceptable latency into a critical scaling workflow and is prone to human error. While acceptable for an MVP, it is a significant operational risk that is not scalable. Automating this workflow with a secure internal tool **must be prioritized** on the post-launch roadmap. The process is designed to be used rarely, only for extreme outlier users, thus keeping the operational burden low.
+*   **Advantages of Automation:**
+    *   **Scalability:** The system can respond to "hot user" events automatically, 24/7, without requiring an engineer to be paged.
+    *   **Reliability:** An automated, tested workflow is far less prone to human error than a manual script-based process.
+    *   **Speed:** The time to mitigate is reduced from minutes/hours to seconds, protecting overall system health.
+
+*   **Manual Override:** A manual, script-based process may be maintained for emergency use or for de-migrating a user, but it must be subject to the most stringent peer review and safety checks. The primary path **must** be the automated one.
 
 *   **Advantages:**
     *   **Simplicity:** This approach avoids the significant read-side complexity of other techniques like write-sharding, as the application logic only needs to select a table name, not query multiple shards and merge results.
@@ -665,10 +650,10 @@ graph TD
 
 *   **State Machine Logic:**
     1.  **Initiate & Calculate Chunks:** The workflow is triggered, and a Lambda function calculates the date range, breaking it into an array of smaller, logical chunks.
-    2.  **Process in Parallel (`Map` State):** The state machine uses a `Map` state to iterate over the array of chunks, invoking a worker Lambda for each chunk in parallel. This dramatically improves performance.
-    3.  **Process One Chunk:** The worker Lambda is responsible for the core logic: fetching data for its assigned chunk, transforming it, and writing it to the destination platform.
+    2.  **Process in Parallel (`Map` State):** The state machine uses a `Map` state to iterate over the array of chunks, invoking a Worker Lambda for each chunk in parallel. This dramatically improves performance.
+    3.  **Process One Chunk:** The Worker Lambda is responsible for the core logic: fetching data for its assigned chunk, transforming it, and writing it to the destination platform.
     4.  **Error Handling:** The state machine has a declarative `Retry` policy for transient errors. The `Map` state can also be configured with a `Catch` block to handle and log persistent failures for a specific chunk without halting the entire workflow.
-    5.  **Finalize Sync:** After the `Map` state completes, a final Lambda function is invoked to send a "success" push notification to the user.
+    5.  **Finalize Sync & Notify User:** After the `Map` state completes, a final Lambda function is invoked. Its responsibility is to publish a `HistoricalSyncCompleted` or `HistoricalSyncFailed` event. This event triggers a push notification to the user (e.g., `N-05` or `N-06`) to inform them of the outcome. This push-based approach is far more efficient and provides a better user experience than requiring the client to poll for status.
 
 ## 3d. Core API Contracts
 
@@ -723,7 +708,7 @@ Initiates a new synchronization job for a user.
     *   **`mode` (enum):**
         *   `manual`: A sync explicitly triggered by the user for recent data. This is a hot-path operation.
         *   `historical`: A sync triggered by the user to backfill a large amount of data. This is a cold-path operation that starts the Step Functions orchestrator.
-    *   **`dateRange` (object, optional):** Required only when `mode` is `historical`. Specifies the start and end dates for the data backfill.
+    *   **`dateRange` (object):** This field is **required** if and only if `mode` is `historical`. If `mode` is `historical` and this field is omitted, the API will return a `400 Bad Request`.
     *   **Note on Automatic Syncs:** Automatic background syncs are not triggered via this public API. They are initiated by an internal scheduling mechanism (e.g., an Amazon EventBridge scheduled rule) that places jobs directly onto the event bus.
 
 *   **Success Response (202 Accepted):**
@@ -737,6 +722,7 @@ Initiates a new synchronization job for a user.
       "message": "Sync job has been queued for processing."
     }
     ```
+    *   **Note on `jobId`:** The returned `jobId` will be the same as the `Idempotency-Key` provided by the client in the request header. This allows for end-to-end traceability of the operation. A `GET /v1/sync-jobs/{jobId}` endpoint may be added in the future to allow clients to poll for job status.
 
 *   **Error Response (400 Bad Request):**
 
@@ -789,19 +775,32 @@ Initiates an asynchronous job to export all user-related data.
     {
       "jobId": "export-job-abc123",
       "status": "PENDING",
-      "message": "Your data export has been initiated. You will receive a notification with a download link when it is ready."
+      "message": "Your data export has been initiated. You will receive a notification when it is ready."
     }
     ```
 
-#### DELETE /v1/user/me
+#### GET /v1/export-jobs/{jobId}
 
-Permanently deletes a user's account and all associated data. This is an irreversible action.
+Checks the status of a data export job.
+
+*   **Success Response (200 OK):**
+    ```json
+    {
+      "jobId": "export-job-abc123",
+      "status": "SUCCEEDED",
+      "downloadUrl": "https://s3-presigned-url/..."
+    }
+    ```
+
+#### DELETE /v1/users/me
+
+Permanently deletes a user's account and all associated data. This is an irreversible action that is performed asynchronously.
 
 *   **Request Body:** (Empty)
 
-*   **Success Response (204 No Content):**
+*   **Success Response (202 Accepted):**
 
-    A successful response with an empty body indicates that the deletion process has begun.
+    A successful response indicates that the asynchronous deletion process has been queued. It does not guarantee immediate deletion.
 
 ## 3e. Canonical Data Models
 
@@ -832,9 +831,12 @@ data class CanonicalWorkout(
     // The type of activity.
     val activityType: CanonicalActivityType,
 
-    // Timestamps in ISO 8601 format (UTC).
+    // Timestamps in ISO 8601 format (UTC). While stored in UTC, the original timezone is essential for correct interpretation.
     val startTimestamp: String,
     val endTimestamp: String,
+
+    // The IANA timezone identifier (e.g., "America/New_York") in which the activity occurred.
+    val timezone: String? = null,
 
     // Duration of the workout in seconds.
     val durationSeconds: Double,
@@ -846,13 +848,42 @@ data class CanonicalWorkout(
     val energyKcal: Double? = null,
 
     // Optional title or name for the activity.
-    val title: String? = null
+    val title: String? = null,
+
+    // Optional free-text notes about the activity. High-risk for PII.
+    val notes: String? = null
 ) : CanonicalData
+```
+
+### `ProviderTokens`
+
+This is a core, shared data structure for securely handling credentials.
+
+```kotlin
+// CRITICAL SECURITY NOTE: This data class holds sensitive credentials.
+// It MUST NOT be annotated with @Serializable to prevent accidental leakage.
+// Its toString() method MUST be overridden to redact token values before logging.
+data class ProviderTokens(
+    // The primary token used to authenticate API requests.
+    val accessToken: String,
+
+    // The token used to refresh an expired access token. May be null for some providers.
+    val refreshToken: String? = null,
+
+    // The lifetime of the access token in seconds from the time of issuance.
+    val expiresInSeconds: Long,
+
+    // The time the token was issued, in epoch seconds. Used with expiresInSeconds to calculate the absolute expiration time.
+    val issuedAtEpochSeconds: Long, // Note: System.currentTimeMillis() is JVM-specific and has been removed. Time should be injected.
+
+    // A space-separated list of scopes granted by the user.
+    val scope: String? = null
+)
 ```
 
 ### `CanonicalSleepSession`
 
-Represents a period of sleep. The definitive schema is implemented as a Kotlin `data class` in the KMP shared module.
+Represents a period of sleep. The definitive schema is implemented as a Kotlin `data class` in the KMP shared module. **Note:** This data model is defined for future use and is not processed by any sync job in the MVP.
 
 ```kotlin
 import kotlinx.serialization.Serializable
@@ -862,9 +893,12 @@ data class CanonicalSleepSession(
     val sourceId: String,
     val sourceProvider: String,
 
-    // Timestamps in ISO 8601 format (UTC).
+    // Timestamps in ISO 8601 format (UTC). While stored in UTC, the original timezone is essential for correct interpretation of sleep cycles.
     val startTimestamp: String,
     val endTimestamp: String,
+
+    // The IANA timezone identifier (e.g., "America/New_York") in which the sleep session occurred.
+    val timezone: String? = null,
 
     // Total time in bed, in seconds.
     val timeInBedSeconds: Long,
@@ -939,28 +973,6 @@ graph TD
 ```
 
 This diagram illustrates the entire scheduling pipeline. The process begins with a single **EventBridge Rule** that runs on a fixed schedule (e.g., every 15 minutes). This rule triggers a **Step Functions State Machine**, which orchestrates the main workflow. The state machine first calculates the number of parallel shards required to process the user base, then uses a **Map State** to invoke a `Shard Processor Lambda` for each shard simultaneously. Each Lambda instance is responsible for finding all users within its assigned shard who are due for a sync. It then publishes individual `SyncRequested` events to the main **EventBridge Bus**, which routes them to the SQS queue for the Lambda worker fleet to process. This fan-out architecture is highly scalable and avoids the anti-pattern of managing millions of individual timers.
-
-```kotlin
-import kotlinx.serialization.Serializable
-
-@Serializable
-data class ProviderTokens(
-    // The primary token used to authenticate API requests.
-    val accessToken: String,
-
-    // The token used to refresh an expired access token. May be null for some providers.
-    val refreshToken: String? = null,
-
-    // The lifetime of the access token in seconds from the time of issuance.
-    val expiresInSeconds: Long,
-
-    // The time the token was issued, in epoch seconds. Used with expiresInSeconds to calculate the absolute expiration time.
-    val issuedAtEpochSeconds: Long = System.currentTimeMillis() / 1000,
-
-    // A space-separated list of scopes granted by the user.
-    val scope: String? = null
-)
-```
 
 ### 3g. Client-Side Persistence and Offline Support Strategy
 
@@ -1038,7 +1050,8 @@ A detailed financial model is a mandatory prerequisite before implementation.
     *   **Granular IAM Roles:** Each compute component (e.g., API Gateway's IAM role, the Authorizer Lambda, and each Worker Lambda) has its own unique IAM role with a narrowly scoped policy. For example, a worker Lambda for a specific third-party service is only granted permission to access the specific secrets and DynamoDB records relevant to its task. It cannot access resources related to other services.
     *   **Resource-Based Policies:** Where applicable, resource-based policies are used as an additional layer of defense. For example, the AWS Secrets Manager secret containing third-party tokens will have a resource policy that only allows access from the specific IAM roles of the workers that need it.
 *   **Egress Traffic Control (Firewall):** To enforce the principle of least privilege at the network layer, an egress firewall will be implemented to control outbound traffic from the VPC. The `WorkerLambda` functions need to call third-party APIs, and this traffic will be routed through an **AWS Network Firewall**. A firewall policy will be configured with an allow-list of the specific Fully Qualified Domain Names (FQDNs) for required partners (Fitbit, Strava, etc.). This provides defense in depth; if a function were compromised, this control would prevent it from exfiltrating data or communicating with malicious domains. It also provides a centralized point for auditing all outbound connections.
-*   **Code & Pipeline Security:** Production builds will be obfuscated. Dependency scanning (Snyk) and static application security testing (SAST) will be integrated into the CI/CD pipeline, failing the build if critical vulnerabilities are found.
+    *   **Justification for AWS Network Firewall:** The choice of AWS Network Firewall is a deliberate trade-off prioritizing security and operational simplicity over cost. While simpler solutions like a NAT Gateway with a proxy server (e.g., Squid on Fargate) can achieve FQDN allow-listing, Network Firewall provides a fully managed, highly available solution with advanced features like intrusion prevention and centralized logging, which are desirable for a system operating at our target scale and handling sensitive data. The higher cost is accepted in exchange for this enhanced, managed security posture.
+*   **Code & Pipeline Security:** Production builds will be obfuscated. Dependency scanning (Snyk) and static application security testing (SAST) will be integrated into the CI/CD pipeline, failing the build if critical vulnerabilities are found. Any new open-source AI frameworks (like `LangGraph`) must undergo a formal security review and threat modeling exercise before being integrated.
 
 ### Compliance
 *   **Data Handling and Ephemeral Processing:** User health data is only ever processed **ephemerally in memory** on our backend servers during an active sync job. It is **never persisted** on our systems. The maximum lifetime for data in-flight during a sync job is 5 minutes, after which it is guaranteed to be purged. This core architectural principle is our primary safeguard for user privacy.
@@ -1053,7 +1066,8 @@ To enable future product improvements through analytics and machine learning wit
 #### Real-Time Anonymization for Operational AI
 For features like the AI-Powered Merge, which require a synchronous, real-time response, a dedicated **Anonymizer Proxy Lambda** will be used. This is a critical component for fulfilling our "privacy by design" promise for real-time operational features. It is explicitly designed to address the privacy gap for synchronous AI requests, as distinct from the batch analytics pipeline.
 
-*   **Mechanism:** The `WorkerLambda` does not call the `AI Insights Service` directly. Instead, it makes a synchronous, request-response invocation to the `AnonymizerProxy`. This proxy function's sole responsibility is to strip or replace all PII from the request payload in real-time before forwarding the now-anonymized data to the `AI Insights Service`. The proxy then waits for the response from the AI service and passes it back to the original `WorkerLambda`.
+*   **Mechanism:** The `WorkerLambda` does not call the `AI Insights Service` directly. Instead, it makes a synchronous, request-response invocation to the `AnonymizerProxy`. This proxy function's sole responsibility is to strip or replace all PII from the request payload in real-time before forwarding the now-anonymized data to the `AI Insights Service`.
+    *   **Implementation Details:** The `AnonymizerProxy` will be a lightweight AWS Lambda function written in Python for performance. It is expected to require minimal memory (<256MB) and its P99 latency is included in the overall performance budget.
 
     The following diagram illustrates this synchronous, privacy-enhancing request flow:
 
@@ -1088,13 +1102,12 @@ For features like the AI-Powered Merge, which require a synchronous, real-time r
 | `energyKcal` | **Keep** | Kept as-is. Essential context. |
 | `title` | **Remove** | High-risk PII (e.g., "Run with Jane Doe"). Must be completely removed. |
 | `notes` | **Remove** | High-risk PII. Must be completely removed. |
-| *GPS Data* | **Remove** | (If added in future) Any precise location data must be completely removed. |
 
 *   **Privacy Guarantee:** This proxy-based architecture provides a strong guarantee that no raw user PII is ever processed or seen by the AI models, upholding our core privacy principles in a low-latency manner suitable for operational workflows.
 
 #### Batch Anonymization for Analytics
 To handle analytics data at scale, a robust and cost-effective ingestion pipeline is required. At 1M DAU, sending millions of individual events directly to an analytics endpoint would be inefficient and expensive. To solve this, the architecture will use **Amazon Kinesis Data Firehose**.
-    *   **Buffering and Batching:** The EventBridge bus will forward all raw analytics events to a Kinesis Data Firehose delivery stream. Firehose will automatically buffer these events—for example, for 60 seconds or until 5MB of data is collected—and then deliver them as a single, compressed file to the downstream analytics service (the S3 data lake). This dramatically reduces the number of ingest requests and associated costs.
+    *   **Buffering and Batching:** The EventBridge bus will forward all raw analytics events to a Kinesis Data Firehose delivery stream. Firehose will be configured with conservative buffering hints (e.g., buffer interval of 60 seconds, buffer size of 5MB) to balance latency with cost-effectiveness. All data delivered to S3 will be GZIP compressed and partitioned by date (`YYYY/MM/DD/HH`) to optimize for downstream querying with Amazon Athena. This dramatically reduces the number of ingest requests and associated costs.
     *   **On-the-fly Transformation:** Before delivering the data, Firehose will invoke the dedicated **Anonymization Lambda**. This function receives the entire batch of events, strips all Personally Identifiable Information (PII) from each record, and returns the scrubbed batch to Firehose. This ensures that only anonymized, privacy-safe data is ever persisted.
 
     The following diagram illustrates this privacy-enhancing data flow:
@@ -1134,6 +1147,7 @@ For operational excellence, a robust observability framework is critical. This i
 
 *   **Logging Strategy:**
     *   A standardized, **structured JSON logging** format will be enforced for all services. To ensure consistency and automate best practices, all Lambda functions **must** use the **AWS Lambda Powertools for TypeScript** library.
+    *   **Log Sanitization:** All user-provided input **must** be sanitized or properly escaped before being included in any structured log entry to prevent log injection vulnerabilities.
     *   **Log Content:** Powertools will be used to automatically inject a `correlationId` into all log entries, allowing a single request to be traced through the distributed system.
     *   **Scrubbing:** All logs **must be scrubbed** of any PHI, PII, or other sensitive user data before being written. Powertools' logging utility can assist with this, but careful implementation is required.
 
@@ -1173,7 +1187,7 @@ In addition to generic system metrics, we will track a set of specific KPIs that
 | | **Ktor** | KMP HTTP client. |
 | **Backend Development** | **AWS Lambda, SQS, DynamoDB** | Core AWS services for the serverless backend. |
 | | **Terraform** | Infrastructure as Code tool. |
-| **Testing** | **JUnit, XCTest, Turbine, MockK** | Standard libraries for unit and integration testing. |
+| **Testing** | **JUnit, XCTest, Espresso, MockK, Turbine** | Standard libraries for unit, UI, and integration testing. |
 | | **k6** | Modern, scriptable load testing tool. |
 | **CI/CD** | **GitHub Actions, Fastlane** | CI/CD platform and mobile release automation. |
 | **Monitoring** | **OpenTelemetry** | Vendor-neutral standard for instrumentation. |
@@ -1268,8 +1282,9 @@ To ensure high development velocity and code quality, we will establish a stream
 
 This section documents known limitations of the architecture and explicit trade-offs that have been made.
 
+*   **Feature Tiering:** This document does not provide a comprehensive list of which features belong to the "Free" vs. "Pro" subscription tiers. This will be defined in a separate, product-focused specification.
 *   **Account Merging:** The current data model, which partitions all data by `USER#{userId}`, does not support account merging. If a user accidentally creates two separate accounts (e.g., one with Google Sign-In, one with Apple Sign-In), there is no automated process to merge them. This would require a complex, manual engineering process and is considered a non-supported feature for the MVP.
-*   **Cross-Cloud Dependency:** The use of Firebase Authentication creates a hard dependency on Google Cloud for a critical function (user login). This was a deliberate trade-off to leverage Firebase's superior client-side SDKs and developer experience for the MVP.
+*   **Cross-Cloud Dependency & Firebase Exit Strategy:** The use of Firebase Authentication creates a hard dependency on Google Cloud for a critical function (user login). This was a deliberate trade-off to leverage Firebase's superior client-side SDKs and developer experience for the MVP. A long-term exit strategy has not been defined, and migrating 1M+ users to a new identity provider would be a massive and costly undertaking. This risk is accepted for the MVP to prioritize launch speed.
 
 ## Appendix A: Technology Radar
 
@@ -1314,3 +1329,63 @@ These are technologies that we have considered but have decided not to use at th
 | **Kubernetes (EKS / Self-Managed)** | Container Orchestration | We are holding on the added complexity of a full Kubernetes platform. Our serverless-first approach with AWS Lambda meets our needs without the management overhead of a Kubernetes cluster. We may assess container-based orchestration with AWS Fargate in the future if a specific use case requires it. |
 | **ScyllaDB / Cassandra** | NoSQL Database | DynamoDB meets all of our current and projected needs for metadata storage. We will not consider alternative NoSQL databases unless we hit a specific, insurmountable limitation with DynamoDB. |
 | **Service Mesh (Linkerd, etc.)**| Service-to-Service | A service mesh is a solution for managing a large and complex microservices architecture. Our current architecture is too simple to justify this complexity. We will put this on hold indefinitely. |
+
+## Appendix B: Operational Policies & Procedures
+
+This appendix details critical operational policies and procedures that must be implemented to ensure the long-term health, stability, and maintainability of the SyncWell platform.
+
+### B.1. Third-Party API Versioning Strategy (#84)
+The `DataProvider` architecture must be version-aware. If a third-party API introduces a breaking change (e.g., v2), a new, separate `DataProvider` implementation (e.g., `StravaV4Provider`) must be created. The system will choose the correct provider version based on a user's connection metadata. This ensures that breaking API changes do not affect existing users and allows for gradual migration.
+
+### B.2. DataProvider Retirement Policy (#98)
+If a third-party service is deprecated or an integration is no longer supported, a formal retirement process must be followed. This includes: 1) Notifying affected users in-app at least 60 days in advance. 2) Disabling the creation of new syncs for the provider. 3) On the retirement date, automatically disabling all active syncs and revoking stored credentials.
+
+### B.3. New Provider Data Backfill Policy (#88)
+When a new provider is added, existing users will not be offered an automatic historical backfill, as this could cause an unpredictable load spike. Instead, users will be notified of the new provider and can choose to initiate a historical sync manually. The potential load from these manual syncs must be modeled and factored into capacity planning.
+
+### B.4. API Quota Management (#90)
+In addition to rate limits (requests per second), some provider APIs have daily or monthly quotas. The system must include a mechanism, likely using Redis, to track usage against these long-term quotas to prevent the service from being cut off. Each `DataProvider` is responsible for reporting its API call count to this central service.
+
+### B.5. Schema Migration Strategy (#92)
+For breaking changes to the canonical data models, a "two-phase" deployment strategy will be used. 1) The new code is deployed, but it is written to be able to handle both the old and new schema versions. 2) A background data migration job is run to update all existing records to the new schema. 3) Once the migration is complete, a second deployment can remove the backward-compatibility code.
+
+### B.6. CI/CD Environment Strategy (#85)
+The CI/CD pipeline will manage three core environments:
+*   **`development`:** A shared environment for developers to test features during active development.
+*   **`staging`:** A production-like environment used for running E2E tests, load tests, and for final QA before a release.
+*   **`production`:** The live user-facing environment.
+
+### B.7. LocalStack in CI/CD (#95)
+To provide a faster and cheaper feedback loop, the CI/CD pipeline **must** include a stage where backend integration tests are run against a LocalStack instance. This ensures that core service integrations work correctly before deploying to a full AWS environment.
+
+### B.8. Test Data Management (#62)
+The process for resetting test account data in the `staging` environment must be automated. This will be achieved via a version-controlled script that can be invoked by authorized developers. The script will use the DynamoDB API to delete and re-populate all data for the pool of permanent test accounts.
+
+### B.9. CI/CD for Operational Tooling (#65)
+Operational components like the `DLQAnalyzer` are critical infrastructure and must be managed with the same rigor as the main application. They will have their own CI/CD pipeline for automated testing and deployment. Their configuration (e.g., known error patterns) will be stored in a manageable format (e.g., a JSON file in S3) and updated via a safe deployment process.
+
+### B.10. Client-Side API Versioning Strategy (#89)
+The mobile client must be able to handle backend API version changes gracefully. The strategy is as follows:
+*   The backend will support the current (`/vN/`) and previous (`/vN-1/`) major API versions for at least 6 months.
+*   If the client makes a request to a deprecated but supported version, the API will include a `Warning` header in the response.
+*   If the client makes a request to an unsupported, ancient version, the API will return a `426 Upgrade Required` response, prompting the user to update their app.
+
+### B.11. Feature Flag Lifecycle (#102)
+To prevent technical debt, a formal process for managing feature flags will be enforced. A flag must have a designated owner and a target removal date in its definition. A quarterly review process will be held to identify and remove obsolete flags from both AWS AppConfig and the codebase.
+
+### B.12. AppConfig Validators (#51)
+To prevent outages from configuration typos, critical configuration values in AWS AppConfig **must** be deployed with a corresponding validator. For example, a value for a DynamoDB table name must use a regex validator that matches the expected ARN format.
+
+## 11. Glossary
+
+To ensure a shared understanding of key concepts, this glossary defines the core entities of the SyncWell ecosystem.
+
+| Term | Definition |
+| :--- | :--- |
+| **Connection** | Represents a user's authenticated link to a third-party health platform (e.g., their Fitbit account). It is uniquely identified by a `connectionId` and stores the necessary credentials (or a pointer to them) to interact with the provider on the user's behalf. |
+| **Provider** | A specific third-party health platform that SyncWell can integrate with, such as Strava, Garmin, or Fitbit. |
+| **DataProvider** | The software component (a class implementing the `DataProvider` interface) that encapsulates all the logic for interacting with a specific Provider's API, including authentication, data fetching, and data pushing. |
+| **Sync Job** | A single, discrete unit of work processed by a Worker Lambda. For example, "sync steps from Fitbit to Google Fit for user X on date Y". |
+| **Historical Sync** | A long-running, user-initiated *workflow* (orchestrated by AWS Step Functions) that is composed of many individual Sync Jobs to backfill a large period of data. |
+| **Hot Path Sync** | A near real-time, low-latency sync for recent data, typically triggered automatically or manually by the user. These are processed as individual Sync Jobs via an SQS queue. |
+| **Canonical Data Model** | A standardized, internal data structure (e.g., `CanonicalWorkout`) that represents a piece of health data. Data from all Providers is transformed into a canonical model before being processed by the sync engine. |

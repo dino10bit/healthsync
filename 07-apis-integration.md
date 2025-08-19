@@ -47,11 +47,15 @@ To enforce this separation of concerns, every provider must implement the `DataP
 // Simplified for documentation purposes.
 
 /**
- * Defines the capabilities of a given DataProvider, such as reading or writing data.
- * This allows the sync engine to dynamically adapt to each provider's functionality.
+ * Defines the granular capabilities of a given DataProvider for specific data types.
+ * This allows the sync engine to have fine-grained control and understanding of what
+ * each provider can do. For example, a provider might be able to read steps but not
+ * write them, and write workouts but not read them.
  */
 enum class Capability {
-    READ, WRITE
+    READ_STEPS, WRITE_STEPS,
+    READ_WORKOUTS, WRITE_WORKOUTS,
+    READ_SLEEP, WRITE_SLEEP
 }
 
 interface DataProvider {
@@ -61,9 +65,10 @@ interface DataProvider {
     val providerKey: String
 
     /**
-     * The set of capabilities supported by this provider. The core sync engine will
-     * check this set before attempting operations like writing data. For example, a
-     * read-only provider like Garmin would return `setOf(Capability.READ)`.
+     * The set of granular capabilities supported by this provider. The core sync engine
+     * will check this set before attempting operations. For example, a provider that can
+     * only read steps and workouts would return `setOf(Capability.READ_STEPS, Capability.READ_WORKOUTS)`.
+     * This resolves ambiguity where a provider might be read-only for one data type but not another.
      */
     val capabilities: Set<Capability>
 
@@ -78,46 +83,41 @@ interface DataProvider {
     suspend fun refreshAccessToken(refreshToken: String): ProviderTokens
 
     /**
+     * Revokes the given tokens with the third-party provider. This is a critical
+     * part of the user data deletion workflow.
+     */
+    suspend fun revoke(tokens: ProviderTokens)
+
+    /**
      * Fetches data (e.g., workouts) from the provider's API for a given time range
      * and transforms it into the application's `CanonicalWorkout` model.
      */
     suspend fun fetchData(tokens: ProviderTokens, dateRange: DateRange): List<CanonicalWorkout>
 
     /**
-     * Pushes a list of canonical data models to the provider's API, transforming them into the
-     * provider-specific format required by the destination service.
-     *
-     * **IMPORTANT:** The core `SyncManager` is responsible for checking the provider's
-     * `capabilities` set *before* attempting to call this method. This prevents runtime
-     * errors by not attempting to write to a provider that has declared itself as
-     * read-only (e.g., `setOf(Capability.READ)`).
+     * Pushes a list of canonical workout models to the provider's API.
+     * Note: This interface is specific to `CanonicalWorkout`. If other data types need
+     * to be pushed in the future (e.g., sleep), they should have their own dedicated
+     * `pushSleepData` method to avoid ambiguity.
      */
-    suspend fun pushData(tokens: ProviderTokens, data: List<CanonicalData>): PushResult
+    suspend fun pushWorkouts(tokens: ProviderTokens, data: List<CanonicalWorkout>): PushResult
 }
-
-/**
- * A sealed interface representing any piece of canonical data.
- */
-sealed interface CanonicalData
 
 /**
  * Represents the result of a push operation, including any items that failed.
  */
 data class PushResult(
     val success: Boolean,
+    // This list should contain the `sourceId` from the canonical model for each item that failed to push.
     val failedItemIds: List<String> = emptyList()
 )
 ```
 
 ### 2.3. SDK Packaging and Versioning
 
-To ensure that all `DataProvider` implementations use a consistent set of tools and interfaces, the `DataProvider` SDK will be managed and distributed as a formal, internal library.
+For the MVP, a formal, versioned SDK package adds unnecessary overhead. To prioritize development speed and simplicity, the `DataProvider` interfaces and shared utilities will be maintained as a **simple shared module** within the main application's monorepo.
 
-*   **Packaging:** The SDK, which is part of the KMP shared module, will be packaged as a private Maven package.
-*   **Versioning:** The SDK will follow Semantic Versioning (SemVer). All worker tasks will declare a dependency on a specific version of the SDK.
-*   **Distribution:** The package will be hosted in a private artifact repository (e.g., AWS CodeArtifact or a private GitHub Packages repository). The CI/CD pipeline for the backend services will be configured to pull the specified version of the SDK during the build process.
-
-This approach ensures that updates to the core SDK logic can be rolled out in a controlled and predictable manner, and it prevents individual `DataProvider` implementations from falling out of sync with the core framework. While this adds some operational overhead compared to a monorepo, it is a worthwhile trade-off for ensuring stability and clear dependency management as the number of integrations grows. For the MVP, a simpler approach of keeping the SDK as a shared module in the main repository could be considered if speed is paramount.
+This approach ensures all `DataProvider` implementations are always using the same version of the core interfaces, and it removes the complexity of managing a private artifact repository and coordinating SDK releases. A formal, versioned SDK can be extracted from the monorepo in the future if the number of integrations and teams grows to a scale where it becomes necessary.
 
 ### 2.4. Network Environment & Security
 All backend `DataProvider` logic runs within the main application's VPC on AWS. As a critical security measure, all outbound traffic from this VPC is routed through an **AWS Network Firewall**. This means that for a new `DataProvider` to function, the domain name(s) of the third-party API it needs to call **must** be added to the firewall's allow-list. This enforces a "least privilege" model at the network level and is a mandatory part of the process for enabling a new provider.
@@ -133,8 +133,8 @@ All cloud-based APIs will use the **OAuth 2.0 Authorization Code Flow with PKCE*
 3.  **User Consent (Mobile):** The user logs in and grants consent on the provider's web page.
 4.  **Redirect with Auth Code (Mobile):** The provider redirects to SyncWell's redirect URI (e.g., `syncwell://oauth-callback`) with a one-time `authorization_code`.
 5.  **Secure Hand-off to Backend (Mobile -> Backend):** The mobile app sends the `authorization_code` and `code_verifier` to a secure endpoint on the SyncWell backend.
-6.  **Token Exchange (Backend):** A dedicated backend Lambda function, invoked via API Gateway, exchanges the `authorization_code` and `code_verifier` for an `access_token` and `refresh_token` from the provider.
-7.  **Secure Storage (Backend):** The backend stores the encrypted `access_token` and `refresh_token` in **AWS Secrets Manager**, associated with the user's ID. The tokens are now ready for use by the sync worker tasks.
+6.  **Token Exchange (Backend):** A dedicated backend Lambda function receives the `authorization_code`. It uses the `state` parameter from the OAuth flow to identify the correct `DataProvider` (e.g., `FitbitProvider`) and invokes its `authenticate(authCode)` method. The `DataProvider` is responsible for the direct interaction with the provider's token endpoint.
+7.  **Secure Storage (Backend):** Upon receiving the tokens from the `DataProvider`, the backend stores the encrypted `access_token` and `refresh_token` in **AWS Secrets Manager**.
 
 ## 4. Token Management & Granular Error Handling
 
@@ -146,7 +146,7 @@ A robust sync engine must intelligently handle the wide variety of errors that c
 
 | HTTP Status Code | Error Type | System Action | User Impact |
 | :--- | :--- | :--- | :--- |
-| `401 Unauthorized` / `403 Forbidden` | **Permanent Auth Error** | The sync job is immediately failed. The connection is marked as `needs_reauth` in the `SyncWellMetadata` table. This is critical for handling cases where a user has revoked access externally or a long-lived refresh token has expired. | User is notified in the app that they need to reconnect the service. |
+| `401 Unauthorized` / `403 Forbidden` | **Permanent Auth Error** | The sync job is immediately failed. The connection is marked as `needs_reauth`. Crucially, the worker **must** also publish a `ReAuthenticationNeeded` event, which triggers an immediate push notification to the user. Waiting for a DLQ to process is too slow. | User is notified **immediately** that they need to reconnect the service. |
 | `429 Too Many Requests` | **Rate Limit Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff). The global rate limiter is notified to slow down requests for this provider. | Syncs for this provider may be delayed. This is handled automatically. |
 | `500`, `502`, `503`, `504` | **Transient Server Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff). | Syncs may be delayed. The system will automatically retry. |
 | `400 Bad Request` | **Permanent Request Error** | The job is failed and moved to the Dead-Letter Queue (DLQ) for manual inspection. An alarm is triggered. | The specific sync fails. An engineer is alerted to a potential bug in our `DataProvider` or an unexpected API change. |
@@ -160,7 +160,7 @@ With 1M DAU, we will make millions of API calls per day. Proactively managing th
     1.  **Centralized Ledger:** The **Amazon ElastiCache for Redis** cluster (defined in `06-technical-architecture.md`) will serve as the high-speed, centralized ledger for tracking our current usage against each provider's rate limit.
     2.  **Pre-flight Check:** Before a `DataProvider` makes an API call, it must request a "token" from our Redis-based rate limit service.
     3.  **Throttling & Queuing:** If the service determines that making a call would exceed the rate limit, it will deny the request. The `DataProvider` will then return the job to the SQS queue with a delay, effectively pausing execution until the rate limit window resets.
-*   **Prioritization:** The rate limiting service will be aware of the "hot" vs. "cold" paths. When the available API budget is low, it will deny requests from `cold-path` (historical sync) workers before denying requests from `hot-path` (real-time sync) workers. This ensures that a user's large historical sync does not prevent their most recent activities from syncing quickly. The mechanism for this is simple: the event payload for every sync job **must** include a `priority` field (e.g., `"hot"` or `"cold"`). The worker passes this priority to the rate limiting service when requesting a token.
+*   **Prioritization:** The rate limiting service will be aware of job priority. When the available API budget is low, it will deny requests from low-priority workers (e.g., historical syncs) before denying requests from high-priority workers (e.g., hot path syncs). This ensures that a user's large historical sync does not prevent their most recent activities from syncing quickly. The mechanism for this is simple: the event payload for every sync job **must** include a `priority` field (e.g., `"high"` or `"low"`). The worker passes this priority to the rate limiting service when requesting a token. This terminology avoids confusion with the "Cold Path" workflow name.
 
 *(Note: This section directly impacts `21-risks.md` and `32-platform-limitations.md`. The rate limits for each provider must be documented.)*
 
@@ -170,8 +170,8 @@ With 1M DAU, we will make millions of API calls per day. Proactively managing th
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Google Fit** | Steps | `users/me/dataset:aggregate` | `users/me/dataSources/.../datasets:patch` | Hybrid | Requires Health Connect SDK on device. |
 | **Apple Health** | Steps | `HKSampleQuery` | `HKHealthStore.save()` | Device-to-Cloud / Cloud-to-Device | Uses the native HealthKit SDK on device. |
-| **Fitbit** | Steps | `1/user/-/activities/steps/date/[date]/1d.json` | `N/A` | Cloud-to-Cloud | Read-only for activity data. |
-| **Garmin** | Steps | `daily-summary-service/daily-summary/...` | `N/A` | Cloud-to-Cloud | Read-only API. |
+| **Fitbit** | Steps | `1/user/-/activities/steps/date/[date]/1d.json` | `N/A` | Cloud-to-Cloud | Read-only for activity data. The granular `capabilities` enum clarifies this. |
+| **Garmin** | Steps | `daily-summary-service/daily-summary/...` | `N/A` | Cloud-to-Cloud | **High Risk.** This appears to be an unofficial, reverse-engineered API. It could change or be shut down without notice. This integration must be considered unstable. |
 | **Strava** | Activities | `athlete/activities` | `activities` | Cloud-to-Cloud | Does not provide daily step data. |
 
 ## 6. Risk Analysis & Mitigation
