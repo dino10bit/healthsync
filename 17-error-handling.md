@@ -27,13 +27,19 @@ This enterprise-grade approach uses structured logging, centralized error handli
 A centralized `ErrorHandler` service on the mobile client will be the single point through which all application-level errors flow. This ensures consistent handling of UI errors, validation errors, and network errors when communicating with our backend.
 
 ### 2.2. Backend Error Handling
-The backend's error handling is centered around the **SQS Dead-Letter Queue (DLQ)**.
+The backend's error handling strategy is designed for maximum resilience and message durability. The primary goal is to ensure that no sync job is ever lost due to temporary issues and that persistent failures are isolated for analysis without impacting the rest of the system. This is achieved through a combination of SQS features and Lambda configuration.
 
-1.  **Error Occurs:** A worker Lambda fails to process a sync job (e.g., due to a third-party API being down or returning malformed data).
-2.  **Automatic Retries:** SQS and Lambda have a built-in retry mechanism. The worker will attempt to process the job several times with exponential backoff.
-3.  **Move to DLQ:** If the job fails all retry attempts, SQS automatically moves the job message to a pre-configured Dead-Letter Queue.
-4.  **Alerting:** A CloudWatch Alarm is configured to monitor the DLQ. When the number of messages in the DLQ is greater than zero, an alert is sent to the engineering team.
-5.  **Isolation:** This mechanism is critical because it isolates the failing job, allowing the rest of the queue to continue processing normally. The failed job can be inspected and analyzed without halting the entire system.
+1.  **Guaranteed Delivery & Message Durability:** When a sync job is accepted, it is first published as an event to EventBridge, which then forwards it to a durable **Amazon SQS queue**. SQS guarantees that the message is stored redundantly across multiple availability zones until a worker successfully processes it. This ensures that even if the entire worker fleet is down, no sync jobs are lost.
+
+2.  **Handling Transient Failures with Retries:** A worker Lambda may fail for transient reasons, such as a temporary network issue, a brief third-party API outage, or being throttled. The system handles this gracefully:
+    *   The SQS message remains on the queue and becomes visible again after its "visibility timeout" expires.
+    *   Lambda is configured with a retry policy (typically 3-5 attempts with exponential backoff). This built-in mechanism automatically re-invokes the function, giving the transient issue time to resolve itself without any custom code.
+
+3.  **Isolating Persistent Failures with a Dead-Letter Queue (DLQ):** If a job fails all of its retry attempts, it is considered a persistent failure (e.g., due to a bug in the code, malformed data that causes a crash, or a permanent issue with a third-party API).
+    *   To prevent this single bad message from blocking the queue and being retried indefinitely, SQS automatically moves it to a pre-configured **Dead-Letter Queue (DLQ)**.
+    *   This action is critical as it isolates the problematic job, allowing healthy jobs to continue processing without interruption.
+
+4.  **Alerting and Analysis:** A CloudWatch Alarm continuously monitors the DLQ. If the number of messages rises above zero, it triggers a high-priority alert to the on-call engineering team. The failed job message, which is stored in the DLQ, contains the full context of the job, allowing engineers to diagnose and resolve the root cause.
 
 ## 3. Unified Error Code Dictionary
 

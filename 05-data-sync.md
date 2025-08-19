@@ -27,8 +27,9 @@ This document serves as a blueprint for the **product and engineering teams**, d
 
 The data synchronization engine is a server-side, event-driven system built on AWS, as defined in `06-technical-architecture.md`. This architecture is designed for massive scale and reliability, separating real-time and historical syncs into "hot" and "cold" paths.
 
-*   **`API Gateway` + `Request Lambda`:** The public-facing entry point. The mobile app calls this endpoint to request a sync. The Lambda validates the request and places a job message into the appropriate SQS queue (hot or cold path).
-*   **`SQS Queues`:** Two primary, durable queues (one for real-time, one for historical) act as a buffer, ensuring sync jobs are never lost.
+*   **`API Gateway` + `Request Lambda`:** The public-facing entry point. The mobile app calls this endpoint to request a sync. The Lambda validates the request and publishes a semantic event (e.g., `SyncJobRequested`) to the central EventBridge bus.
+*   **`EventBridge Event Bus`:** The central nervous system for our backend. It receives events from producers (like the `RequestLambda`) and routes them to consumers based on defined rules. This decouples services from one another.
+*   **`SQS Queues`:** For sync jobs, an EventBridge rule forwards the event to a primary, durable SQS queue. This queue acts as a critical buffer, absorbing traffic spikes and ensuring that sync jobs are never lost, even if the worker fleet is down.
 *   **`Worker Lambdas`:** The heart of the engine. A fleet of serverless functions that pull jobs from the queues and execute them. Each worker is responsible for the full lifecycle of a single sync job.
 *   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration (Fitbit, Garmin, etc.) must implement.
 *   **`Smart Conflict Resolution Engine`:** A core component within the worker lambda that analyzes data from the source and destination to intelligently resolve conflicts before writing. This engine can now leverage the **AI Insights Service**.
@@ -107,6 +108,7 @@ graph TD
     subgraph AWS
         APIGateway[API Gateway]
         RequestLambda[Request Lambda]
+        EventBridge[EventBridge Bus]
         HotQueue[SQS - Hot Path]
         ColdQueue[SQS - Cold Path]
         HotWorkers[Worker Lambdas - Hot]
@@ -121,8 +123,9 @@ graph TD
 
     MobileApp -- Sync Request --> APIGateway
     APIGateway --> RequestLambda
-    RequestLambda -- Places Job --> HotQueue
-    RequestLambda -- Places Job --> ColdQueue
+    RequestLambda -- Publishes Event --> EventBridge
+    EventBridge -- Rule forwards to --> HotQueue
+    EventBridge -- Rule forwards to --> ColdQueue
     HotWorkers -- Polls --> HotQueue
     ColdWorkers -- Polls --> ColdQueue
     HotWorkers -- Read/Write --> DynamoDB
