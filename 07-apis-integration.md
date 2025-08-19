@@ -179,3 +179,16 @@ sequenceDiagram
 
 *(Section 8 has been removed to align with the decision to standardize on the AWS-native serverless architecture and avoid the operational complexity of a self-hosted open-source stack.)*
 ```
+
+## 8. Managing Unstable & Poorly Documented APIs
+
+While the `DataProvider` architecture provides a solid foundation, a key risk is the varying quality and stability of third-party APIs. This section outlines a proactive strategy for managing this risk.
+
+*   **Provider-Specific Monitoring:** In addition to global backend monitoring, each `DataProvider` will have its own dedicated set of CloudWatch Alarms. These alarms will monitor the error rate and P95 latency for API calls to that specific provider. A sudden spike in either metric for a single provider will trigger a low-priority alert for investigation.
+*   **Circuit Breaker Pattern:** For notoriously unstable APIs, a Circuit Breaker pattern will be implemented within the `DataProvider` SDK.
+    *   **Mechanism:** If the error rate for a specific provider crosses a defined threshold (e.g., >25% of requests failing over a 5-minute period), the circuit breaker will "trip".
+    *   **Action:** Once tripped, all subsequent requests for that provider will fail fast for a "cooldown" period (e.g., 5 minutes), without making a network call. This prevents the system from wasting resources on an API that is clearly down and reduces the load on the failing service. After the cooldown, the circuit will move to a "half-open" state, allowing a single request to test if the service has recovered.
+*   **Graceful Degradation via Feature Flags:** If a provider's API is causing persistent, critical problems, a remote feature flag will be used to gracefully degrade the integration.
+    *   **Level 1 (Read-Only Mode):** If writing data to a provider is failing, but reading is stable, the integration can be temporarily put into a read-only mode.
+    *   **Level 2 (Full Disable):** If the entire API is unstable, the integration can be temporarily disabled in the app's UI, with a message explaining that the service is experiencing issues.
+*   **Defensive Coding and Documentation:** The developer responsible for an integration is also responsible for documenting any known quirks or undocumented behaviors of the provider's API directly in the `DataProvider`'s source code. This institutional knowledge is critical for long-term maintenance.

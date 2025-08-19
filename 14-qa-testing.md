@@ -44,7 +44,7 @@ Our testing strategy follows the principles of the classic testing pyramid.
 *   **Level 3: End-to-End (E2E) Tests (10% of tests)**
     *   **Purpose:** To test a full "happy path" user journey through the application's UI.
     *   **Scope:** The critical user flows: onboarding, configuring a sync, upgrading to Pro, restoring a purchase.
-    *   **Tools:** Maestro, Appium, or similar cross-platform E2E framework.
+    *   **Tools:** **Maestro**. It is chosen for its simplicity, fast setup, and reliability. Its declarative YAML-based syntax makes tests easy to write and maintain, which is a significant advantage for a solo developer or a small team.
 
 ## 4. Specialized Test Plans
 
@@ -68,6 +68,36 @@ Our testing strategy follows the principles of the classic testing pyramid.
     *   **Failure States:** Intentionally causing OAuth flows to fail, revoking permissions in system settings, turning off network during a sync.
     *   **Edge Cases:** Using invalid inputs, rapidly tapping buttons, testing on devices with unusual screen sizes or settings.
     *   **Usability:** Assessing the overall feel and flow of the app, looking for confusing UI or awkward workflows.
+
+### Load Testing
+*   **Objective:** To formally verify that the backend system can handle the peak load of **10,000 requests per second (RPS)** as defined in the non-functional requirements, and to identify and eliminate performance bottlenecks before they impact users.
+*   **Tooling:** **k6 (by Grafana Labs)** will be used for scripting and executing load tests. k6 is chosen for its developer-friendly, scriptable API (using JavaScript) and its high performance.
+*   **Environment:** Load tests will be run against a dedicated, production-scale staging environment. This environment will be a mirror of the production environment, with the same infrastructure configuration, to ensure that test results are representative.
+*   **Test Scenarios:** The load test suite will include a variety of scenarios to simulate realistic user behavior and stress the system in different ways:
+    *   **Spike Test:** A sudden, massive increase in traffic to simulate a viral event or a coordinated sync (e.g., after a notification). The goal is to verify that the SQS queue can absorb the spike and that the system remains stable.
+    *   **Soak Test:** A sustained, high-load test over a long period (e.g., 4-8 hours). The goal is to identify memory leaks, performance degradation over time, and other issues that only manifest under prolonged load.
+    *   **Stress Test:** A test that pushes the system beyond its expected limits (e.g., >10,000 RPS). The goal is to understand how the system fails and to ensure that it fails gracefully (e.g., by throttling requests) rather than crashing.
+*   **CI/CD Integration:** A smaller-scale load test will be integrated into the CI/CD pipeline to run on every merge to the `develop` branch. This will provide early feedback on performance regressions. Full-scale load tests will be run manually before each major release.
+*   **Success Criteria:**
+    *   The system must handle 10,000 RPS with P95 latency below 500ms for API Gateway and a Lambda error rate below 0.5%.
+    *   The SQS queue depth should not grow uncontrollably during the soak test.
+    *   The system should not crash during the stress test.
+
+### Security Testing
+*   **Objective:** To proactively identify and remediate security vulnerabilities in the mobile application and backend services, ensuring the confidentiality and integrity of user data.
+*   **Strategy:** A multi-layered security testing strategy will be implemented, integrating security into the development lifecycle.
+*   **Static Application Security Testing (SAST):**
+    *   **Tooling:** A SAST tool (e.g., Snyk Code, SonarQube) will be integrated into the CI/CD pipeline.
+    *   **Process:** The SAST scanner will automatically analyze the source code for potential vulnerabilities (e.g., injection flaws, insecure cryptographic storage) on every pull request.
+    *   **Success Criteria:** A pull request will be blocked from merging if the SAST scan identifies any new "Critical" or "High" severity vulnerabilities.
+*   **Dynamic Application Security Testing (DAST):**
+    *   **Tooling:** A DAST tool (e.g., OWASP ZAP) will be used to scan the running application in the staging environment.
+    *   **Process:** DAST scans will be run on a regular schedule (e.g., weekly) against the staging environment to identify runtime vulnerabilities (e.g., security misconfigurations, insecure headers).
+    *   **Success Criteria:** Any "Critical" or "High" severity findings from the DAST scan will be triaged and added to the backlog as high-priority bugs.
+*   **Third-Party Penetration Testing:**
+    *   **Process:** Before the initial public launch and on an annual basis thereafter, a reputable third-party security firm will be commissioned to conduct a comprehensive penetration test of the entire system (mobile app and backend).
+    *   **Scope:** The penetration test will include a thorough assessment of the application's security posture, including its resistance to common attack vectors (e.g., OWASP Top 10).
+    *   **Success Criteria:** All "Critical" and "High" severity findings from the penetration test must be remediated before the public launch.
 
 ## 5. Definition of Done (DoD)
 

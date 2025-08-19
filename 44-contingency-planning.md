@@ -86,3 +86,44 @@ The purpose of this document is to enable a calm, rational, and rapid response u
     4.  If necessary, use backend scripts to invalidate all stored OAuth tokens in Secrets Manager across all regions, forcing users to re-authenticate.
     5.  Communicate transparently with users.
     6.  Conduct a full postmortem and security audit.
+
+### Plan F: Backend Deployment Rollback
+
+*   **Trigger:** The canary release of a new backend version shows a critical issue (e.g., high error rate, increased latency), or a critical bug is discovered after the new version has been fully rolled out.
+*   **Objective:** To quickly and safely revert the backend services to the last known stable version, minimizing user impact.
+*   **Strategy:** The rollback strategy relies on the versioning capabilities of AWS Lambda and API Gateway, and is designed to be automated.
+*   **Automated Rollback (During Canary Deployment):**
+    1.  **Detection:** CloudWatch Alarms, configured to monitor the canary version, trigger due to an anomaly (e.g., error rate > 1%).
+    2.  **Automated Action:** The CI/CD pipeline (or a dedicated Lambda function triggered by the alarm) will automatically shift 100% of traffic back to the stable, previous version.
+    3.  **Notification:** The on-call engineer is notified that an automatic rollback has occurred.
+*   **Manual Rollback (Post-Full Deployment):**
+    1.  **Decision:** The on-call engineer, after identifying a critical bug in the new version, makes the decision to roll back.
+    2.  **Lambda Rollback:**
+        *   The CI/CD pipeline will have a dedicated "rollback" job.
+        *   This job will take a version number as input.
+        *   It will use the AWS CLI or SDK to update the Lambda function aliases (e.g., the `live` alias) to point to the previous stable function version. AWS Lambda automatically keeps previous versions of the code, making this a fast and safe operation.
+    3.  **API Gateway Rollback:**
+        *   If the API Gateway stage was updated, the rollback job will redeploy the previous stable stage from its deployment history.
+    4.  **Verification:** After the rollback job is complete, the engineer will manually verify that the backend is functioning correctly and that the critical bug is no longer present.
+    5.  **Communication:** The public status page will be updated to inform users of the issue and the successful rollback.
+*   **Testing:** The manual rollback procedure will be tested in the staging environment on a regular basis (e.g., quarterly) to ensure it works as expected and that the on-call team is familiar with the process.
+
+### Plan G: Widespread User Data Corruption
+
+*   **Trigger:** A bug in a new deployment causes widespread, logical corruption of user configuration data in the `SyncWellMetadata` DynamoDB table (e.g., deleting or overwriting valid sync configurations). This is detected via a spike in user support tickets or specific error log patterns. This plan is a last resort and is distinct from the HA failover plan.
+*   **Objective:** To restore the `SyncWellMetadata` table to a known good state just before the incident began, minimizing data loss and restoring service for all users.
+*   **Strategy:** This plan leverages the **Point-in-Time Recovery (PITR)** feature of Amazon DynamoDB, which must be enabled on the table from day one.
+*   **Action Plan (Manual Runbook):**
+    1.  **Confirm & Halt:** Confirm the issue is widespread data corruption. Immediately halt any processes that write to the DynamoDB table (e.g., by scaling down the Lambda worker fleet to zero) to prevent further damage.
+    2.  **Identify Recovery Point:** Analyze logs and deployment timestamps to identify the exact time the faulty code was deployed. The recovery point will be the timestamp immediately preceding the deployment.
+    3.  **Initiate PITR:** Use the AWS Management Console or CLI to start the PITR process. This will create a *new* DynamoDB table (`SyncWellMetadata-restored`) with the data from the specified recovery point. This process can take several hours depending on the table size.
+    4.  **Data Validation (Spot-Check):** Once the new table is created, perform a manual spot-check on a few known-good user accounts to verify that their data has been restored correctly.
+    5.  **Traffic Redirection:**
+        *   This is the most critical and sensitive step. The application code needs to be pointed to the new, restored table.
+        *   The ideal approach is to have the table name configured in a parameter store (like AWS AppConfig or SSM Parameter Store). The rollback would involve updating this parameter to the new table name (`SyncWellMetadata-restored`) and redeploying the application services to pick up the new configuration.
+        *   If the table name is hardcoded, a hotfix deployment of all services that access the table will be required.
+    6.  **Re-enable Services:** Once traffic is successfully pointed to the restored table, re-enable the services that were halted in step 1.
+    7.  **User Communication:**
+        *   **Initial:** Post a message to the status page acknowledging a major issue and that the service is in maintenance mode.
+        *   **Final:** After the restore is complete, post an update explaining that the service has been restored from a backup. Acknowledge that any changes made by users during the incident window (e.g., new syncs configured between the backup time and the halt time) have been lost.
+*   **Post-Mortem:** Conduct a thorough, blameless post-mortem to understand the root cause of the bug and implement preventative measures.

@@ -124,3 +124,16 @@ graph TD
 
     F -- Fail --> G[Block Deployment]
 ```
+
+## 6. Handling Complexity and Mapping Errors
+
+Health data formats are notoriously inconsistent across different providers. A simple `when` statement is often insufficient for robust mapping. This section acknowledges this complexity and defines a strategy for handling it.
+
+*   **Defensive Parsing:** All `DataProvider` implementations must practice defensive parsing. This means they should never assume the incoming data conforms to the provider's documentation. All fields, especially optional ones, should be handled with null-safety and default values where appropriate.
+*   **Error Handling within Mappers:**
+    *   **Recoverable Errors:** If a non-essential field is missing or has an unexpected format (e.g., a `notes` field is an integer instead of a string), the mapper should log a `WARN`-level message, discard the problematic field, and continue mapping the rest of the object. The goal is to salvage as much data as possible.
+    *   **Unrecoverable Errors:** If an essential field is missing or invalid (e.g., a `startTimestamp` is null or malformed), the mapper cannot proceed. In this case, it should throw a specific `MappingError` exception.
+*   **System-Level Error Handling:**
+    *   When a `MappingError` is thrown, the core sync engine will catch it.
+    *   The specific job will be marked as `FAILED` with a detailed error message in the logs.
+    *   The failed job will be moved to the Dead-Letter Queue (DLQ) for manual inspection by the developer. This is treated as a bug in our `DataProvider` that needs to be fixed, as the provider should be resilient enough to handle most data inconsistencies.

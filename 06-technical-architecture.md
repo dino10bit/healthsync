@@ -351,21 +351,24 @@ Given the requirement for a global launch across 5 continents, a high-availabili
     3.  **Distributed Locking:** To prevent race conditions, such as two workers trying to perform the same sync job for the same user simultaneously.
 
 *   **Load Projections & Resource Estimation:**
-    *   **Assumptions:**
+    *   **Assumptions (Bottom-Up Estimation):**
         *   1,000,000 DAU.
         *   Average user has 3 active sync configurations.
         *   Syncs run automatically every ~1 hour (24 syncs/day). Manual syncs add 25% overhead.
-        *   Peak usage is concentrated in a 4-hour window (e.g., 7-9am and 8-10pm), accounting for 50% of daily traffic. This assumption is based on common mobile application usage patterns and should be validated with real-world data post-launch.
-    *   **API Gateway & Request Lambdas:**
+        *   Peak usage is concentrated in a 4-hour window (e.g., 7-9am and 8-10pm), accounting for 50% of daily traffic.
+    *   **Bottom-Up Calculation:**
         *   Total daily requests: `1M users * 3 configs * 24 syncs/day * 1.25 = 90M requests/day`.
         *   Average RPS: `90M / 86400s = ~1,042 RPS`.
-        *   Peak RPS: 50% of requests (`45M`) occur in a 4-hour window (`14,400s`). The peak RPS is `45M / 14400s = ~3,125 RPS`. This confirms the previous estimate was in a reasonable range, but is now based on a clearer model. API Gateway and Lambda scale automatically to handle this.
-    *   **Worker Lambdas & SQS:**
-        *   Total daily jobs: `90M jobs/day`.
-        *   SQS can handle virtually unlimited throughput. The key is Lambda concurrency, which must be sized for peak load.
-        *   Assuming an average job takes 5 seconds, a simple calculation for required concurrency during peak hours is `3,125 jobs/s * 5s/job = 15,625 concurrent executions`.
-        *   **Note on Concurrency Calculation:** This is a straightforward, upper-bound estimate based on Little's Law (`L = λW`). While this provides a reasonable starting point for capacity planning and financial modeling, the actual required concurrency may be lower due to statistical variance in job arrival and processing times. We will monitor the `ConcurrentExecutions` metric in CloudWatch closely and adjust our provisioned concurrency and AWS account limits based on empirical data.
-        *   This peak concurrency number is critical. The default AWS account limit (1,000) must be significantly increased, and this level of concurrency has major cost implications that must be factored into financial models.
+        *   Peak RPS from this model: `45M / 14400s = ~3,125 RPS`.
+    *   **Governing Non-Functional Requirement (NFR):**
+        *   While the bottom-up estimation provides a baseline, the `01-context-vision.md` document sets a strict non-functional requirement for the system to handle a peak load of **10,000 requests per second (RPS)**.
+        *   **The architecture must be designed, provisioned, and tested to meet this 10,000 RPS target.** All subsequent calculations and cost models will be based on this governing requirement.
+    *   **Worker Lambdas & SQS (at 10,000 RPS):**
+        *   Total daily jobs at this scale would be significantly higher, but the critical metric for provisioning is peak concurrency.
+        *   SQS can handle this throughput. The key is Lambda concurrency, which must be sized for the 10,000 RPS peak load.
+        *   Assuming an average job takes 5 seconds, the required concurrency during peak hours is `10,000 jobs/s * 5s/job = 50,000 concurrent executions`.
+        *   **Note on Concurrency Calculation:** This is a straightforward, upper-bound estimate based on Little's Law (`L = λW`). This provides a clear target for capacity planning and financial modeling.
+        *   This peak concurrency number is critical. The default AWS account limit (1,000) must be significantly increased, and this level of concurrency has **major cost and architectural implications** that must be factored into financial models and may require a re-evaluation of a purely serverless approach for some components.
     *   **DynamoDB:**
         *   We will use **On-Demand Capacity Mode**. This is more cost-effective for spiky, unpredictable workloads than provisioned throughput. It automatically scales to handle the required read/write operations, although we must monitor for throttling if traffic patterns become extreme.
 
@@ -690,7 +693,7 @@ This section defines the key non-functional requirements for the SyncWell platfo
 | **Performance** | Manual Sync Latency | P95 Latency | < 5 seconds | The 95th percentile for a user-initiated cloud-to-cloud sync to complete. |
 | | API Gateway Latency | P99 Latency | < 500ms | For all synchronous API endpoints, measured at the gateway. |
 | | Global User Read Latency | P95 Latency | < 200ms | For users accessing data from a local regional replica of the DynamoDB Global Table. |
-| | Concurrent Users | Peak Concurrent Lambdas | > 15,000 | Must be able to scale to handle peak load concurrency. Requires AWS limit increases. |
+| | Concurrent Users | Peak Concurrent Lambdas | > 50,000 | Must be able to scale to handle peak load concurrency. Requires significant AWS limit increases and has major cost implications. |
 | **Security** | Data Encryption | TLS Version | TLS 1.2+ | All traffic in transit must use modern, secure protocols. |
 | | Vulnerability Patching | Time to Patch Critical CVE | < 72 hours | Time from when a critical vulnerability in a dependency is identified to when it is patched in production. |
 | **Scalability** | User Capacity | Daily Active Users (DAU) | 1,000,000 | The architecture must be able to support 1 million daily active users without degradation. |
