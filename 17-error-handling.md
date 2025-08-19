@@ -78,7 +78,7 @@ All backend Lambda functions will output structured JSON logs to **AWS CloudWatc
   "context": {
     "jobId": "xyz-123",
     "source": "garmin",
-    "userId": "abc-456"
+    "correlationId": "a1b2c3d4-e5f6-7890-1234-567890abcdef"
   },
   "error": {
     "name": "GarminApiError",
@@ -87,7 +87,7 @@ All backend Lambda functions will output structured JSON logs to **AWS CloudWatc
   }
 }
 ```
-*   **PII Scrubbing:** No sensitive data like OAuth tokens will ever be logged. User IDs are logged to allow tracing a user's journey through the system.
+*   **PII Scrubbing:** No sensitive data (e.g., OAuth tokens, names, emails) will ever be logged. To align with the strict privacy policy in `19-security-privacy.md`, permanent identifiers like `userId` **must not** be logged. Instead, a temporary, randomly generated `correlationId` should be used to trace a single request's journey through the system.
 
 ## 5. Monitoring & Alerting Strategy
 

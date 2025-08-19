@@ -33,14 +33,14 @@ The MVP for SyncWell is guided by the "depth over breadth" principle. Instead of
 *   **M3: The Holistic View - Essential Data Types:** Synchronization of a broad range of data beyond just workouts, including Steps, Activities, Sleep, Weight, and Heart Rate, to provide a complete health picture.
 *   **M4: User Onboarding:** A simple, guided flow to connect at least two apps and configure the first sync.
 *   **M5: Sync Health Dashboard:** An intuitive interface to create, view, and delete sync connections, and which clearly displays the status and last sync time for each connection, building user trust.
-*   **M6: Transparent Monetization:** A clear, upfront pricing model with a 7-day free trial and a functional one-time purchase (Lifetime License) via native app store billing. No hidden fees or "bait-and-switch" tactics.
+*   **M6: Transparent Monetization:** A clear, upfront pricing model with a 7-day free trial and a functional **Pro-Tier subscription** via native app store billing. No hidden fees or "bait-and-switch" tactics.
 *   **M7: Basic Help Center:** An in-app FAQ covering at least the top 10 anticipated issues.
 
 ### Should-Have (If Time Permits, High-Priority Post-MVP)
 
 *   **S1: The Recovery Sync - Historical Data Import:** A key value proposition for stickiness. Allows premium users to backfill their complete data history from major platforms. (US-10)
 *   **S2: Smart Conflict Resolution Engine:** A major differentiator. Intelligently detects duplicate entries and allows users to merge them or choose a "source of truth." (US-15)
-*   **S3: Pro-Tier Power User Tools:** Introduce a subscription option that unlocks advanced features like manual data editing, advanced merging rules, and granular data export.
+*   **S3: Pro-Tier Power User Features:** The Pro-Tier subscription unlocks advanced features like manual data editing, advanced merging rules, and granular data export.
 *   **S4: Additional Integrations:** Adding 1-2 more popular integrations like Oura or Suunto based on user demand.
 *   **S5: Sync Advanced Biometrics:** Support for niche but high-value data types for power users, such as Heart Rate Variability (HRV) and SpO2. (US-32)
 *   **S6: Automatic "Source of Truth":** Allow users to define rules to make the conflict resolution engine even smarter and more automated. (US-34)
