@@ -34,8 +34,8 @@ The core components are:
 *   **`API Gateway` + `Request Lambda`:** The public-facing entry point. The `RequestLambda` validates requests and routes them to the appropriate path by either publishing an event to EventBridge (hot path) or starting a state machine execution (cold path).
 *   **`EventBridge Event Bus`:** The central nervous system for the hot path. It receives `RealtimeSyncRequested` events and routes them to the SQS queue.
 *   **`SQS Queue (Hot Path)`:** A primary, durable SQS queue that acts as a critical buffer for real-time sync jobs, absorbing traffic spikes and ensuring no jobs are lost.
-*   **`AWS Step Functions (Cold Path)`:** A managed workflow orchestrator that manages the entire lifecycle of a historical sync, breaking it into chunks and coordinating worker tasks on Fargate.
-*   **`Worker Service (AWS Fargate)`:** The heart of the engine. A containerized service running on AWS Fargate that contains the core sync logic. Its tasks are invoked either in response to SQS messages (for hot path jobs) or by the Step Functions orchestrator (for cold path jobs).
+*   **`AWS Step Functions (Cold Path)`:** A managed workflow orchestrator that manages the entire lifecycle of a historical sync, breaking it into chunks and coordinating worker Lambda functions.
+*   **`Worker Service (AWS Lambda)`:** The heart of the engine. A serverless function running on AWS Lambda that contains the core sync logic. It's invoked either in response to SQS messages (for hot path jobs) or by the Step Functions orchestrator (for cold path jobs).
 *   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration must implement.
 *   **`Smart Conflict Resolution Engine`:** A core component within the worker that intelligently resolves data conflicts before writing.
 *   **`DynamoDB`:** The `SyncWellMetadata` table stores all essential state for the sync process.
@@ -43,9 +43,9 @@ The core components are:
 
 ## 3. The Synchronization Algorithm (Server-Side Delta Sync)
 
-The Fargate `Worker Task` will follow this algorithm for each job pulled from the SQS queue:
+The `Worker Lambda` will follow this algorithm for each job pulled from the SQS queue:
 
-1.  **Job Dequeue:** The worker task receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
+1.  **Job Dequeue:** The Lambda function receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
 2.  **Get State from DynamoDB:** The worker task performs a `GetItem` call on the `SyncWellMetadata` table to retrieve the `SyncConfig` item.
     *   **PK:** `USER#{userId}`
     *   **SK:** `SYNCCONFIG#{sourceId}#to#{destId}#{dataType}`
@@ -151,7 +151,7 @@ graph TD
             HistoricalOrchestrator[AWS Step Functions]
         end
 
-        FargateService[Worker Service (Fargate)]
+        WorkerLambda[Worker Service (Lambda)]
         DynamoDB[DynamoDB]
         DLQ_S3[S3 for DLQ]
         AI_Service[AI Insights Service]
@@ -165,21 +165,21 @@ graph TD
 
     RequestLambda -- "Publishes 'RealtimeSyncRequested' event" --> EventBridge
     EventBridge -- "Rule for real-time jobs" --> HotQueue
-    HotQueue -- Triggers --> FargateService
+    HotQueue -- Triggers --> WorkerLambda
 
     RequestLambda -- "Starts execution for historical sync" --> HistoricalOrchestrator
-    HistoricalOrchestrator -- Orchestrates & Invokes --> FargateService
+    HistoricalOrchestrator -- Orchestrates & Invokes --> WorkerLambda
 
-    FargateService -- Read/Write --> DynamoDB
-    FargateService -- Syncs Data --> ThirdPartyAPIs
-    FargateService -- Calls for intelligence --> AI_Service
+    WorkerLambda -- Read/Write --> DynamoDB
+    WorkerLambda -- Syncs Data --> ThirdPartyAPIs
+    WorkerLambda -- Calls for intelligence --> AI_Service
     HotQueue -- On Failure --> DLQ_S3
 ```
 
 ### Sequence Diagram for Delta Sync (with AI-Powered Merge)
 ```mermaid
 sequenceDiagram
-    participant Worker as Worker Task (Fargate)
+    participant Worker as Worker Lambda
     participant DynamoDB as DynamoDB
     participant SourceAPI as Source API
     participant DestAPI as Destination API

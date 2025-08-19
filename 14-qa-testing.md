@@ -91,7 +91,7 @@ Our testing strategy follows the principles of the classic testing pyramid.
 *   **Process:** This data generation process will be automated and run as part of the environment setup and refresh scripts. This ensures that developers always have access to a fresh, realistic, and safe set of data for testing.
 
 ### Load Testing
-*   **Objective:** To formally verify that the backend system can handle the peak load of **10,000 requests per second (RPS)** as defined in the non-functional requirements, and to identify and eliminate performance bottlenecks before they impact users.
+*   **Objective:** To formally verify that the backend system can handle the peak load of **3,000 requests per second (RPS)** as defined in the non-functional requirements, and to identify and eliminate performance bottlenecks before they impact users.
 *   **Tooling:** **k6 (by Grafana Labs)** will be used for scripting and executing load tests. k6 is chosen for its developer-friendly, scriptable API (using JavaScript) and its high performance.
 *   **Environment:** Load tests will be run against a dedicated, production-scale staging environment. This environment will be a mirror of the production environment, with the same infrastructure configuration, to ensure that test results are representative.
 *   **Test Scenarios:** The load test suite will include a variety of scenarios to simulate realistic user behavior and stress the system in different ways:

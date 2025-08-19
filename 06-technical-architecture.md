@@ -62,11 +62,11 @@ graph TD
 
 ### Level 2: Containers
 
-This level zooms into the system boundary to show the high-level technical containers for the MVP. The architecture is composed of two primary workflows: a low-latency "hot path" for real-time syncs, and a robust "cold path" for long-running historical syncs, both powered by AWS Lambda.
+This level zooms into the system boundary to show the high-level technical containers. The architecture is composed of two primary workflows: a low-latency "hot path" for real-time syncs, and a robust "cold path" for long-running historical syncs, both powered by a unified AWS Lambda compute model.
 
 ```mermaid
 graph TD
-    subgraph "AWS Cloud (Single Region, Multi-AZ)"
+    subgraph "AWS Cloud (Multi-Region)"
         APIGateway[API Gateway]
         AuthorizerLambda[Lambda Authorizer]
         RequestLambda[Request Lambda]
@@ -82,7 +82,7 @@ graph TD
         end
 
         ElastiCache[ElastiCache for Caching & Rate Limiting]
-        DynamoDB[DynamoDB for Metadata]
+        DynamoDB[DynamoDB Global Table for Metadata]
         SecretsManager[Secrets Manager for Tokens]
         S3[S3 for Dead-Letter Queue]
         Observability["Monitoring & Observability (CloudWatch)"]
@@ -148,9 +148,9 @@ graph TD
     *   **Responsibilities:** Manages user credentials, issues short-lived JWTs to the mobile client after a successful authentication event, and provides public keys for backend token verification.
 
 3.  **Scalable Serverless Backend (AWS)**
-    *   **Description:** For the MVP, a decoupled, event-driven backend on AWS will use a **unified AWS Lambda compute model** to orchestrate all syncs. This serverless-first approach maximizes developer velocity and minimizes operational overhead and cost at the MVP's scale. The architecture is designed to be migrated to a hybrid Lambda/Fargate model in the future as a scaling action.
+    *   **Description:** A decoupled, event-driven backend on AWS that uses a **unified AWS Lambda compute model** to orchestrate all syncs. This serverless-first approach maximizes developer velocity and minimizes operational overhead.
     *   The backend does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
-    *   **Technology (MVP):** AWS Lambda, API Gateway, Amazon EventBridge, Amazon SQS, AWS Step Functions, DynamoDB.
+    *   **Technology:** AWS Lambda, API Gateway, **Amazon EventBridge**, **Amazon SQS**, **AWS Step Functions**, DynamoDB Global Tables.
     *   **Responsibilities:** The API Layer (Lambda) is responsible for request validation and routing. The Worker Service (also Lambda) is responsible for executing all cloud-to-cloud sync jobs, securely storing credentials, and storing user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
 
 4.  **Distributed Cache (Amazon ElastiCache for Redis)**
@@ -374,35 +374,63 @@ The idempotency store will be implemented in the ElastiCache for Redis cluster w
 *   **Value:** The serialized JSON response that was originally returned to the client (e.g., the `202 Accepted` response for a sync job).
 *   **TTL (Time-to-Live):** 24 hours. This duration is chosen as a safe upper bound to handle reasonable client-side retry windows. For example, if a user's device is offline for several hours, the client-side job scheduler may retry the operation once connectivity is restored. A 24-hour TTL ensures that even in these edge cases, the operation is not erroneously processed twice.
 
-## 3b. Architecture for MVP and Scale
+## 3b. Architecture for 1M DAU
 
-To reliably serve 1 million Daily Active Users, the architecture must be robust. However, for the initial MVP, we will adopt a more pragmatic and financially feasible approach that is designed to scale gracefully.
+To reliably serve 1 million Daily Active Users, the architecture incorporates specific strategies for high availability, performance, and scalability.
 
-### High Availability: Single-Region, Multi-AZ Architecture (MVP)
+### High Availability: Global Multi-Region Architecture
 
-A global, active-active multi-region architecture carries immense cost and complexity that is not justified for an MVP. Instead, the MVP will launch in a **single AWS region** (e.g., `us-east-1`) and achieve high availability by deploying its infrastructure across at least **three Availability Zones (AZs)** within that region.
+Given the requirement for a global launch across 5 continents, a high-availability, active-active multi-region architecture is essential to provide low-latency access for users worldwide and ensure resilience against regional outages.
 
-*   **Deployment:** All services (Lambda, SQS, ElastiCache, etc.) will be deployed across multiple AZs. This provides resilience against the failure of a single data center.
-*   **Data Durability:** DynamoDB and SQS store data redundantly across multiple AZs by default, providing high durability.
-*   **Future-Proof Design:** The entire infrastructure will be defined in Terraform using modules. This "multi-region ready" design will make a future expansion to a multi-region architecture a predictable and manageable project, to be undertaken when justified by global user distribution and revenue.
+*   **Deployment:** The entire backend infrastructure will be deployed in at least three geographically dispersed AWS regions (e.g., `us-east-1` for the Americas, `eu-west-1` for Europe/Africa, `ap-southeast-1` for Asia-Pacific). This can be expanded as the user base grows.
+*   **Request Routing:** **Amazon Route 53** will be configured with **Latency-Based Routing**. This will direct users to the AWS region that provides the lowest network latency, improving their application experience. Route 53 health checks will automatically detect if a region is unhealthy and redirect traffic to the next nearest healthy region.
+*   **Data Replication & Consistency:**
+    *   **DynamoDB Global Tables:** User metadata and sync configurations will be stored in a DynamoDB Global Table. This provides built-in, fully managed, multi-master replication across all deployed regions, ensuring that data written in one region is automatically propagated to others with low latency.
+    *   **Write Conflict Resolution:** By using a multi-master database, write conflicts can occur (e.g., if a user changes a setting in two regions simultaneously). Our application will be designed to be idempotent, and for configuration data, we will rely on DynamoDB's default "last writer wins" conflict resolution strategy. This is an acceptable trade-off for the types of non-transactional metadata we are storing.
+*   **Credential Storage:** **AWS Secrets Manager** secrets will be replicated to each active region. This ensures that worker tasks (Fargate or Lambda) in any region can access the necessary third-party OAuth tokens to perform sync jobs.
+*   **Resilience Testing (Chaos Engineering):** To proactively validate our multi-region high availability, we will practice chaos engineering. We will use the **AWS Fault Injection Simulator (FIS)** to inject faults into our pre-production environments on a regular, scheduled basis (e.g., weekly). This practice is critical for building confidence in our system's ability to withstand turbulent conditions in production.
 
-### Performance & Scalability: A Phased Approach
+    **Example Experiment Catalog:**
+    *   **Worker Failure:** Terminate a random percentage (10-50%) of Fargate tasks or Lambda instances to ensure that SQS retries and the remaining fleet can handle the load.
+    *   **API Latency:** Inject a 500ms latency into calls from a worker task to a third-party API endpoint to verify that timeouts and retry logic work as expected.
+    *   **DynamoDB Latency:** Inject latency on DynamoDB reads/writes to test application-level timeouts.
+    *   **Secrets Manager Unavailability:** Block access to AWS Secrets Manager for a short period to ensure that workers with cached credentials continue to function and that the failure to retrieve new credentials is handled gracefully.
+    *   **Full Regional Failover Drill:** Use FIS and Route 53 health check manipulation to simulate a full regional outage, forcing a failover and allowing us to measure the real-world RTO.
 
-#### Phase 1: MVP (Target: 1,000 RPS)
+### Performance & Scalability: Caching & Load Projections
 
-*   **Governing Non-Functional Requirement (NFR):** To launch quickly and manage costs, the MVP will be designed, provisioned, and tested to handle a peak load of **1,000 requests per second (RPS)**. This is a realistic and achievable target for an initial launch.
-*   **Compute Model (Lambda-First):** The MVP will use a **unified AWS Lambda compute model** for all backend processing (API layer and asynchronous workers). This approach is simpler to manage and more cost-effective at this scale.
-*   **Concurrency Estimation (at 1,000 RPS):**
-    *   Assuming an average sync job takes 5 seconds, the required concurrency is `1,000 jobs/s * 5s/job = 5,000 concurrent Lambda executions`.
-    *   This level of concurrency requires a request to increase the default AWS account limits but is well within Lambda's capabilities.
-*   **Cost Modeling:** A detailed financial model is mandatory and must be approved before implementation. The model will focus on the primary cost drivers for this phase: AWS Lambda, CloudWatch Logs, and Cross-AZ Data Transfer.
+*   **Caching Strategy:** A distributed cache using **Amazon ElastiCache for Redis** is a critical component for minimizing latency, reducing load on backend services, and enabling key functionality. The system will employ a **cache-aside** pattern for all caching. When the application needs data, it first queries the cache. If the data is present (a cache hit), it is returned immediately. If the data is not present (a cache miss), the application retrieves the data from the source of truth (e.g., DynamoDB), stores it in the cache with a defined Time-to-Live (TTL), and then returns it.
 
-#### Phase 2: Scaling to 10,000+ RPS
+    The following table details the specific items to be cached:
 
-*   **Trigger:** The migration to Phase 2 will be triggered by business success: when DAU approaches 500,000 and the system nears the 1,000 RPS ceiling.
-*   **Migration to Fargate:** The primary action will be to migrate the "hot path" worker fleet from AWS Lambda to **AWS Fargate with Graviton processors**. Fargate offers better cost-performance for sustained, high-throughput workloads, making it the right choice for this scale.
-*   **Multi-Region Deployment:** If global user distribution warrants it, the "multi-region ready" Terraform templates will be used to deploy the stack to additional AWS regions, with Route 53 providing latency-based routing.
-*   **Continuous Cost Optimization:** At this scale, continuous monitoring of costs and optimization (e.g., with Savings Plans) becomes critical.
+    | Item Type | Key Structure | Value | TTL | Invalidation Strategy | Purpose |
+    | :--- | :--- | :--- | :--- | :--- | :--- |
+    | **Idempotency Key** | `idem##{idempotencyKey}` | The original JSON response | 24 hours | TTL-based | Prevents duplicate processing of operations. |
+    | **User Sync Config** | `config##{userId}` | Serialized JSON of all user's sync configs | 15 minutes | TTL-based | Reduces DynamoDB reads for frequently accessed user settings. |
+    | **Distributed Lock** | `lock##{userId}` | `true` | 5 minutes | Explicit release | Prevents concurrent syncs for the same user. The lock is explicitly deleted when a job completes. The TTL is a safety measure against deadlocks. |
+    | **Rate Limit Token Bucket** | `ratelimit##{providerKey}` | A hash containing tokens and timestamp | 60 seconds | TTL-based | Powers the distributed rate limiter for third-party APIs. |
+    | **JWT Public Keys**| `jwks##{providerUrl}` | The JSON Web Key Set (JWKS) document | 1 hour | TTL-based | Caches the public keys from auth providers (e.g., Google) to validate JWTs without a network call on every request. |
+
+*   **Load Projections & Resource Estimation:**
+    *   **Assumptions (Bottom-Up Estimation):**
+        *   1,000,000 DAU.
+        *   Average user has 3 active sync configurations.
+        *   Syncs run automatically every ~1 hour (24 syncs/day). Manual syncs add 25% overhead.
+        *   Peak usage is concentrated in a 4-hour window (e.g., 7-9am and 8-10pm), accounting for 50% of daily traffic.
+    *   **Bottom-Up Calculation:**
+        *   Total daily requests: `1M users * 3 configs * 24 syncs/day * 1.25 = 90M requests/day`.
+        *   Average RPS: `90M / 86400s = ~1,042 RPS`.
+        *   Peak RPS from this model: `45M / 14400s = ~3,125 RPS`.
+    *   **Governing Non-Functional Requirement (NFR):**
+        *   To ensure the system is highly resilient and can handle viral growth, the governing NFR is for the system to handle a peak load of **3,000 requests per second (RPS)**.
+        *   **The architecture must be designed, provisioned, and load-tested to meet this 3,000 RPS target.** This is the definitive scalability goal.
+    *   **Worker Concurrency (Lambda) & SQS (at 3,000 RPS):**
+        *   The critical metric for provisioning is peak concurrency. SQS can easily handle this throughput.
+        *   Assuming an average real-time sync job takes 5 seconds to complete, the required concurrency during peak hours can be estimated using Little's Law (`L = λW`).
+        *   Required Concurrency = `3,000 jobs/s * 5s/job = 15,000 concurrent Lambda executions`.
+        *   **Note on Concurrency Calculation:** This is a high level of concurrency that will require an increase to the default AWS account limits for Lambda, but it is well within the service's capabilities.
+    *   **DynamoDB:**
+        *   We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased via a Savings Plan to cost-effectively handle the predictable average load. **On-Demand Capacity** will handle any traffic that exceeds the provisioned throughput, providing the best of both worlds in terms of cost and elasticity.
 
 ## 3c. DynamoDB Data Modeling & Access Patterns
 
@@ -708,7 +736,7 @@ data class ProviderTokens(
 | **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. However, to meet our strict latency SLOs, the KMP/JVM runtime should only be used for **asynchronous `WorkerLambda` functions** where cold starts are less critical. Latency-sensitive functions, such as the `RequestLambda` and `AuthorizerLambda`, **must be written in a faster-starting runtime like TypeScript or Python** to ensure the P99 API latency target can be met. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Primary Database** | **Amazon DynamoDB with Global Tables** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance required to support 1M DAU. The single-table design enables efficient, complex access patterns. We use On-Demand capacity mode, which is the most cost-effective choice for our unpredictable, spiky workload, as it automatically scales to meet traffic demands without the need for manual capacity planning. Global Tables provide the multi-region, active-active replication needed for high availability and low-latency access for our global user base.** |
-| **Backend Compute** | **AWS Lambda** | **Lambda-First Strategy for MVP.** For the MVP, all backend compute—including the API layer and all asynchronous workers—will run on **AWS Lambda**. This unified model is the simplest to manage and the most cost-effective at the MVP's scale (1,000 RPS target). It allows for rapid development and iteration. As the application scales (Phase 2), the "hot path" worker fleet will be migrated to **AWS Fargate** to optimize cost-performance for sustained, high-throughput workloads. |
+| **Backend Compute** | **AWS Lambda** | **Unified Compute Model.** All backend compute—including the API layer and all asynchronous workers—will run on **AWS Lambda**. This unified serverless model is chosen for its scalability, operational simplicity, and ability to handle the 3,000 RPS target. While Fargate could be considered for future cost optimization at extreme scale, a pure Lambda approach is the most straightforward and effective strategy. |
 | **Schema Governance** | **AWS Glue Schema Registry** | **Data Integrity & Evolution.** Provides a managed, centralized registry for our canonical data schemas. Enforces backward-compatibility checks in the CI/CD pipeline, preventing breaking changes and ensuring system stability as new data sources are added. |
 | **Distributed Cache** | **Amazon ElastiCache for Redis** | **Performance & Scalability.** Provides a high-throughput, low-latency in-memory cache for reducing database load and implementing distributed rate limiting. |
 | **AI & Machine Learning (Future)** | **Amazon SageMaker, Amazon Bedrock** | **Rationale for Future Use:** When we implement AI features, these managed services will allow us to scale without managing underlying infrastructure, reducing operational overhead and allowing focus on feature development. |
@@ -720,36 +748,23 @@ data class ProviderTokens(
 | **Local Development** | **LocalStack** | **High-Fidelity Local Testing.** Allows engineers to run and test the entire AWS serverless backend on their local machine, drastically improving the development and debugging feedback loop. |
 | **Load Testing** | **k6 (by Grafana Labs)** | **Validate Scalability Assumptions.** A modern, scriptable load testing tool to simulate traffic at scale, identify performance bottlenecks, and validate that the system can meet its 1M DAU target. |
 
-### 4a. (Future) Fargate Worker Container Definition
-
-**Note:** This section defines the container for the "Phase 2" scaling plan, where the hot-path worker fleet is migrated to AWS Fargate. It does not apply to the Lambda-first MVP architecture.
-
-To ensure consistency, security, and performance, the runtime environment for the Fargate worker tasks is explicitly defined.
-
-*   **Base Image:** The container will be built using a minimal, security-hardened base image. The standard will be **Amazon Linux 2023 (AL2023)**.
-*   **Runtime:** The application is a Kotlin JVM application. The container will include the **Amazon Corretto 17** JDK, which is a no-cost, production-ready distribution of OpenJDK with long-term support from Amazon.
-*   **Resource Allocation (Initial):**
-    *   **vCPU:** 1 vCPU
-    *   **Memory:** 2 GB
-    *   These values are a starting point and will be tuned based on load testing and production performance monitoring. We will use **AWS Graviton processors** for the Fargate tasks to achieve the best price-performance ratio.
-*   **Key Libraries:** The container image will bundle the KMP application JAR and all its dependencies, including the `DataProvider` SDK, AWS SDK for Java, and AWS Lambda Powertools.
-*   **Networking Mode:** The Fargate tasks will run in `awsvpc` networking mode, which provides each task with its own elastic network interface (ENI). This enables better security group management and performance.
-*   **Logging:** The container is configured to use the `awslogs` log driver, which sends all container logs directly to Amazon CloudWatch Logs for centralized collection and analysis.
-
 ## 5. Cost-Effectiveness and Financial Modeling
 
-A detailed financial model is a mandatory prerequisite before implementation. The MVP's Lambda-first, single-region architecture is designed to be highly cost-effective for an initial launch.
+A detailed financial model is a mandatory prerequisite before implementation.
 
-**Primary Cost Drivers (MVP):**
-1.  **AWS Lambda:** This will be a primary cost driver. Costs are based on the number of requests and the duration of executions. The 1,000 RPS target will require careful monitoring.
-2.  **CloudWatch:** At scale, the volume of logs, metrics, and traces can become a major cost.
-3.  **NAT Gateway:** Outbound traffic from Lambda functions in a VPC to third-party APIs will incur data processing charges.
-4.  **Data Transfer:** While there is no cross-region data transfer cost in the MVP, cross-AZ data transfer for high-availability services (like ElastiCache and DynamoDB) still incurs costs.
+**Primary Cost Drivers:**
+1.  **AWS Lambda:** As the sole compute service, this will be a primary cost driver. Costs are based on the number of requests and execution duration, which will be significant at the 3,000 RPS scale.
+2.  **Cross-Region Data Transfer:** The multi-region architecture incurs data transfer costs for every write operation across all replicated services:
+    *   **DynamoDB Global Tables:** Every write, update, or delete is replicated and billed.
+    *   **AWS Secrets Manager:** Replicating secrets incurs costs.
+    *   **ElastiCache Global Datastore:** Cross-region replication traffic is a direct cost.
+3.  **CloudWatch:** At scale, the volume of logs, metrics, and traces generated will be massive and will be a major operational expense.
+4.  **NAT Gateway:** Outbound traffic from Lambda functions in a VPC to third-party APIs will incur data processing charges.
 
 **Cost Management Strategy:**
-*   **Mandatory Financial Modeling:** Develop a detailed cost model using the AWS Pricing Calculator for the 1,000 RPS Lambda-based architecture.
+*   **Mandatory Financial Modeling:** Develop a detailed cost model using the AWS Pricing Calculator for the 3,000 RPS Lambda-based, multi-region architecture.
 *   **Aggressive Log Management:** Implement dynamic log levels via AppConfig, set short retention periods in CloudWatch, and automate archiving to S3/Glacier.
-*   **Explore Savings Plans:** As usage becomes more predictable, a Compute Savings Plan can significantly reduce Lambda and future Fargate costs.
+*   **Explore Savings Plans:** As usage becomes more predictable, a Compute Savings Plan can significantly reduce Lambda costs.
 *   **Cost Anomaly Detection:** Configure AWS Cost Anomaly Detection to automatically alert the team to unexpected spending.
 
 ## 6. Security, Privacy, and Compliance
