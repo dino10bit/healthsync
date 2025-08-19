@@ -476,7 +476,7 @@ Given the requirement for a global launch across 5 continents, a high-availabili
 *   **Data Replication & Consistency:**
     *   **DynamoDB Global Tables:** User metadata and sync configurations will be stored in a DynamoDB Global Table. This provides built-in, fully managed, multi-master replication across all deployed regions, ensuring that data written in one region is automatically propagated to others with low latency.
     *   **Write Conflict Resolution:** By using a multi-master database, write conflicts can occur (e.g., if a user changes a setting in two regions simultaneously). Our application will be designed to be idempotent, and for configuration data, we will rely on DynamoDB's default "last writer wins" conflict resolution strategy. This is an acceptable trade-off for the types of non-transactional metadata we are storing.
-*   **Credential Storage:** **AWS Secrets Manager** secrets will be replicated to each active region. This ensures that worker tasks (Fargate or Lambda) in any region can access the necessary third-party OAuth tokens to perform sync jobs.
+*   **Credential Storage:** **AWS Secrets Manager** secrets will be replicated to each active region. This ensures that worker tasks (AWS Lambda) in any region can access the necessary third-party OAuth tokens to perform sync jobs.
 *   **Resilience Testing (Chaos Engineering):** To proactively validate our multi-region high availability, we will practice chaos engineering. We will use the **AWS Fault Injection Simulator (FIS)** to inject faults into our pre-production environments on a regular, scheduled basis (e.g., weekly). This practice is critical for building confidence in our system's ability to withstand turbulent conditions in production.
 
     **Example Experiment Catalog:**
@@ -549,7 +549,12 @@ The workflow for the distributed rate limiter is as follows:
         *   Required Concurrency = `3,000 jobs/s * 5s/job = 15,000 concurrent Lambda executions`.
         *   **Provisioned Concurrency:** Given that the `WorkerLambda` uses a KMP/JVM runtime with known cold start latencies, **Provisioned Concurrency** will be enabled for the `WorkerLambda` fleet. This keeps a specified number of execution environments warm and ready to respond instantly. This strategy is critical for eliminating cold start latency, making performance more predictable, and can be more cost-effective than on-demand Lambda for this type of predictable, high-throughput workload.
         *   **Note on Concurrency Calculation:** This is a high level of concurrency that will require an increase to the default AWS account limits for Lambda, but it is well within the service's capabilities.
-        *   **Feasibility & Risk Mitigation:** The projection of ~15,000 concurrent Lambda executions represents a significant operational and financial risk. This level of concurrency can place extreme load on downstream dependencies (e.g., third-party APIs, ElastiCache) and will incur substantial cost. Therefore, a full-scale load test **must** be conducted against a production-like environment to validate these assumptions before launch. The results of this test will inform the final provisioning strategy. A phased rollout, gradually increasing user load while monitoring system performance, will be mandatory.
+        *   **Feasibility & Risk Mitigation:** The projection of ~15,000 concurrent Lambda executions is a significant technical risk that must be proactively addressed before launch. While technically achievable, this scale of concurrency has major implications for cost, downstream service stability, and AWS account limits. The following actions are mandatory prerequisites for implementation:
+            1.  **Detailed Cost Model:** A detailed cost model must be created using the AWS Pricing Calculator for the projected 15,000 provisioned concurrency instances (JVM-based). This model must be included in the project budget and approved.
+            2.  **Downstream Dependency Validation:** A proof-of-concept load test must be executed to validate that all critical downstream dependencies can handle the projected load without failure. This includes, but is not limited to: third-party APIs (which may have hard rate limits), Amazon ElastiCache, AWS Secrets Manager, and VPC networking limits (e.g., NAT Gateway concurrency, available IP addresses).
+            3.  **Service Limit Increases:** A formal request to increase all relevant AWS service limits must be submitted and approved well in advance of the production launch. This includes limits for: Lambda concurrent executions, VPC IP addresses, and any other services identified during load testing.
+            4.  **Architectural Alternatives Assessment:** While Lambda is the chosen MVP strategy, architectural alternatives that can achieve the required throughput with lower concurrency (e.g., processing multiple jobs within a single Lambda invocation, or a container-based model like Fargate) must be considered for future phases to manage cost and risk at scale.
+            A phased rollout, gradually increasing user load while monitoring system performance, remains a mandatory part of the release strategy.
     *   **DynamoDB:**
         *   We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased via a Savings Plan to cost-effectively handle the predictable average load. **On-Demand Capacity** will handle any traffic that exceeds the provisioned throughput, providing the best of both worlds in terms of cost and elasticity.
 
@@ -629,9 +634,14 @@ The recommended primary strategy is to isolate the hot user's data into a separa
     *   Before performing any operation for a user, this layer will first read the user's `PROFILE` item from the main table to check the `isHot` flag. This read can be heavily cached.
     *   If `isHot` is `true`, all subsequent reads and writes for that user will be routed to a dedicated `SyncWellMetadata_HotUsers` table. If the flag is false or absent, requests are routed to the main table. The table name will be determined dynamically at runtime.
 
-*   **Migration:**
-    *   When a user is flagged as hot, a one-time script will be run to migrate all of that user's items from the main table to the `SyncWellMetadata_HotUsers` table.
-    *   The reverse process will be followed if a user's activity level returns to normal.
+*   **Migration and Operational Management:**
+    *   **Migration Script:** The process will be handled by a version-controlled, peer-reviewed operational script. When a user is flagged as "hot," an authorized engineer will run this script, which performs the following steps:
+        1.  Reads all items for the `USER#{userId}` from the main `SyncWellMetadata` table.
+        2.  Writes all of those items to the `SyncWellMetadata_HotUsers` table.
+        3.  Verifies that the data has been copied correctly.
+        4.  Sets the `isHot: true` flag on the user's `PROFILE` item in the *main* table. This acts as the "switch" that redirects all future application traffic.
+    *   **De-migration Process:** If a user's activity level returns to normal, a similar script will be run to migrate them back. It will copy the data back to the main table and then remove the `isHot` flag from the user's profile.
+    *   **Operational Overhead:** The primary overhead is the need for manual intervention by the on-call engineer. This includes monitoring the alerts, running the peer-reviewed migration scripts, and verifying the outcome. The existence of a second DynamoDB table (`SyncWellMetadata_HotUsers`) adds minimal cost unless it is actively used, and its management (backups, etc.) will be automated via the same Infrastructure as Code (Terraform) configuration as the main table. The process is designed to be used rarely, only for extreme outlier users, thus keeping the operational burden low.
 
 *   **Advantages:**
     *   **Simplicity:** This approach avoids the significant read-side complexity of other techniques like write-sharding, as the application logic only needs to select a table name, not query multiple shards and merge results.
@@ -656,7 +666,9 @@ The ElastiCache for Redis cluster is a critical component for performance and sy
     *   **Mechanism:** If the application cannot connect to the Redis cluster, it will enter a **degraded mode**.
     *   **Impact:**
         *   **Latency:** API and sync latency will increase significantly as all caching is bypassed.
-        *   **Distributed Locking:** This feature will be disabled. The primary idempotency key check will still prevent most data duplication, but the risk of concurrent processing increases.
+        *   **Distributed Locking:** This feature will be disabled. This is a significant degradation. The impact is as follows:
+            *   **Risk Analysis:** Without distributed locking, two `WorkerLambda` instances could start processing the same sync job for the same user concurrently. The end-to-end `Idempotency-Key` mechanism (see Section 3a) is the primary safeguard against data corruption, as it prevents the final state from being written more than once. However, the concurrent processing could still lead to duplicated outbound API calls to third-party services, which is inefficient and could, in rare edge cases, cause issues with those providers.
+            *   **Mitigation:** The risk is accepted as a temporary degradation. The core data integrity is protected by the idempotency key. The system will continue to function, albeit less efficiently, until the cache is restored.
         *   **Rate Limiting:** This is the most critical function. In a degraded mode, the system **will not** proceed without rate limiting. Instead, all worker Lambdas will treat the failure to get a rate limit token as a transient error and will back off, effectively slowing down or pausing all third-party API calls until the cache is restored. This is a critical safety mechanism to prevent overwhelming downstream APIs.
         *   **Alerting:** A critical alert will be triggered to notify the on-call team of the cache failure.
 This strategy ensures that a cache failure results in a slower, but safe, service, not a complete or dangerous one.
@@ -937,8 +949,9 @@ To provide a responsive user experience and basic functionality when the user's 
     1.  When the application detects that network connectivity has been restored, it will initiate a reconciliation process.
     2.  It will read the queued commands from the "actions" table in the order they were created.
     3.  For each command, it will make the corresponding API call to the backend (e.g., `POST /v1/sync-configs`). The client will use the `Idempotency-Key` it generated and stored offline for each action.
-    4.  Once the backend confirms the action was successful, the command is removed from the local "actions" table.
-    5.  After all queued actions are processed, the client will fetch the latest state from the backend to ensure it is fully in sync with the source of truth.
+    4.  **Conflict Handling:** If an API call fails due to a state conflict (e.g., a 409 Conflict or 404 Not Found), the client will not retry the command. It will discard the local action, log the conflict for diagnostic purposes, and rely on the final fetch of the latest state (Step 6) to resolve the UI. This "backend wins" strategy is the simplest and most robust approach for handling configuration data.
+    5.  Once the backend confirms the action was successful, the command is removed from the local "actions" table.
+    6.  After all queued actions are processed, the client will fetch the latest state from the backend to ensure it is fully in sync with the source of truth.
 
 This strategy ensures that the app remains responsive and that user actions are not lost during periods of no connectivity.
 
@@ -950,7 +963,7 @@ This strategy ensures that the app remains responsive and that user actions are 
 | **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. However, to meet our strict latency SLOs, the KMP/JVM runtime should only be used for **asynchronous `WorkerLambda` functions** where cold starts are less critical. The latency-sensitive API entrypoint is handled by API Gateway's direct integrations, and the `AuthorizerLambda` **must be written in a faster-starting runtime like TypeScript or Python** to ensure the P99 API latency target can be met. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Primary Database** | **Amazon DynamoDB with Global Tables** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance required to support 1M DAU. The single-table design enables efficient, complex access patterns. We use On-Demand capacity mode, which is the most cost-effective choice for our unpredictable, spiky workload, as it automatically scales to meet traffic demands without the need for manual capacity planning. Global Tables provide the multi-region, active-active replication needed for high availability and low-latency access for our global user base.** |
-| **Backend Compute** | **AWS Lambda** | **Unified Compute Model.** All backend compute—including the API layer and all asynchronous workers—will run on **AWS Lambda**. This unified serverless model is chosen for its scalability, operational simplicity, and ability to handle the 3,000 RPS target. While Fargate could be considered for future cost optimization at extreme scale, a pure Lambda approach is the most straightforward and effective strategy. |
+| **Backend Compute** | **AWS Lambda** | **Unified Compute Model for MVP.** All backend compute for the initial launch—including the API layer and all asynchronous workers—will run on **AWS Lambda**. This unified serverless model is chosen for its scalability, operational simplicity, and ability to handle the 3,000 RPS target. As detailed in the Technology Radar (see Appendix A), AWS Fargate is being assessed as a potential future optimization for cost-performance at extreme scale (Phase 2), but a pure Lambda approach is the definitive strategy for the MVP. |
 | **Schema Governance** | **AWS Glue Schema Registry** | **Data Integrity & Evolution.** Provides a managed, centralized registry for our canonical data schemas. Enforces backward-compatibility checks in the CI/CD pipeline, preventing breaking changes and ensuring system stability as new data sources are added. |
 | **Distributed Cache** | **Amazon ElastiCache for Redis** | **Performance & Scalability.** Provides a high-throughput, low-latency in-memory cache for reducing database load and implementing distributed rate limiting. |
 | **AI & Machine Learning (Future)** | **Amazon SageMaker, Amazon Bedrock** | **Rationale for Future Use:** When we implement AI features, these managed services will allow us to scale without managing underlying infrastructure, reducing operational overhead and allowing focus on feature development. |
@@ -1008,9 +1021,36 @@ A detailed financial model is a mandatory prerequisite before implementation.
 To enable future product improvements through analytics and machine learning without compromising user privacy, a strict, dual-pronged data anonymization strategy will be implemented. This strategy differentiates between the needs of batch analytics and real-time operational AI features.
 
 #### Real-Time Anonymization for Operational AI
-For features like the AI-Powered Merge, which require a synchronous, real-time response, a dedicated **Anonymizer Proxy Lambda** will be used.
-*   **Mechanism:** The `WorkerLambda` does not call the `AI Insights Service` directly. Instead, it makes a synchronous request to the `AnonymizerProxy`. This proxy function is responsible for stripping or replacing all PII from the request payload in real-time before forwarding the anonymized data to the `AI Insights Service`.
-*   **Privacy:** This proxy-based approach ensures that no raw user PII is ever processed by the AI models, upholding our core privacy principles in a low-latency manner suitable for operational workflows.
+For features like the AI-Powered Merge, which require a synchronous, real-time response, a dedicated **Anonymizer Proxy Lambda** will be used. This is a critical component for fulfilling our "privacy by design" promise for real-time operational features. It is explicitly designed to address the privacy gap for synchronous AI requests, as distinct from the batch analytics pipeline.
+
+*   **Mechanism:** The `WorkerLambda` does not call the `AI Insights Service` directly. Instead, it makes a synchronous, request-response invocation to the `AnonymizerProxy`. This proxy function's sole responsibility is to strip or replace all PII from the request payload in real-time before forwarding the now-anonymized data to the `AI Insights Service`. The proxy then waits for the response from the AI service and passes it back to the original `WorkerLambda`.
+
+    The following diagram illustrates this synchronous, privacy-enhancing request flow:
+
+    ```mermaid
+    sequenceDiagram
+        participant Worker as Worker Lambda
+        participant Anonymizer as Anonymizer Proxy Lambda
+        participant AIService as AI Insights Service
+
+        Worker->>+Anonymizer: POST /anonymize-and-process<br>(Payload with PII)
+        Anonymizer->>Anonymizer: Strip PII from payload
+        Anonymizer->>+AIService: POST /process<br>(Anonymized Payload)
+        AIService-->>-Anonymizer: Merged data response
+        Anonymizer-->>-Worker: Pass-through response
+    end
+    ```
+
+*   **Latency Impact:** The introduction of this synchronous proxy adds a small amount of latency to the AI-powered merge workflow.
+    *   **Expected Overhead:** The P99 latency for the `AnonymizerProxy` Lambda itself (excluding the downstream call to the AI service) is expected to be **under 50ms**.
+    *   **SLO Consideration:** This additional latency is factored into the overall end-to-end sync time SLO. The performance of this proxy will be closely monitored with its own CloudWatch alarms.
+
+*   **PII Stripping Strategy:** The anonymization process is designed to remove personally identifiable information without losing the essential semantic context required for the AI model to make an intelligent merge decision.
+    *   **Direct Identifiers:** Fields containing direct PII, such as `title` or `notes` on a workout, are completely removed.
+    *   **Indirect Identifiers:** Fields that could indirectly identify a user, such as precise GPS coordinates, are generalized. For example, a full GPS track might be replaced by a simple bounding box or removed entirely, depending on the model's requirements.
+    *   **Hashing/Tokenization:** Stable but non-personal identifiers (e.g., `sourceId`) may be kept to allow the AI service to detect patterns related to data sources, but they cannot be reverse-engineered to identify a user.
+
+*   **Privacy Guarantee:** This proxy-based architecture provides a strong guarantee that no raw user PII is ever processed or seen by the AI models, upholding our core privacy principles in a low-latency manner suitable for operational workflows.
 
 #### Batch Anonymization for Analytics
 To handle analytics data at scale, a robust and cost-effective ingestion pipeline is required. At 1M DAU, sending millions of individual events directly to an analytics endpoint would be inefficient and expensive. To solve this, the architecture will use **Amazon Kinesis Data Firehose**.

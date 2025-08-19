@@ -45,7 +45,7 @@ This document defines the performance, scalability, and reliability requirements
 
 ## 3. Architecture for Performance at Scale (1M DAU)
 
-The architecture, as defined in `06-technical-architecture.md`, is explicitly designed to be highly performant and scalable using a hybrid compute model.
+The architecture, as defined in `06-technical-architecture.md`, is explicitly designed to be highly performant and scalable.
 
 ### 3.1. Caching Strategy with Amazon ElastiCache
 
@@ -63,11 +63,13 @@ To ensure the system can handle the load from 1M DAU, we have projected the requ
 *   **Peak Throughput:** The system is designed to handle a peak of **3,000 requests per second (RPS)**.
 *   **Required Lambda Concurrency:** Based on the 3,000 RPS target and an average job duration of 5 seconds, the projected peak concurrency is **~15,000 concurrent Lambda executions**.
 
-**Actions:**
-1.  The AWS Lambda service for the worker fleet will scale automatically. The account concurrency limits must be raised to support the projected peak of 15,000 concurrent executions.
-2.  DynamoDB will be configured in a **hybrid capacity model** (Provisioned + On-Demand) to balance cost and elasticity.
-3.  API Gateway and SQS scale automatically and require no specific pre-provisioning for this load.
-4.  **Mandatory Load Testing:** The projection of ~15,000 concurrent executions is a significant technical risk. A proof-of-concept load test **must** be conducted to validate the performance and stability of the end-to-end system (including downstream third-party APIs) at this scale before launch.
+**Mandatory Feasibility Actions:**
+The projection of ~15,000 concurrent executions is a significant technical risk. To ensure the system is financially viable and operationally stable at this scale, the following actions are mandatory prerequisites before launch:
+1.  **Create Detailed Cost Model:** A full cost analysis for 15,000 provisioned concurrency Lambda instances must be completed and approved.
+2.  **Conduct Downstream Load Tests:** A proof-of-concept load test must be performed, specifically targeting the validation of downstream dependencies (third-party APIs, ElastiCache, etc.) under the projected parallel load.
+3.  **Secure Service Limit Increases:** The AWS account limits for Lambda concurrency and other relevant services must be formally increased.
+4.  **Architectural Assessment:** Alternatives that could lower concurrency for the same throughput (e.g., batching jobs in a single Lambda, exploring Fargate) should be assessed for future cost optimization.
+5.  **Provisioning:** Based on the results of the above, DynamoDB will be configured in a hybrid capacity model, and Lambda Provisioned Concurrency will be enabled for the worker fleet.
 
 ### 3.3. Resilient Historical Syncs with Job Chunking
 

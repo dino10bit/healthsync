@@ -53,6 +53,7 @@ This dashboard will be built in AWS CloudWatch and provides a real-time view of 
 | **SQS Hot Path Queue Depth**| Big Number / Time Series | `ApproximateNumberOfMessagesVisible` for the "Hot" queue | AWS CloudWatch | < 100 (sustained) |
 | **Step Functions (Cold Path) Failures**| Time Series | `ExecutionsFailed` for all historical sync state machines | AWS CloudWatch | 0 |
 | **Step Functions (Cold Path) Timeouts**| Time Series | `ExecutionsTimedOut` for all historical sync state machines | AWS CloudWatch | 0 |
+| **Step Functions (Cold Path) Throttles**| Time Series | `ExecutionThrottled` for all historical sync state machines | AWS CloudWatch | 0 |
 | **DynamoDB Throttled Requests**| Time Series | `ReadThrottleEvents`, `WriteThrottleEvents` | AWS CloudWatch | 0 |
 
 ## 5. The Sync Health Dashboard (Combined)
@@ -61,10 +62,10 @@ This dashboard provides a holistic view of the end-to-end sync process, combinin
 
 | Widget Title | Chart Type | Metric(s) | Data Source | SLO Target |
 | :--- | :--- | :--- | :--- | :--- |
-| **E2E Sync Success Rate (24h)**| Gauge | Count of `SyncSuccess` events / Count of `SyncStarted` events | Custom Metrics (CloudWatch) | > 99.5% |
-| **Sync Failure Rate by Provider**| Bar Chart | Custom Metric: `SyncFailed` events grouped by `source_provider` dimension | AWS CloudWatch | N/A (Diagnostic) |
-| **Sync Failure Rate by Error Code**| Table | `Errors` metric grouped by error type in Lambda logs | AWS CloudWatch Logs | N/A (Diagnostic) |
-| **E2E Sync Job Latency (P90)**| Time Series | Lambda `Duration` metric | AWS CloudWatch | < 30s (for delta sync) |
+| **E2E Sync Success Rate (24h)**| Gauge | The number of successful sync jobs divided by the number of requested sync jobs. This is calculated as: `Count(SyncJobCompleted where status='SUCCESS') / Count(SyncJobRequested)`. | Custom CloudWatch Metrics, derived from structured logs or custom events. | > 99.9% |
+| **Sync Failure Rate by Provider**| Bar Chart | Custom Metric: `SyncJobCompleted` events where `status='FAILURE'`, grouped by `provider` dimension. | Custom CloudWatch Metrics | N/A (Diagnostic) |
+| **Sync Failure Rate by Error Code**| Table | Custom Metric: `SyncJobCompleted` events where `status='FAILURE'`, grouped by `errorCode` dimension. | Custom CloudWatch Metrics | N/A (Diagnostic) |
+| **E2E Sync Job Latency (P90)**| Time Series | The time difference between the `SyncJobCompleted` and `SyncJobRequested` events for a given `correlationId`. | Custom CloudWatch Metric, calculated from event timestamps. | < 45s (for delta sync) |
 | **Dead-Letter Queue Size** | Big Number | `ApproximateNumberOfMessagesVisible` for the DLQ | AWS CloudWatch | 0 |
 
 ## 6. Implementation & Tooling

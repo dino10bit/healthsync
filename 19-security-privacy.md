@@ -133,7 +133,7 @@ While `userId` is never logged by default, a critical operational gap exists for
     1.  **Request:** An authorized support engineer, working on a specific support ticket (e.g., `TICKET-123`), identifies the need to debug for a specific `userId`.
     2.  **Approval:** The engineer creates a pull request containing the script to be run (e.g., a simple AWS CLI command to query a purpose-built lookup index) and the `userId` as a parameter. A second authorized engineer reviews the PR, verifies the legitimacy of the support ticket, and approves the PR.
     3.  **Execution:** Once approved, the engineer executes the peer-reviewed script from their local machine using their MFA-authenticated AWS credentials. The script performs a temporary lookup to find recent `correlationId`s associated with that `userId`.
-    4.  **Debugging:** The engineer uses the retrieved `correlationId`s to find the relevant logs in CloudWatch to diagnose the issue. The mapping between `userId` and `correlationId` is not stored anywhere.
+    4.  **Debugging:** The engineer uses the retrieved `correlationId`s to find the relevant logs in CloudWatch to diagnose the issue. The mapping between `userId` and `correlationId` is not stored permanently; it is only available for a short time in the secure lookup index as described below.
 *   **Future Enhancement:** Post-launch, this manual process will be replaced by a dedicated internal web tool that automates the approval and lookup workflow, but the core security principles (MFA, peer approval, auditing) will remain the same.
 
 #### 6.1.2. Break-Glass Lookup Index Design
@@ -161,6 +161,7 @@ The "purpose-built lookup index" is a critical component of the break-glass proc
 ### Network Communication
 *   [ ] All network traffic uses TLS 1.2+.
 *   [ ] Backend services are properly isolated in a VPC.
+*   [ ] Certificate Pinning is confirmed as deferred for MVP to manage operational risk.
 
 ### Authentication & Authorization
 *   [ ] Mobile-to-backend communication is authenticated (e.g., via JWTs).
