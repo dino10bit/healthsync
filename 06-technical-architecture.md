@@ -69,7 +69,6 @@ graph TD
     subgraph "AWS Cloud (Multi-Region)"
         APIGateway[API Gateway]
         AuthorizerLambda[Lambda Authorizer]
-        RequestLambda[Request Lambda]
 
         subgraph "Hot Path (Real-time Syncs)"
             HotPathEventBus[EventBridge Event Bus]
@@ -112,13 +111,12 @@ graph TD
     MobileApp -- "HTTPS Request (with Firebase JWT)" --> APIGateway
     APIGateway -- "Validates JWT with" --> AuthorizerLambda
     AuthorizerLambda -- "Caches and validates against Google's public keys"--> FirebaseAuth
-    APIGateway -- Invokes --> RequestLambda
+    APIGateway -- "Publishes 'RealtimeSyncRequested' event to" --> HotPathEventBus
+    APIGateway -- "Starts execution for historical sync" --> HistoricalOrchestrator
 
-    RequestLambda -- "Publishes 'RealtimeSyncRequested' event" --> HotPathEventBus
     HotPathEventBus -- "Rule routes to" --> RealtimeSyncQueue
     RealtimeSyncQueue -- "Target for" --> WorkerLambda
 
-    RequestLambda -- "Starts execution for historical sync" --> HistoricalOrchestrator
     HistoricalOrchestrator -- "Orchestrates and invokes" --> WorkerLambda
 
     HotPathEventBus -- "Rule: All Events" --> AnalyticsService
@@ -129,10 +127,8 @@ graph TD
     WorkerLambda -- "On failure, sends to" --> S3
     CICD -- "Registers & Validates Schemas in" --> GlueSchemaRegistry
     WorkerLambda -- "Uses Schemas during build/runtime" --> GlueSchemaRegistry
-    RequestLambda -- "Fetches runtime config from" --> AppConfig
     WorkerLambda -- "Fetches runtime config from" --> AppConfig
 
-    RequestLambda -- "Logs & Metrics" --> Observability
     WorkerLambda -- "Logs & Metrics" --> Observability
     AuthorizerLambda -- "Logs & Metrics" --> Observability
 ```
@@ -151,7 +147,7 @@ graph TD
     *   **Description:** A decoupled, event-driven backend on AWS that uses a **unified AWS Lambda compute model** to orchestrate all syncs. This serverless-first approach maximizes developer velocity and minimizes operational overhead.
     *   The backend does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
     *   **Technology:** AWS Lambda, API Gateway, **Amazon EventBridge**, **Amazon SQS**, **AWS Step Functions**, DynamoDB Global Tables.
-    *   **Responsibilities:** The API Layer (Lambda) is responsible for request validation and routing. The Worker Service (also Lambda) is responsible for executing all cloud-to-cloud sync jobs, securely storing credentials, and storing user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
+    *   **Responsibilities:** The API Layer (**API Gateway**) is responsible for request validation and routing, using direct service integrations to send jobs to the backend. The Worker Service (also Lambda) is responsible for executing all cloud-to-cloud sync jobs, securely storing credentials, and storing user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
 
 4.  **Distributed Cache (Amazon ElastiCache for Redis)**
     *   **Description:** An in-memory caching layer to improve performance and reduce load on downstream services. The cluster must be sized appropriately to handle the high volume of requests from the worker fleet, particularly for the distributed locking and rate-limiting functions which will be under heavy load at 10,000 RPS.
@@ -312,8 +308,8 @@ Cloud-to-cloud syncs are handled by two distinct architectural patterns dependin
 *   **Use Case:** Handling frequent, automatic, and user-initiated manual syncs for recent data.
 *   **Flow:**
     1.  The Mobile App sends a request to API Gateway to start a sync.
-    2.  The `RequestLambda` validates the request and publishes a semantic `RealtimeSyncRequested` event to the **EventBridge Event Bus**.
-    3.  An EventBridge rule filters for these events and sends them to an **Amazon SQS queue**. This queue acts as a buffer, protecting the system from load spikes and ensuring jobs are not lost.
+    2.  **API Gateway** uses a direct service integration to validate the request and publish a semantic `RealtimeSyncRequested` event to the **EventBridge Event Bus**.
+    3.  An EventBridge rule filters for these events and sends them to an **Amazon SQS queue**. To ensure that no sync requests are lost if EventBridge fails to deliver to SQS, the rule is configured with a Dead-Letter Queue (DLQ). The main SQS queue acts as a buffer, protecting the system from load spikes and ensuring jobs are not lost.
     4.  The SQS queue triggers the `WorkerLambda`, which processes the job.
     5.  Upon completion, the `WorkerLambda` can publish a result event back to the bus for other services to consume.
 *   **Advantage:** This is a highly reliable and extensible model for high-volume, short-lived jobs.
@@ -334,7 +330,7 @@ graph TD
 *   **Use Case:** Handling user-initiated requests to backfill months or years of historical data.
 *   **Flow:**
     1.  The Mobile App sends a request to a dedicated API Gateway endpoint to start a historical sync.
-    2.  The `RequestLambda` validates the request and directly starts an execution of the **AWS Step Functions** state machine.
+    2.  **API Gateway** uses a direct service integration to validate the request and start an execution of the **AWS Step Functions** state machine.
     3.  The state machine orchestrates the entire workflow, breaking the job into chunks, processing them in parallel with `WorkerLambda` invocations, and handling errors. The detailed workflow is described in the "Historical Sync Workflow" section below.
 *   **Advantage:** Step Functions provides the state management, error handling, and observability required for long-running, complex jobs, making the process far more reliable than a single, long-lived function.
 
@@ -346,26 +342,23 @@ graph TD
 
 ## 3a. Unified End-to-End Idempotency Strategy
 
-In a distributed, event-driven system, operations can be retried at multiple levels, making a robust idempotency strategy critical for data integrity. We will implement a single, unified strategy based on a client-generated **`Idempotency-Key`**. This key ensures that an operation is processed at most once, from the initial API call to the final asynchronous worker execution.
+In a distributed, event-driven system, operations can be retried at multiple levels, making a robust idempotency strategy critical for data integrity. We will implement a single, unified strategy based on a client-generated **`Idempotency-Key`**. This key ensures that an operation is processed at most once by the asynchronous backend workers.
 
 *   **Key Generation:** The mobile client is responsible for generating a unique `Idempotency-Key` (e.g., a UUID) for each new state-changing operation. This same key **must** be used for any retries of that same operation.
 
 *   **End-to-End Flow:**
     1.  **API Request:** The client sends a `POST` request, including the `Idempotency-Key` in the HTTP header.
-    2.  **API Gateway & RequestLambda:** The `RequestLambda` receives the request. It immediately checks for the `Idempotency-Key` in a dedicated idempotency store (e.g., a Redis cache with a short TTL).
-        *   If the key is found, it means the request is a duplicate. The `RequestLambda` immediately returns the original, cached response without reprocessing.
-        *   If the key is not found, the `RequestLambda` stores the key in the idempotency store and proceeds.
-    3.  **Event Payload:** The `RequestLambda` **must** include the `Idempotency-Key` in the payload of the event it publishes to EventBridge or the job it sends to Step Functions.
-    4.  **Asynchronous Worker Execution:** The worker (Fargate or Lambda) receives the event. Before starting any processing, it performs its own check against the same idempotency store using the key from the event payload.
-        *   If the key is found, it means the job has already been processed (e.g., due to an SQS redelivery). The worker logs this and exits gracefully.
-        *   If the key is not found, the worker stores the key and begins processing the job.
+    2.  **API Gateway:** Using a direct service integration, API Gateway passes the request payload and the `Idempotency-Key` directly to the backend service (EventBridge for real-time syncs, Step Functions for historical syncs). It does not perform any idempotency checks itself.
+    3.  **Asynchronous Worker Execution:** The worker (Lambda) receives the event, which includes the `Idempotency-Key` from the original request. Before starting any processing, it performs its own check against the central idempotency store (Redis).
+        *   If the key is found, it means the job has already been processed (e.g., due to a client retry or an SQS redelivery). The worker logs this and exits gracefully without reprocessing.
+        *   If the key is not found, the worker stores the key in the idempotency store and begins processing the job.
 
-*   **Benefit:** This two-check approach provides comprehensive protection. The first check at the API level prevents duplicate synchronous operations. The second check in the asynchronous worker prevents duplicate processing in the case of event redeliveries, guaranteeing at-most-once execution for the entire operation.
+*   **Benefit:** This approach simplifies the architecture by removing the `RequestLambda` and consolidating all idempotency logic within the asynchronous worker. While this means a duplicate request consumes minimal resources until it is checked by the worker, it is a sound trade-off for the reduced latency and operational simplicity at the API layer.
 
 #### Idempotency for Historical Syncs (Step Functions)
 For long-running historical syncs initiated via Step Functions, an additional layer of idempotency is applied at the orchestration level:
-*   **Execution Naming:** The `RequestLambda` that triggers the historical sync **must** use the client-provided `Idempotency-Key` as the `name` for the Step Function's execution. This ensures that a given `Idempotency-Key` can only ever start one execution.
-*   **Handling Existing Executions:** The `RequestLambda` will attempt to start a new state machine execution with this name. If the call fails with an `ExecutionAlreadyExists` error, it signifies that the operation was already successfully initiated. The Lambda **must** catch this specific error and treat it as a successful submission, returning a `202 Accepted` response to the client. This prevents duplicate state machine executions for the same historical sync job.
+*   **Execution Naming:** The API Gateway integration **must** be configured to use the client-provided `Idempotency-Key` from the request as the `name` for the Step Function's execution. This ensures that a given `Idempotency-Key` can only ever start one execution.
+*   **Handling Existing Executions:** API Gateway's integration will attempt to start a new state machine execution with this name. If the call fails with an `ExecutionAlreadyExists` error, it signifies that the operation was already successfully initiated. The integration mapping can be configured to catch this specific error and return a `202 Accepted` response to the client. This prevents duplicate state machine executions for the same historical sync job.
 
 #### Idempotency Store Implementation
 
@@ -374,41 +367,33 @@ The idempotency store will be implemented in the ElastiCache for Redis cluster w
 *   **Value:** The serialized JSON response that was originally returned to the client (e.g., the `202 Accepted` response for a sync job).
 *   **TTL (Time-to-Live):** 24 hours. This duration is chosen as a safe upper bound to handle reasonable client-side retry windows. For example, if a user's device is offline for several hours, the client-side job scheduler may retry the operation once connectivity is restored. A 24-hour TTL ensures that even in these edge cases, the operation is not erroneously processed twice.
 
-The following sequence diagram illustrates the end-to-end flow, including the stateful check in the worker to handle concurrent requests and retries gracefully.
+The following sequence diagram illustrates the end-to-end flow, where the idempotency check is handled entirely by the asynchronous worker.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant Client
-    participant RequestLambda
-    participant IdempotencyStore as "Idempotency Store (Redis)"
+    participant APIGateway as "API Gateway"
     participant WorkerLambda
+    participant IdempotencyStore as "Idempotency Store (Redis)"
 
-    Client->>RequestLambda: POST /sync-jobs<br>Idempotency-Key: K1
-
-    RequestLambda->>IdempotencyStore: GET idem#K1
-    alt Request is a retry and already completed
-        IdempotencyStore-->>RequestLambda: Return status: COMPLETED, Response: R1
-        RequestLambda-->>Client: Return cached response R1
-    else Request is new or in-flight
-        IdempotencyStore-->>RequestLambda: null
-        RequestLambda->>RequestLambda: Publish job to SQS<br>(payload includes key K1)
-        RequestLambda-->>Client: 202 Accepted (this is Response R1)
-    end
+    Client->>APIGateway: POST /sync-jobs<br>Idempotency-Key: K1
+    APIGateway-->>Client: 202 Accepted
+    note right of APIGateway: Job is enqueued via EventBridge/SQS<br>(payload includes key K1)
 
     %% ... sometime later, message is picked up by a worker ...
     note over WorkerLambda: Receives job for key K1 from SQS
 
-    WorkerLambda->>IdempotencyStore: PUT idem#K1<br>Condition: item_not_exists() or attribute_exists(State) and State=INPROGRESS<br>State: INPROGRESS, TTL: 5min
+    WorkerLambda->>IdempotencyStore: PUT idem#K1<br>Condition: item_not_exists()<br>State: INPROGRESS, TTL: 5min
 
-    alt Another worker is already processing this job
+    alt Another worker is already processing this job<br>OR request is a duplicate
         IdempotencyStore-->>WorkerLambda: ConditionalCheckFailedException
         WorkerLambda->>WorkerLambda: Log "Duplicate processing suppressed" and exit
     else This is the first worker for the job
         IdempotencyStore-->>WorkerLambda: OK
         WorkerLambda->>WorkerLambda: Execute business logic...
         alt Business logic is successful
-            WorkerLambda->>IdempotencyStore: PUT idem#K1<br>State: COMPLETED, Response: R1, TTL: 24hr
+            WorkerLambda->>IdempotencyStore: PUT idem#K1<br>State: COMPLETED, Response: (empty), TTL: 24hr
             IdempotencyStore-->>WorkerLambda: OK
         else Business logic fails
             WorkerLambda->>IdempotencyStore: DELETE idem#K1
@@ -420,11 +405,10 @@ sequenceDiagram
 
 The flow in this diagram can be broken down as follows:
 1.  **Client Request:** The client initiates a request, providing a unique `Idempotency-Key`.
-2.  **Initial Check:** The `RequestLambda` first checks if this key already exists and is marked as `COMPLETED`. If so, it returns the cached response immediately, preventing a duplicate API call.
-3.  **Enqueue Job:** If the key is not found, the `RequestLambda` enqueues the job for asynchronous processing and returns a `202 Accepted` response.
-4.  **Worker Processing:** When a worker receives the job, it attempts to create a lock by setting the key's state to `INPROGRESS` in the idempotency store, but only if the key doesn't already exist.
-5.  **Duplicate Suppression:** If this state-setting operation fails, it means another worker is already processing this exact job, so the current worker exits. This prevents race conditions and duplicate processing.
-6.  **Execution and Finalization:** If the worker successfully acquires the lock, it executes the business logic. Upon success, it updates the key's state to `COMPLETED` and stores the final response for future retries. If it fails, it deletes the key to allow a clean retry.
+2.  **API Gateway:** The gateway immediately accepts the request and forwards the job for asynchronous processing, returning `202 Accepted` to the client. It does not perform any idempotency check.
+3.  **Worker Processing:** When a worker receives the job, it attempts to create a lock by setting the key's state to `INPROGRESS` in the idempotency store, but only if the key doesn't already exist.
+4.  **Duplicate Suppression:** If this state-setting operation fails, it means another worker is already processing this exact job (or it has already completed), so the current worker exits. This prevents race conditions and duplicate processing.
+5.  **Execution and Finalization:** If the worker successfully acquires the lock, it executes the business logic. Upon success, it updates the key's state to `COMPLETED`. If it fails, it deletes the key to allow a clean retry by another worker.
 
 ## 3b. Architecture for 1M DAU
 
@@ -485,7 +469,7 @@ Given the requirement for a global launch across 5 continents, a high-availabili
     *   **Secrets Manager Unavailability:** Block access to AWS Secrets Manager for a short period to ensure that workers with cached credentials continue to function and that the failure to retrieve new credentials is handled gracefully.
     *   **Full Regional Failover Drill:** Use FIS and Route 53 health check manipulation to simulate a full regional outage, forcing a failover and allowing us to measure the real-world RTO.
 
-### Performance & Scalability: Caching & Load Projections
+### Performance & Scalability: Caching, Load Projections & Networking
 
 *   **Caching Strategy:** A distributed cache using **Amazon ElastiCache for Redis** is a critical component for minimizing latency, reducing load on backend services, and enabling key functionality. The system will employ a **cache-aside** pattern for all caching. When the application needs data, it first queries the cache. If the data is present (a cache hit), it is returned immediately. If the data is not present (a cache miss), the application retrieves the data from the source of truth (e.g., DynamoDB), stores it in the cache with a defined Time-to-Live (TTL), and then returns it.
 
@@ -542,6 +526,13 @@ This sequence diagram shows a **Worker Lambda** needing to make an external API 
         *   **Note on Concurrency Calculation:** This is a high level of concurrency that will require an increase to the default AWS account limits for Lambda, but it is well within the service's capabilities.
     *   **DynamoDB:**
         *   We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased via a Savings Plan to cost-effectively handle the predictable average load. **On-Demand Capacity** will handle any traffic that exceeds the provisioned throughput, providing the best of both worlds in terms of cost and elasticity.
+
+*   **Networking Optimization with VPC Endpoints:**
+    *   **Context:** The `WorkerLambda` functions run within a VPC to access the ElastiCache cluster. By default, any outbound traffic from this Lambda to other AWS services (like DynamoDB, SQS, EventBridge, and S3) would be routed through a NAT Gateway, incurring data processing costs and routing traffic over the public internet.
+    *   **Strategy:** To enhance security and significantly reduce costs, the architecture will use **VPC Endpoints**. This allows the Lambda functions to communicate with other AWS services using private IP addresses within the AWS network, bypassing the public internet and the NAT Gateway for this traffic.
+        *   **Gateway Endpoints:** Free endpoints will be configured for **Amazon S3** and **DynamoDB**.
+        *   **Interface Endpoints:** Privately-accessible endpoints will be configured for **SQS**, **EventBridge**, and **Secrets Manager**. While these have a small hourly cost, it is generally much lower than processing large volumes of API traffic through a NAT Gateway.
+    *   **Benefit:** This is an AWS best practice that improves the security posture of the application by keeping AWS service traffic off the public internet, and it provides a direct cost saving by minimizing billable traffic through the NAT Gateway.
 
 ## 3c. DynamoDB Data Modeling & Access Patterns
 
@@ -879,7 +870,7 @@ data class ProviderTokens(
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
 | **Authentication Service** | **Firebase Authentication** | **Rationale vs. Amazon Cognito:** While Amazon Cognito is a native AWS service, Firebase Authentication has been chosen for the MVP due to its superior developer experience, higher-quality client-side SDKs (especially for social logins on iOS and Android), and more generous free tier. This choice prioritizes rapid development and a smooth user onboarding experience. The cross-cloud dependency is an acceptable trade-off for the MVP, but a migration to Cognito could be considered in the future if the benefits of a single-cloud solution outweigh the advantages of Firebase's SDKs. |
-| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. However, to meet our strict latency SLOs, the KMP/JVM runtime should only be used for **asynchronous `WorkerLambda` functions** where cold starts are less critical. Latency-sensitive functions, such as the `RequestLambda` and `AuthorizerLambda`, **must be written in a faster-starting runtime like TypeScript or Python** to ensure the P99 API latency target can be met. |
+| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. However, to meet our strict latency SLOs, the KMP/JVM runtime should only be used for **asynchronous `WorkerLambda` functions** where cold starts are less critical. The latency-sensitive API entrypoint is handled by API Gateway's direct integrations, and the `AuthorizerLambda` **must be written in a faster-starting runtime like TypeScript or Python** to ensure the P99 API latency target can be met. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Primary Database** | **Amazon DynamoDB with Global Tables** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance required to support 1M DAU. The single-table design enables efficient, complex access patterns. We use On-Demand capacity mode, which is the most cost-effective choice for our unpredictable, spiky workload, as it automatically scales to meet traffic demands without the need for manual capacity planning. Global Tables provide the multi-region, active-active replication needed for high availability and low-latency access for our global user base.** |
 | **Backend Compute** | **AWS Lambda** | **Unified Compute Model.** All backend compute—including the API layer and all asynchronous workers—will run on **AWS Lambda**. This unified serverless model is chosen for its scalability, operational simplicity, and ability to handle the 3,000 RPS target. While Fargate could be considered for future cost optimization at extreme scale, a pure Lambda approach is the most straightforward and effective strategy. |
@@ -905,13 +896,14 @@ A detailed financial model is a mandatory prerequisite before implementation.
     *   **AWS Secrets Manager:** Replicating secrets incurs costs.
     *   **ElastiCache Global Datastore:** Cross-region replication traffic is a direct cost.
 3.  **CloudWatch:** At scale, the volume of logs, metrics, and traces generated will be massive and will be a major operational expense.
-4.  **NAT Gateway:** Outbound traffic from Lambda functions in a VPC to third-party APIs will incur data processing charges.
+4.  **NAT Gateway:** Outbound traffic from Lambda functions in a VPC to **third-party APIs** will incur data processing charges. (Note: Traffic to internal AWS services will use VPC Endpoints to minimize this cost).
 
 **Cost Management Strategy:**
 *   **Mandatory Financial Modeling:** Develop a detailed cost model using the AWS Pricing Calculator for the 3,000 RPS Lambda-based, multi-region architecture.
 *   **Aggressive Log Management:** Implement dynamic log levels via AppConfig, set short retention periods in CloudWatch, and automate archiving to S3/Glacier.
 *   **Explore Savings Plans:** As usage becomes more predictable, a Compute Savings Plan can significantly reduce Lambda costs.
 *   **Cost Anomaly Detection:** Configure AWS Cost Anomaly Detection to automatically alert the team to unexpected spending.
+*   **Optimize VPC Networking:** Implement VPC Endpoints for all internal AWS service communication to minimize data transfer costs through the NAT Gateway.
 
 ## 6. Security, Privacy, and Compliance
 

@@ -38,8 +38,8 @@ This document defines the performance, scalability, and reliability requirements
 | :--- | :--- | :--- |
 | **API Gateway Latency (P95)** | < 500 ms | AWS CloudWatch |
 | **API Gateway Error Rate (5xx)**| < 0.1% | AWS CloudWatch |
-| **Fargate Task Duration (P90)**| < 15 seconds | AWS CloudWatch |
-| **Fargate Service Error Rate** | < 0.5% | AWS CloudWatch |
+| **Worker Lambda Duration (P90)**| < 15 seconds | AWS CloudWatch |
+| **Worker Lambda Error Rate** | < 0.5% | AWS CloudWatch |
 | **SQS Message Age (P99, Hot Path)**| < 10 minutes | AWS CloudWatch |
 | **Cache Hit Rate (ElastiCache)** | > 90% | AWS CloudWatch |
 
@@ -57,14 +57,14 @@ A distributed, in-memory cache using **Amazon ElastiCache for Redis** is a corne
 
 ### 3.2. Load Projections & Resource Planning
 
-To ensure the system can handle the load from 1M DAU, we have projected the required capacity based on the definitive NFR of **10,000 RPS**.
+To ensure the system can handle the load from 1M DAU, we have projected the required capacity based on the definitive NFR of **3,000 RPS**, as defined in the main architecture document.
 
 *   **Total Daily Jobs:** ~90 million jobs per day (real-time and historical).
-*   **Peak Throughput:** The system is designed to handle a peak of **10,000 requests per second (RPS)**.
-*   **Required Fargate Concurrency:** Based on the 10,000 RPS target and an average job duration of 5 seconds, the projected peak concurrency is **~50,000 concurrent tasks**.
+*   **Peak Throughput:** The system is designed to handle a peak of **3,000 requests per second (RPS)**.
+*   **Required Lambda Concurrency:** Based on the 3,000 RPS target and an average job duration of 5 seconds, the projected peak concurrency is **~15,000 concurrent Lambda executions**.
 
 **Actions:**
-1.  The AWS Fargate service for the worker fleet must be configured with an aggressive auto-scaling policy to handle scaling to 50,000 concurrent tasks. The underlying cluster capacity and VPC networking must be provisioned accordingly.
+1.  The AWS Lambda service for the worker fleet will scale automatically. The account concurrency limits must be raised to support the projected peak of 15,000 concurrent executions.
 2.  DynamoDB will be configured in a **hybrid capacity model** (Provisioned + On-Demand) to balance cost and elasticity.
 3.  API Gateway and SQS scale automatically and require no specific pre-provisioning for this load.
 
@@ -73,7 +73,7 @@ To ensure the system can handle the load from 1M DAU, we have projected the requ
 Syncing years of historical data (User Story **US-10**) is a performance and reliability challenge. A single, long-running process is brittle. As defined in `05-data-sync.md`, we will implement a **job chunking and orchestration strategy**.
 
 1.  **Chunking:** A request for a multi-year sync is broken down into smaller, discrete jobs (e.g., one-month chunks).
-2.  **Independent Execution:** Each chunk is processed independently by a worker task running on Fargate. The failure of one chunk does not affect others.
+2.  **Independent Execution:** Each chunk is processed independently by a **worker Lambda function**. The failure of one chunk does not affect others.
 3.  **Performance Benefit:** This approach allows for massive parallelization of historical syncs, significantly reducing the total time to completion for the user. It also isolates failures and prevents a single problematic data point from halting the entire sync.
 
 ## 4. Key Optimization Techniques
@@ -84,21 +84,22 @@ Syncing years of historical data (User Story **US-10**) is a performance and rel
 ### 4.2. Backend Optimizations
 
 *   **Compute Performance:**
-    *   **Fargate Tasks:** Right-size the CPU and memory allocation for the worker container to balance cost and performance.
-    *   **API Layer Lambdas:** For latency-sensitive functions like the initial request handler, use provisioned concurrency to eliminate cold starts.
+    *   **Worker Lambdas:** Right-size the memory allocation for the worker functions to balance cost and performance.
+    *   **API Layer:** The API layer has been optimized by removing the initial request handler Lambda in favor of direct API Gateway integrations, which eliminates cold starts and an entire network hop for all incoming requests.
 *   **Database Performance:**
     *   **Smart Key Design:** Use appropriate partition and sort keys in DynamoDB to ensure efficient queries.
     *   **Caching:** Utilize **Amazon ElastiCache for Redis** as the primary caching layer, as described above. This is preferred over DynamoDB Accelerator (DAX) because it provides more flexibility for our varied caching needs (e.g., counters for rate limiting, distributed locks).
+*   **VPC Networking Optimization:** To improve security and reduce costs, all communication from the `WorkerLambda` functions (which run in a VPC to access ElastiCache) to other AWS services now uses **VPC Endpoints**. This keeps traffic on the private AWS network instead of routing through a NAT Gateway. This not only enhances security but also provides a performance boost by reducing network latency for calls to services like DynamoDB, SQS, and EventBridge.
 
 ## 5. Scalability
 
-The SyncWell architecture is designed from the ground up for massive, automatic scalability to support 1M+ DAU. This is achieved through a **hybrid compute strategy** and a focus on decoupled, elastic components.
+The SyncWell architecture is designed from the ground up for massive, automatic scalability to support 1M+ DAU. This is achieved through a **unified serverless compute strategy** and a focus on decoupled, elastic components.
 
-*   **Hybrid Compute for Automatic Scaling:** The core of our backend is built on a hybrid of **AWS Fargate** and **AWS Lambda**.
-    *   **Fargate** was chosen for the worker fleet because it provides a more cost-effective and performant solution for high-throughput, sustained workloads compared to Lambda at the 10,000 RPS scale. The Fargate service will automatically scale the number of running tasks based on the depth of the SQS queue.
-    *   **Lambda** is used for the API layer (request validation, etc.) where its per-request model and fast invocation are ideal for handling intermittent, spiky web traffic.
+*   **Unified Compute for Automatic Scaling:** The core of our backend is built on a unified **AWS Lambda** compute model.
+    *   **Lambda** is used for all backend compute, including the API layer (via direct integrations), the authorizer, and the asynchronous worker fleet. This serverless model provides maximum operational simplicity and automatic scaling to handle the projected 3,000 RPS peak load.
+    *   The number of concurrent Lambda workers will automatically scale based on the number of messages in the SQS queue, ensuring that throughput matches the incoming job volume.
 
-*   **Resilient Decoupling with SQS:** The use of **Amazon SQS queues** as a buffer between the API layer and the Fargate worker service is a critical component of our scalability and reliability strategy. The queue acts as a shock absorber, smoothing out unpredictable traffic spikes. If 100,000 users all trigger a sync simultaneously, the jobs are safely persisted in the queue. The Fargate service can then scale out its task count to process this backlog at a sustainable pace without being overwhelmed.
+*   **Resilient Decoupling with SQS:** The use of **Amazon SQS queues** as a buffer between the API layer and the Lambda worker service is a critical component of our scalability and reliability strategy. The queue acts as a shock absorber, smoothing out unpredictable traffic spikes. If 100,000 users all trigger a sync simultaneously, the jobs are safely persisted in the queue. The Lambda service can then scale out its concurrent executions to process this backlog at a sustainable pace without being overwhelmed.
 
 *   **Elastic Database with DynamoDB:** Our primary database is **Amazon DynamoDB**, chosen for its ability to deliver consistent, single-digit millisecond performance at any scale. We will use a **hybrid capacity model** (Provisioned + On-Demand) to balance cost and performance, preventing throttling during peak traffic while remaining cost-efficient.
 
