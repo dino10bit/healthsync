@@ -201,54 +201,7 @@ The core value of the application is its ability to connect with various third-p
 
 #### 1. The `DataProvider` Interface
 
-All provider-specific logic is encapsulated in a class that implements the `DataProvider` interface. This interface, defined in the KMP shared module, creates a standardized contract for all integrations.
-
-```kotlin
-// Simplified for documentation purposes.
-interface DataProvider {
-    /**
-     * A unique, machine-readable key for the provider (e.g., "strava", "fitbit").
-     */
-    val providerKey: String
-
-    /**
-     * Handles the initial OAuth 2.0 authorization flow to acquire tokens.
-     */
-    suspend fun authenticate(authCode: String): ProviderTokens
-
-    /**
-     * Refreshes an expired access token using a refresh token.
-     *
-     * @throws PermanentAuthError if the refresh token is invalid or has been revoked.
-     */
-    suspend fun refreshAccessToken(refreshToken: String): ProviderTokens
-
-    /**
-     * Fetches data (e.g., workouts) from the provider's API for a given time range
-     * and transforms it into the application's `CanonicalWorkout` model.
-     */
-    suspend fun fetchData(tokens: ProviderTokens, dateRange: DateRange): List<CanonicalWorkout>
-
-    /**
-     * Pushes a list of canonical data models to the provider's API, transforming them into the
-     * provider-specific format required by the destination service.
-     */
-    suspend fun pushData(tokens: ProviderTokens, data: List<CanonicalData>): PushResult
-}
-
-/**
- * A sealed interface representing any piece of canonical data.
- */
-sealed interface CanonicalData
-
-/**
- * Represents the result of a push operation, including any items that failed.
- */
-data class PushResult(
-    val success: Boolean,
-    val failedItemIds: List<String> = emptyList()
-)
-```
+All provider-specific logic is encapsulated in a class that implements the `DataProvider` interface. This interface, defined in the KMP shared module, creates a standardized contract for all integrations. The canonical definition of this critical interface, including the `capabilities` field, is maintained in `07-apis-integration.md`.
 
 #### 2. Dynamic Loading with a Factory Pattern
 
@@ -495,8 +448,8 @@ Given the requirement for a global launch across 5 continents, a high-availabili
     | **Idempotency Key** | `idem##{idempotencyKey}` | The original JSON response | 24 hours | TTL-based | Prevents duplicate processing of operations. |
     | **User Sync Config** | `config##{userId}` | Serialized JSON of all user's sync configs | 15 minutes | TTL-based | Reduces DynamoDB reads for frequently accessed user settings. |
     | **Rate Limit Token Bucket** | `ratelimit##{providerKey}` | A hash containing tokens and timestamp | 60 seconds | TTL-based | Powers the distributed rate limiter for third-party APIs. |
-    | **API Gateway Authorizer** | User's Identity Token | The generated IAM policy document | 5 minutes | TTL-based (in API Gateway) | Caches the final authorization policy at the API Gateway level. This is the most critical cache, as it avoids invoking the Lambda Authorizer entirely for frequent requests. |
-    | **JWT Public Keys (in Lambda)**| `jwks##{providerUrl}` | The JSON Web Key Set (JWKS) document | 1 hour | TTL-based (in-memory) | Caches the public keys from auth providers (e.g., Google) inside the authorizer Lambda. This is a secondary optimization for when the API Gateway cache misses. |
+| **API Gateway Authorizer (L1 Cache)** | User's Identity Token | The generated IAM policy document | 5 minutes | TTL-based (in API Gateway) | The primary, most critical cache. Caches the final authorization policy at the API Gateway level, avoiding a Lambda invocation entirely for most requests. |
+| **JWT Public Keys (L2 Cache)**| `jwks##{providerUrl}` | The JSON Web Key Set (JWKS) document | 1 hour | TTL-based (in-memory) | A secondary, in-memory cache inside the authorizer Lambda. It caches the public keys from auth providers (e.g., Google) and is only used when the L1 API Gateway cache misses, further reducing latency on the first request for a given user. |
 
 To visually explain the rate-limiting pattern, the following diagram shows how a worker interacts with the distributed rate limiter before calling an external service.
 
@@ -643,8 +596,9 @@ The recommended primary strategy is to isolate the hot user's data into a separa
 
 *   **Application Logic:**
     *   A centralized data access layer in the application code will be responsible for all interactions with the `SyncWellMetadata` table(s).
-    *   Before performing any operation for a user, this layer will first read the user's `PROFILE` item from the main table to check the `isHot` flag. This read can be heavily cached.
-    *   If `isHot` is `true`, all subsequent reads and writes for that user will be routed to a dedicated `SyncWellMetadata_HotUsers` table. If the flag is false or absent, requests are routed to the main table. The table name will be determined dynamically at runtime.
+    *   To determine which table to query, this layer will **always** first attempt to read a "pointer" record for the user from the **main table**. This read can be heavily cached.
+    *   **Pointer Record:** After a user is migrated, a small "pointer" or "shadow profile" item remains in the main table. This item contains only the `userId` and the `isHot: true` flag.
+    *   If this pointer record exists and `isHot` is `true`, all subsequent reads and writes for that user's full profile will be routed to the dedicated `SyncWellMetadata_HotUsers` table. If the pointer record is absent or `isHot` is false, requests are routed to the main table as normal.
 
 *   **Migration and Operational Management:**
     *   **Migration Script:** The process will be handled by a version-controlled, peer-reviewed operational script. When a user is flagged as "hot," an authorized engineer will run this script, which performs the following steps:
@@ -754,12 +708,18 @@ Initiates a new synchronization job for a user.
       "sourceConnectionId": "conn_12345_providerA",
       "destinationConnectionId": "conn_67890_providerB",
       "dataType": "workout",
-      "mode": "manual"
+      "mode": "manual",
+      "dateRange": {
+        "startDate": "2023-01-01",
+        "endDate": "2023-12-31"
+      }
     }
     ```
     *   **`dataType` (enum):** `steps`, `weight`, `sleep`, `workout`
     *   **`mode` (enum):**
-        *   `manual`: A sync explicitly triggered by the user from the UI.
+        *   `manual`: A sync explicitly triggered by the user for recent data. This is a hot-path operation.
+        *   `historical`: A sync triggered by the user to backfill a large amount of data. This is a cold-path operation that starts the Step Functions orchestrator.
+    *   **`dateRange` (object, optional):** Required only when `mode` is `historical`. Specifies the start and end dates for the data backfill.
     *   **Note on Automatic Syncs:** Automatic background syncs are not triggered via this public API. They are initiated by an internal scheduling mechanism (e.g., an Amazon EventBridge scheduled rule) that places jobs directly onto the event bus.
 
 *   **Success Response (202 Accepted):**
@@ -782,6 +742,62 @@ Initiates a new synchronization job for a user.
       "message": "The specified source or destination connection ID does not exist or is invalid."
     }
     ```
+
+### 3d-2. User & Data Management APIs
+
+These endpoints provide critical user control over their settings and data, as required by privacy regulations like GDPR.
+
+#### PUT /v1/users/me/settings
+
+Updates a user's application-level settings.
+
+*   **Request Body:**
+
+    ```json
+    {
+      "settings": {
+        "conflictResolutionStrategy": "AI_POWERED_MERGE"
+      }
+    }
+    ```
+
+*   **Success Response (200 OK):**
+
+    ```json
+    {
+      "settings": {
+        "conflictResolutionStrategy": "AI_POWERED_MERGE"
+      }
+    }
+    ```
+
+#### POST /v1/export-jobs
+
+Initiates an asynchronous job to export all user-related data.
+
+*   **Headers:**
+    *   `Idempotency-Key: <UUID>` (Required)
+*   **Request Body:** (Empty)
+
+*   **Success Response (202 Accepted):**
+
+    ```json
+    {
+      "jobId": "export-job-abc123",
+      "status": "PENDING",
+      "message": "Your data export has been initiated. You will receive a notification with a download link when it is ready."
+    }
+    ```
+
+#### DELETE /v1/user/me
+
+Permanently deletes a user's account and all associated data. This is an irreversible action.
+
+*   **Request Body:** (Empty)
+
+*   **Success Response (204 No Content):**
+
+    A successful response with an empty body indicates that the deletion process has begun.
 
 ## 3e. Canonical Data Models
 
@@ -859,10 +875,6 @@ data class CanonicalSleepSession(
     val awakeSeconds: Long? = null
 )
 ```
-
-### `ProviderTokens`
-
-Represents the set of authentication tokens for a specific third-party connection. This model is designed to be flexible enough to handle standard OAuth 2.0 flows. It will be stored securely in AWS Secrets Manager.
 
 ### 3f. Automatic Sync Scheduling Architecture
 

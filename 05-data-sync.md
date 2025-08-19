@@ -53,9 +53,12 @@ The `Worker Lambda` will follow this algorithm for each job pulled from the SQS 
 3.  **Fetch New Data:** It calls the `fetchData(since: lastSyncTime)` method on the source `DataProvider` (e.g., `FitbitProvider`). If new data is found, the algorithm proceeds.
 4.  **Fetch Destination Data for Conflict Resolution:** To enable conflict resolution, the worker fetches potentially overlapping data from the destination `DataProvider`. The time range for this query is calculated based on the timestamps of the new data fetched from the source, plus a small buffer to account for potential clock skew (e.g., `[min_source_timestamp - 5_minutes, max_source_timestamp + 5_minutes]`). (Note: This buffer is a configurable parameter that will be tuned based on real-world clock skew observations.)
 5.  **Smart Conflict Resolution:** The `Smart Conflict Resolution Engine` is invoked. It compares the source and destination data and applies the user's chosen strategy. If the strategy is `AI-Powered Merge`, it calls the **AI Insights Service**. It outputs a final, clean list of data points to be written.
-6.  **Write Data:** The worker calls the `writeData()` method on the destination provider with the conflict-free data.
-7.  **Update State in DynamoDB:** Upon successful completion, the worker performs an `UpdateItem` call on the `SyncConfig` item in `SyncWellMetadata` to set the new `lastSyncTime` for the connection.
-8.  **Delete Job Message:** The worker deletes the job message from the SQS queue to mark it as complete.
+6.  **Write Data:** The worker calls the `pushData()` method on the destination provider with the conflict-free data.
+7.  **Handle Partial Failures:** The worker **must** inspect the `PushResult` returned from the `pushData` call.
+    *   If `success` is `true` and `failedItemIds` is empty, the entire job was successful.
+    *   If `success` is `false` or `failedItemIds` is not empty, it indicates a partial failure. For the MVP, the entire job will be considered failed. The worker will throw an error, allowing SQS to retry the job. This is a safe-by-default strategy. A more granular recovery mechanism for partial failures is a potential future enhancement.
+8.  **Update State in DynamoDB:** Only upon full successful completion, the worker performs an `UpdateItem` call on the `SyncConfig` item in `SyncWellMetadata` to set the new `lastSyncTime` for the connection.
+9.  **Delete Job Message:** The worker deletes the job message from the SQS queue to mark it as complete.
 
 ## 4. Smart Conflict Resolution Engine
 
@@ -215,11 +218,10 @@ sequenceDiagram
 ```mermaid
 graph TD
     A[Queued] --> B{In Progress};
-    B --> C[Succeeded];
-    B --> D{Retrying};
-    D --> B;
-    D --> E[Failed];
-    E --> F[Moved to DLQ];
+    B -- On Success --> C[Succeeded];
+    B -- On Failure --> D{Retrying...};
+    D -- "Attempt < maxReceiveCount" --> B;
+    D -- "Attempt >= maxReceiveCount" --> E[Moved to DLQ];
 ```
 
 ## 9. Research & Recommendations on AI/Agentic Workflows
