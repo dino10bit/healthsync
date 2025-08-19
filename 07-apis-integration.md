@@ -68,11 +68,24 @@ interface DataProvider {
     suspend fun fetchData(tokens: ProviderTokens, dateRange: DateRange): List<CanonicalWorkout>
 
     /**
-     * Pushes a canonical data model to the provider's API, transforming it into the
+     * Pushes a list of canonical data models to the provider's API, transforming them into the
      * provider-specific format required by the destination service.
      */
-    suspend fun pushData(tokens: ProviderTokens, data: CanonicalWorkout): PushResult
+    suspend fun pushData(tokens: ProviderTokens, data: List<CanonicalData>): PushResult
 }
+
+/**
+ * A sealed interface representing any piece of canonical data.
+ */
+sealed interface CanonicalData
+
+/**
+ * Represents the result of a push operation, including any items that failed.
+ */
+data class PushResult(
+    val success: Boolean,
+    val failedItemIds: List<String> = emptyList()
+)
 ```
 
 ### 2.3. SDK Packaging and Versioning
@@ -80,7 +93,7 @@ interface DataProvider {
 To ensure that all `DataProvider` implementations use a consistent set of tools and interfaces, the `DataProvider` SDK will be managed and distributed as a formal, internal library.
 
 *   **Packaging:** The SDK, which is part of the KMP shared module, will be packaged as a private Maven package.
-*   **Versioning:** The SDK will follow Semantic Versioning (SemVer). All `WorkerLambda` functions will declare a dependency on a specific version of the SDK.
+*   **Versioning:** The SDK will follow Semantic Versioning (SemVer). All worker tasks will declare a dependency on a specific version of the SDK.
 *   **Distribution:** The package will be hosted in a private artifact repository (e.g., AWS CodeArtifact or a private GitHub Packages repository). The CI/CD pipeline for the backend services will be configured to pull the specified version of the SDK during the build process.
 
 This approach ensures that updates to the core SDK logic can be rolled out in a controlled and predictable manner, and it prevents individual `DataProvider` implementations from falling out of sync with the core framework.
@@ -96,8 +109,8 @@ All cloud-based APIs will use the **OAuth 2.0 Authorization Code Flow with PKCE*
 3.  **User Consent (Mobile):** The user logs in and grants consent on the provider's web page.
 4.  **Redirect with Auth Code (Mobile):** The provider redirects to SyncWell's redirect URI (e.g., `syncwell://oauth-callback`) with a one-time `authorization_code`.
 5.  **Secure Hand-off to Backend (Mobile -> Backend):** The mobile app sends the `authorization_code` and `code_verifier` to a secure endpoint on the SyncWell backend.
-6.  **Token Exchange (Backend):** The backend worker exchanges the `authorization_code` and `code_verifier` for an `access_token` and `refresh_token` from the provider.
-7.  **Secure Storage (Backend):** The backend stores the encrypted `access_token` and `refresh_token` in **AWS Secrets Manager**, associated with the user's ID. The tokens are now ready for use by the sync workers.
+6.  **Token Exchange (Backend):** The backend worker task exchanges the `authorization_code` and `code_verifier` for an `access_token` and `refresh_token` from the provider.
+7.  **Secure Storage (Backend):** The backend stores the encrypted `access_token` and `refresh_token` in **AWS Secrets Manager**, associated with the user's ID. The tokens are now ready for use by the sync worker tasks.
 
 ## 4. Token Management & Granular Error Handling
 
@@ -171,7 +184,7 @@ sequenceDiagram
 ### Sequence Diagram for Token Refresh (Backend)
 ```mermaid
 sequenceDiagram
-    participant Worker as Worker Lambda
+    participant Worker as Worker Task (Fargate)
     participant SecretsManager as AWS Secrets Manager
     participant ExtProvider as External Provider
 
@@ -196,8 +209,11 @@ While the `DataProvider` architecture provides a solid foundation, a key risk is
 
 *   **Provider-Specific Monitoring:** In addition to global backend monitoring, each `DataProvider` will have its own dedicated set of CloudWatch Alarms. These alarms will monitor the error rate and P95 latency for API calls to that specific provider. A sudden spike in either metric for a single provider will trigger a low-priority alert for investigation.
 *   **Circuit Breaker Pattern:** For notoriously unstable APIs, a Circuit Breaker pattern will be implemented within the `DataProvider` SDK.
-    *   **Mechanism:** If the error rate for a specific provider crosses a defined threshold (e.g., >25% of requests failing over a 5-minute period), the circuit breaker will "trip".
-    *   **Action:** Once tripped, all subsequent requests for that provider will fail fast for a "cooldown" period (e.g., 5 minutes), without making a network call. This prevents the system from wasting resources on an API that is clearly down and reduces the load on the failing service. After the cooldown, the circuit will move to a "half-open" state, allowing a single request to test if the service has recovered.
+    *   **Mechanism:** The circuit breaker monitors for failures. If the failure rate for a specific provider's API calls exceeds a configured threshold, the circuit "trips" or "opens".
+    *   **Action:** Once the circuit is open, all subsequent calls to that provider's API will fail fast for a "cooldown" period, without making a network call. This prevents the system from wasting resources on an API that is clearly down and reduces the load on the failing service. After the cooldown, the circuit moves to a "half-open" state, allowing a single request to test if the service has recovered.
+    *   **Configuration:** The thresholds for the circuit breaker **must be configurable per-provider** via AWS AppConfig. This allows for fine-tuning based on the known stability of each third-party API. The default values will be:
+        *   **Failure Threshold:** 25% of requests failing over a 5-minute window.
+        *   **Cooldown Period:** 5 minutes.
 *   **Graceful Degradation via Feature Flags:** If a provider's API is causing persistent, critical problems, a remote feature flag will be used to gracefully degrade the integration.
     *   **Level 1 (Read-Only Mode):** If writing data to a provider is failing, but reading is stable, the integration can be temporarily put into a read-only mode.
     *   **Level 2 (Full Disable):** If the entire API is unstable, the integration can be temporarily disabled in the app's UI, with a message explaining that the service is experiencing issues.

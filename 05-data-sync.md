@@ -34,8 +34,8 @@ The core components are:
 *   **`API Gateway` + `Request Lambda`:** The public-facing entry point. The `RequestLambda` validates requests and routes them to the appropriate path by either publishing an event to EventBridge (hot path) or starting a state machine execution (cold path).
 *   **`EventBridge Event Bus`:** The central nervous system for the hot path. It receives `RealtimeSyncRequested` events and routes them to the SQS queue.
 *   **`SQS Queue (Hot Path)`:** A primary, durable SQS queue that acts as a critical buffer for real-time sync jobs, absorbing traffic spikes and ensuring no jobs are lost.
-*   **`AWS Step Functions (Cold Path)`:** A managed workflow orchestrator that manages the entire lifecycle of a historical sync, breaking it into chunks and coordinating worker Lambdas.
-*   **`Worker Lambdas`:** The heart of the engine. A single fleet of serverless functions that contain the core sync logic. They are invoked either by SQS (for hot path jobs) or by the Step Functions orchestrator (for cold path jobs).
+*   **`AWS Step Functions (Cold Path)`:** A managed workflow orchestrator that manages the entire lifecycle of a historical sync, breaking it into chunks and coordinating worker tasks on Fargate.
+*   **`Worker Service (AWS Fargate)`:** The heart of the engine. A containerized service running on AWS Fargate that contains the core sync logic. Its tasks are invoked either in response to SQS messages (for hot path jobs) or by the Step Functions orchestrator (for cold path jobs).
 *   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration must implement.
 *   **`Smart Conflict Resolution Engine`:** A core component within the worker that intelligently resolves data conflicts before writing.
 *   **`DynamoDB`:** The `SyncWellMetadata` table stores all essential state for the sync process.
@@ -43,10 +43,10 @@ The core components are:
 
 ## 3. The Synchronization Algorithm (Server-Side Delta Sync)
 
-The `Worker Lambda` will follow this algorithm for each job pulled from the SQS queue:
+The Fargate `Worker Task` will follow this algorithm for each job pulled from the SQS queue:
 
-1.  **Job Dequeue:** The worker receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
-2.  **Get State from DynamoDB:** The worker performs a `GetItem` call on the `SyncWellMetadata` table to retrieve the `SyncConfig` item.
+1.  **Job Dequeue:** The worker task receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
+2.  **Get State from DynamoDB:** The worker task performs a `GetItem` call on the `SyncWellMetadata` table to retrieve the `SyncConfig` item.
     *   **PK:** `USER#{userId}`
     *   **SK:** `SYNCCONFIG#{sourceId}#to#{destId}#{dataType}`
     *   This single read provides the `lastSyncTime` and the user's chosen `conflictResolutionStrategy`.
@@ -77,15 +77,31 @@ Only if all these conditions are met are the two activity records sent to the AI
 *   **`Prioritize Source`:** The default behavior. New data from the source platform will always overwrite any existing data in the destination for the same time period.
 *   **`Prioritize Destination`:** Never overwrite existing data. If a conflicting entry is found in the destination, the source entry is ignored.
 *   **`AI-Powered Merge` (Activities Only - Pro Feature):** This advanced strategy uses a machine learning model to create the best possible "superset" of the data. Instead of fixed rules, it makes an intelligent prediction.
-    *   **Mechanism:** The worker lambda sends the two conflicting activity records (as JSON) to the `AI Insights Service`.
+    *   **Mechanism:** The worker task sends the two conflicting activity records (as JSON) to the `AI Insights Service`.
+    *   **Data Privacy:** Before being sent, the data **must** be processed by the `Anonymization Pipeline` defined in `19-security-privacy.md` to strip all PII.
+    *   **API Contract:** The request to the AI service will conform to the following contract:
+        ```json
+        // POST /v1/merge-activities
+        {
+          "sourceActivity": { ... }, // CanonicalWorkout model
+          "destinationActivity": { ... } // CanonicalWorkout model
+        }
+        ```
+        The expected success response will be:
+        ```json
+        // 200 OK
+        {
+          "mergedActivity": { ... } // CanonicalWorkout model
+        }
+        ```
     *   **Intelligence:** The service's ML model, trained on thousands of examples of merged activities, analyzes the data. It might learn, for example, that a user's Garmin device provides more reliable GPS data, while their Wahoo chest strap provides more accurate heart rate data.
     *   **Output:** The AI service returns a single, merged activity record that combines the best attributes of both sources. For example, it could take the GPS track from a Garmin device and combine it with Heart Rate data from a Wahoo chest strap for the same activity, creating a single, more complete workout file. This is far more flexible and powerful than hard-coded rules.
     *   **Fallback Mechanism:** **Reliability of the core sync is paramount.** If the `AI Insights Service` is unavailable, times out, or returns an error, the Conflict Resolution Engine **will not fail the sync job**. Instead, it will log the error and automatically fall back to the default `Prioritize Source` strategy.
-    *   **User Transparency:** To ensure transparency for this premium feature, the sync job's result will be marked with a `MERGE_FALLBACK` status in our system. While this will not trigger a push notification, the user's sync history within the app will display an informational icon next to the relevant sync, indicating that an AI-powered merge could not be performed and a standard resolution was used instead. This maintains a high level of trust with our paying users.
+    *   **User Transparency:** To ensure transparency for this premium feature, the result of the sync job will be stored in a `SyncHistory` record with a `resolution` attribute set to either `AI_MERGE` or `FALLBACK_PRIORITIZE_SOURCE`. The mobile client will read this history and display an informational icon next to any sync that used the fallback, with a tooltip explaining what happened. This maintains a high level of trust with our paying users.
 
 ## 5. Data Integrity
 
-*   **Durable Queueing & Idempotency:** The combination of SQS and Lambda guarantees that a real-time sync job will be processed "at-least-once". To prevent duplicate processing in the rare case of a message being delivered more than once, the system uses a robust, end-to-end idempotency strategy. As defined in `06-technical-architecture.md`, a unique `Idempotency-Key` generated by the client is passed through the entire system. The worker Lambda checks for this key in a central store before processing to ensure the job has not already been completed, guaranteeing at-most-once processing.
+*   **Durable Queueing & Idempotency:** The combination of SQS and Fargate guarantees that a real-time sync job will be processed "at-least-once". To prevent duplicate processing in the rare case of a message being delivered more than once, the system uses a robust, end-to-end idempotency strategy. As defined in `06-technical-architecture.md`, a unique `Idempotency-Key` generated by the client is passed through the entire system. The worker task checks for this key in a central store before processing to ensure the job has not already been completed, guaranteeing at-most-once processing.
 *   **Transactional State:** State updates in DynamoDB are atomic. The `lastSyncTime` is only updated if the entire write operation to the destination platform succeeds.
 *   **Dead Letter Queue (DLQ):** If a job fails repeatedly (e.g., due to a persistent third-party API error or a problem with the AI service), SQS will automatically move it to a DLQ. This allows for manual inspection and debugging without blocking the main queue.
 
@@ -98,13 +114,13 @@ Handling a user's request to sync several years of historical data (User Story *
 2.  **State Machine Logic:** The state machine, as detailed in `06-technical-architecture.md`, will perform the following steps:
     *   **Initiate Sync Job:** A Lambda function prepares the sync, determining the total number of data chunks to be processed (e.g., one chunk per month of historical data).
     *   **Map State for Parallel Processing:** The state machine will use a `Map` state to iterate over the array of chunks. This allows for parallel execution of the sync task for each chunk, dramatically improving performance.
-    *   **Process One Chunk:** For each chunk, a dedicated `Cold-Path Worker Lambda` is invoked. It fetches the data from the source, transforms it, and writes it to the destination.
+    *   **Process One Chunk:** For each chunk, a dedicated `Cold-Path Worker Task` (on Fargate) is invoked. It fetches the data from the source, transforms it, and writes it to the destination.
     *   **Built-in Error Handling & Retries:** Step Functions provides robust, configurable retry logic for transient errors. If a chunk fails repeatedly, it can be caught and logged to a Dead-Letter Queue without halting the entire workflow.
     *   **Finalize Sync:** Once all chunks are processed, a final Lambda function updates the overall job status to `COMPLETED`.
 
 3.  **Progress Tracking:** The Step Functions execution itself serves as the progress record. The mobile app can query a backend API that uses the `DescribeExecution` API call to get the current status, number of completed chunks, and overall progress of the historical sync.
 
-4.  **Rate Limiting & Throttling:** The `Cold-Path Worker Lambdas` invoked by Step Functions are subject to the same third-party API rate limits. The rate-limiting service will prioritize `hot-path` (real-time) syncs over these `cold-path` jobs.
+4.  **Rate Limiting & Throttling:** The `Cold-Path Worker Tasks` invoked by Step Functions are subject to the same third-party API rate limits. The rate-limiting service will prioritize `hot-path` (real-time) syncs over these `cold-path` jobs.
 
 *(Note: This section directly impacts `31-historical-data.md` and `16-performance-optimization.md`, which will be updated to reflect this AWS Step Functions-based strategy.)*
 
@@ -135,7 +151,7 @@ graph TD
             HistoricalOrchestrator[AWS Step Functions]
         end
 
-        WorkerLambdas[Worker Lambdas]
+        FargateService[Worker Service (Fargate)]
         DynamoDB[DynamoDB]
         DLQ_S3[S3 for DLQ]
         AI_Service[AI Insights Service]
@@ -149,21 +165,21 @@ graph TD
 
     RequestLambda -- "Publishes 'RealtimeSyncRequested' event" --> EventBridge
     EventBridge -- "Rule for real-time jobs" --> HotQueue
-    HotQueue -- Triggers --> WorkerLambdas
+    HotQueue -- Triggers --> FargateService
 
     RequestLambda -- "Starts execution for historical sync" --> HistoricalOrchestrator
-    HistoricalOrchestrator -- Orchestrates & Invokes --> WorkerLambdas
+    HistoricalOrchestrator -- Orchestrates & Invokes --> FargateService
 
-    WorkerLambdas -- Read/Write --> DynamoDB
-    WorkerLambdas -- Syncs Data --> ThirdPartyAPIs
-    WorkerLambdas -- Calls for intelligence --> AI_Service
+    FargateService -- Read/Write --> DynamoDB
+    FargateService -- Syncs Data --> ThirdPartyAPIs
+    FargateService -- Calls for intelligence --> AI_Service
     HotQueue -- On Failure --> DLQ_S3
 ```
 
 ### Sequence Diagram for Delta Sync (with AI-Powered Merge)
 ```mermaid
 sequenceDiagram
-    participant Worker as Worker Lambda
+    participant Worker as Worker Task (Fargate)
     participant DynamoDB as DynamoDB
     participant SourceAPI as Source API
     participant DestAPI as Destination API

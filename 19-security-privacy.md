@@ -32,9 +32,9 @@ This internal specification is a blueprint for the **engineering team** to imple
 
 | Threat Scenario | Description | Countermeasure(s) |
 | :--- | :--- | :--- |
-| **Backend Server Compromise** | An attacker gains access to the backend infrastructure. | - **Strict IAM Roles & Least Privilege:** Lambda functions can only access the specific resources they need. <br>- **AWS Secrets Manager:** User OAuth tokens are stored encrypted in a dedicated, secure service. <br>- **VPC & Security Groups:** Backend services are isolated from the public internet where possible. <br>- **Regular Audits & Pen Testing:** Proactively identify and fix vulnerabilities. |
+| **Backend Server Compromise** | An attacker gains access to the backend infrastructure. | - **Strict IAM Roles & Least Privilege:** All compute services (Lambda, Fargate) have narrowly scoped roles that grant access only to the specific resources they need. <br>- **AWS Secrets Manager:** User OAuth tokens are stored encrypted in a dedicated, secure service. <br>- **VPC & Security Groups:** Backend services are isolated from the public internet where possible. <br>- **Regular Audits & Pen Testing:** Proactively identify and fix vulnerabilities. |
 | **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** This is the primary countermeasure for protecting on-device secrets, as it utilizes hardware-backed secure storage. <br>- **Jailbreak/Root Detection (Defense-in-Depth):** The app will make a best effort to detect if it is running on a compromised OS. While this is not a foolproof countermeasure and can be bypassed, it serves as a valuable deterrent and an additional layer of security. |
-| **Man-in-the-Middle (MitM) Attack** | An attacker intercepts traffic between the app and the backend. | - **TLS 1.2+:** All network traffic is encrypted. <br>- **Dynamic Certificate Pinning:** Implemented for calls to our own backend. To mitigate the operational risk of bricking older app versions, we will implement a dynamic pinning strategy. The app will fetch the latest pin-set from a secure, out-of-band endpoint and cache it. This allows us to rotate certificates without forcing an immediate app update. We will also pin to an intermediate certificate in addition to the leaf to provide a backup. A detailed operational runbook for certificate rotation will be created and tested. |
+| **Man-in-the-Middle (MitM) Attack** | An attacker intercepts traffic between the app and the backend. | - **TLS 1.2+:** All network traffic is encrypted. <br>- **Dynamic Certificate Pinning:** This high-risk, high-reward feature will be implemented for calls to our own backend. To mitigate the operational risk of "bricking" older app versions during a certificate rotation, a dynamic pinning strategy will be used. <br>  - **Strategy:** The mobile app will ship with a default set of pinned keys. On launch, it will asynchronously fetch an updated pin-set from a secure, out-of-band endpoint (e.g., a file hosted on a separate, highly-available CDN with a different domain and certificate chain). This fetched pin-set will be cached on the device for a defined TTL. <br>  - **Redundancy:** We will pin to the public keys of both the leaf and an intermediate certificate to provide a fallback in case of a rapid, unplanned certificate re-issuance. <br>  - **Operational Readiness:** A detailed, step-by-step operational runbook for certificate rotation **must** be created and rigorously tested in a staging environment before this feature is enabled in production. |
 | **Insecure Data Storage** | Sensitive data is stored insecurely. | - **Backend:** All user tokens are stored encrypted in AWS Secrets Manager. <br>- **On-Device:** The local settings database is encrypted. |
 | **Vulnerable Third-Party Dependency (Supply Chain Attack)** | A library used by the app or backend has a known security vulnerability, or a build tool/dependency is compromised. | - **Automated Dependency Scanning:** The CI/CD pipeline will use Snyk/Dependabot to scan for known CVEs. <br>- **Dependency Pinning:** All dependencies will be pinned to specific, audited versions. <br>- **Reproducible Builds:** Build environments will be scripted and version-controlled to detect unauthorized changes. |
 | **AI Service Data Poisoning or Leakage** | The future AI Insights Service is attacked, either by "poisoning" the training data to produce incorrect results, or by an attacker crafting inputs to extract information about the model or other users' data. | - **Ephemeral Processing:** The AI service will process data ephemerally, just like the core sync engine. <br>- **Input Sanitization:** All inputs to the AI service will be strictly sanitized and validated. <br>- **Model Monitoring:** The outputs of the AI models will be monitored for anomalous results or statistical drift. <br>- **Data Provenance:** The training data for any future ML models will come from trusted, audited sources. |
@@ -42,7 +42,7 @@ This internal specification is a blueprint for the **engineering team** to imple
 ## 4. Data Flow & Classification
 
 *   **Class 1: Health Data (In-Memory, Ephemeral):** The user's actual health data (steps, etc.).
-    *   **Flow:** Read from a source API -> Processed in-memory on a backend worker OR on-device -> Written to a destination API.
+    *   **Flow:** Read from a source API -> Processed in-memory on a backend worker task OR on-device -> Written to a destination API.
     *   **Storage:** **NEVER** stored at rest on SyncWell servers. It is discarded from memory immediately after the job completes.
 *   **Class 2: Sensitive Credentials (OAuth Tokens):**
     *   **Flow:** Acquired via a secure hybrid flow, where the mobile app gets an auth code and the backend exchanges it for tokens.
@@ -60,7 +60,7 @@ graph TD
     end
     subgraph AWS Backend
         C[API Gateway]
-        D[Lambda Workers]
+        D[Fargate Workers]
         E[AWS Secrets Manager]
         F[DynamoDB]
     end
@@ -85,7 +85,7 @@ The lifecycle of user credentials is managed by the backend to maximize security
 
 *   **Creation:** Tokens are acquired via the secure hybrid OAuth 2.0 flow detailed in `07-apis-integration.md`.
 *   **Storage:** Tokens are stored encrypted in **AWS Secrets Manager**.
-*   **Usage:** Worker Lambdas are granted temporary, role-based access to retrieve the tokens they need for a specific job.
+*   **Usage:** Worker tasks (running on Fargate) are granted temporary, role-based access to retrieve the tokens they need for a specific job.
 *   **Deletion:** When a user de-authorizes an app via the mobile client:
     1.  The mobile app sends a "revoke" request to the SyncWell backend.
     2.  The backend retrieves the token from Secrets Manager.
@@ -97,7 +97,7 @@ The lifecycle of user credentials is managed by the backend to maximize security
 The backend is a core component and must be secured accordingly.
 
 *   **Authentication:** Communication between the mobile app and our backend API Gateway will be authenticated using short-lived JSON Web Tokens (JWTs) or a similar standard.
-*   **Authorization:** API Gateway and Lambda functions will use strict IAM roles, adhering to the principle of least privilege. A worker for Fitbit should not have access to Garmin tokens.
+*   **Authorization:** All backend compute services (API Gateway, Lambda functions, Fargate services) will use strict IAM roles, adhering to the principle of least privilege. A worker task for Fitbit should not have access to Garmin tokens.
 *   **Network Security:** Services will be placed in a Virtual Private Cloud (VPC). Access to databases and secret stores will be restricted to services within the VPC, not exposed to the public internet.
 *   **Logging & Monitoring:** All API calls and backend activity will be logged and monitored for anomalous behavior using services like AWS CloudTrail and CloudWatch. All logs will be scrubbed of sensitive data before being persisted.
 
@@ -115,10 +115,10 @@ While `userId` is never logged by default, a critical operational gap exists for
 
 *   **Mechanism:** A dedicated, internal-only "Support Tool" (e.g., a Lambda function fronted by a simple web UI) will be created. This tool will require strong authentication (e.g., SSO with MFA) and will be governed by a strict IAM policy.
 *   **Workflow:**
-    1.  An authorized engineer, working on a specific support ticket, authenticates to the tool.
-    2.  The engineer provides a valid `ticketId` and the user's `userId`.
-    3.  The tool performs a temporary lookup to find the recent `correlationId`s associated with that `userId`.
-    4.  This mapping is made available for a short, time-boxed period (e.g., 60 minutes) and is **not** stored in the main logging system.
+    1.  **Request:** An authorized Level 1 support engineer, working on a specific support ticket, authenticates to the tool and submits a request for access, providing the `ticketId` and the `userId`.
+    2.  **Approval ("Four-Eyes" Principle):** The request enters a pending state. A separate, authorized Level 2 engineer is notified of the request. This second engineer must independently review the request (verifying the ticket's legitimacy) and formally approve it within the tool. This preventative control ensures no single individual can unilaterally access this data.
+    3.  **Access:** Once approved, the tool performs a temporary lookup to find the recent `correlationId`s associated with that `userId`.
+    4.  **Time-boxed Access:** This mapping is made available to the original L1 engineer for a short, time-boxed period (e.g., 60 minutes) and is **not** stored in the main logging system. After the window expires, access is automatically revoked.
 *   **Auditing:** Every use of this tool **must** be logged to a separate, high-security audit trail (e.g., a dedicated CloudTrail S3 bucket with restricted delete access). These logs will record who performed the lookup, for which user, and for what reason (the `ticketId`). Automated alerts will be configured to notify the security team of every use of this tool.
 
 This procedure allows us to resolve user issues effectively while maintaining our privacy-first principles by making the act of associating a `correlationId` with a `userId` an explicit, temporary, and fully audited security event.
@@ -174,3 +174,6 @@ Users will have a clear and irreversible option to delete their account. This pr
     5.  Once the process is complete, the user is logged out of the mobile app.
 
 *   **Data in Backups:** User data will remain in DynamoDB backups (e.g., PITR) for their retention period (e.g., 35 days). This is an accepted practice under GDPR, provided the data is not used for any purpose and is overwritten in due course. This will be clearly stated in our public privacy policy.
+*   **Access Control and Least Privilege:** Access to all backend resources is governed by the principle of least privilege. We use AWS Identity and Access Management (IAM) to enforce this.
+    *   **Granular IAM Roles:** Each backend compute service (Lambda function, Fargate task definition) will have its own unique IAM role with a narrowly scoped policy. For example, a worker task for a specific third-party service is only granted permission to access the specific secrets and DynamoDB records relevant to its task. It cannot access resources related to other services.
+    *   **Resource-Based Policies:** Where applicable, resource-based policies are used as an additional layer of defense. For example, the AWS Secrets Manager secret containing third-party tokens will have a resource policy that only allows access from the specific IAM roles of the worker tasks that need it.
