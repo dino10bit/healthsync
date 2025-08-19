@@ -640,16 +640,47 @@ To ensure high development velocity and code quality, we will establish a stream
     *   **Contract Tests:** To ensure the mobile app and backend APIs can evolve independently without breaking each other, we will use **Pact**. The backend will publish its API contract, and the mobile client will test against this contract in its CI pipeline.
     *   **End-to-End (E2E) Tests:** To test complete user flows. For the mobile app, this will involve UI automation frameworks like Espresso and XCUITest.
     *   **Load Tests:** To validate performance and scalability, using `k6` to script and execute tests against a dedicated staging environment.
-*   **Continuous Integration & Delivery (CI/CD):** Our CI/CD pipeline, managed with **GitHub Actions**, will automate the following:
-    *   **On every commit:** Run linters, static analysis tools (Detekt, SwiftLint), and all unit tests.
-    *   **On every pull request:**
-        *   Run all integration tests and Static Application Security Testing (SAST) scans (Snyk).
-        *   **Validate schema changes:** Any modifications to the canonical data models in the KMP module are validated against the AWS Glue Schema Registry to ensure backward compatibility.
-    *   **On merge to `main`:**
-        *   Automatically deploy the backend services to the staging environment.
-        *   Trigger E2E tests against the staging environment.
-        *   Run Dynamic Application Security Testing (DAST) scans against the staging API using **OWASP ZAP**.
-    *   **On release tag:** Automate the deployment of backend services to production and the mobile app release process to the app stores (using Fastlane).
+*   **Continuous Integration & Delivery (CI/CD):** Our CI/CD pipeline, managed with **GitHub Actions**, automates quality checks and deployments. The goal is to enable rapid, reliable, and repeatable releases.
+
+    ```mermaid
+    graph TD
+        subgraph "Development Workflow"
+            A[Commit to Feature Branch] --> B{Pull Request};
+        end
+
+        subgraph "CI Pipeline (on PR)"
+            B --> C[Run Linters & Unit Tests];
+            C --> D[Run Integration & SAST Tests];
+            D --> E[Validate Schema];
+            E --> F{All Checks Pass?};
+        end
+
+        subgraph "Manual Review"
+            F -- Yes --> G[Code Review & Approval];
+            F -- No --> H[Fix Issues];
+            H --> A;
+        end
+
+        subgraph "CD Pipeline (Post-Merge)"
+            G --> I[Merge to 'main' branch];
+            I --> J[Deploy to Staging];
+            J --> K[Run E2E & DAST Tests];
+            K --> L{Create Release Tag};
+            L --> M[Deploy to Production];
+            M --> N[Release to App Stores];
+        end
+    ```
+
+    *   **Quality Gates:** The pipeline enforces several automated quality gates:
+        *   **On every commit:** Run linters, static analysis tools (Detekt, SwiftLint), and all unit tests.
+        *   **On every pull request:** Run all integration tests, Static Application Security Testing (SAST) scans (Snyk), and validate data model schemas against the AWS Glue Schema Registry.
+        *   **On merge to `main`:** Automatically deploy to the staging environment, then trigger E2E tests and Dynamic Application Security Testing (DAST) scans.
+    *   **Production Release:** A release to production is triggered by creating a version tag (e.g., `v1.2.0`), which automates the deployment of backend services and the mobile app release process (using Fastlane).
+
+*   **Deployment Strategy (Canary Releases):** To minimize the risk of production incidents, all backend services will be deployed to production using a **canary release strategy**.
+    *   **Process:** When a new version is deployed, a small percentage of production traffic (e.g., 5%) will be routed to the new version (the "canary"), while the majority of traffic continues to go to the stable, existing version.
+    *   **Monitoring:** The canary is closely monitored for an increase in error rates, latency, or other key metrics.
+    *   **Rollout/Rollback:** If the canary version performs as expected for a predefined period (e.g., 1 hour), traffic is gradually shifted to it until it serves 100% of requests. If any issues are detected, traffic is immediately routed back to the stable version, and the canary is rolled back. This strategy significantly reduces the blast radius of a potentially bad deployment.
 
 ## Appendix A: Technology Radar
 
