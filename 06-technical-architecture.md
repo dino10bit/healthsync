@@ -77,10 +77,16 @@ graph TD
         SecretsManager[Secrets Manager for Tokens]
         S3[S3 for Dead-Letter Queue]
         Observability["Monitoring & Observability (CloudWatch)"]
+        GlueSchemaRegistry[AWS Glue Schema Registry]
+        AppConfig[AWS AppConfig]
     end
 
     subgraph "Google Cloud"
         FirebaseAuth[Firebase Authentication]
+    end
+
+    subgraph "CI/CD & Development"
+        CICD[CI/CD Pipeline]
     end
 
     subgraph "Future Capabilities"
@@ -101,11 +107,15 @@ graph TD
     RequestLambda -- "Publishes 'SyncJobRequested' event" --> EventBus
     EventBus -- "Rule: 'SyncJobRequested'" --> WorkerLambda
     EventBus -- "Rule: All Events" --> AnalyticsService
-    WorkerLambda -- Reads/writes config --> DynamoDB
+    WorkerLambda -- Reads/writes user config --> DynamoDB
     WorkerLambda -- Gets credentials --> SecretsManager
     WorkerLambda -- Reads/Writes --> ElastiCache
     WorkerLambda -.-> AI_Service
     WorkerLambda -- "On failure, sends to" --> S3
+    CICD -- "Registers & Validates Schemas in" --> GlueSchemaRegistry
+    WorkerLambda -- "Uses Schemas during build/runtime" --> GlueSchemaRegistry
+    RequestLambda -- "Fetches runtime config from" --> AppConfig
+    WorkerLambda -- "Fetches runtime config from" --> AppConfig
 
     RequestLambda -- Logs & Metrics --> Observability
     WorkerLambda -- Logs & Metrics --> Observability
@@ -144,6 +154,22 @@ graph TD
     *   **Description:** A centralized system for collecting logs, metrics, and traces from all backend services.
     *   **Technology:** AWS CloudWatch (Logs, Metrics, Alarms), AWS X-Ray.
     *   **Responsibilities:** Provides insights into system health, performance, and error rates. Triggers alarms for critical issues.
+
+7.  **Data Governance & Schema Registry (AWS Glue Schema Registry)**
+    *   **Description:** To manage the evolution of our canonical data models (e.g., `CanonicalWorkout`), we will use the AWS Glue Schema Registry. It acts as a central, versioned repository for our data schemas.
+    *   **Technology:** AWS Glue Schema Registry.
+    *   **Responsibilities:**
+        *   Stores all versions of the canonical data model schemas.
+        *   Enforces schema evolution rules (e.g., backward compatibility) within the CI/CD pipeline, preventing the deployment of breaking changes.
+        *   Provides schemas to the `WorkerLambda` for serialization and deserialization tasks, ensuring data conforms to the expected structure.
+
+8.  **Centralized Configuration Management (AWS AppConfig)**
+    *   **Description:** To manage dynamic operational configurations (like log levels or API timeouts) and feature flags, we will adopt AWS AppConfig. This allows for safe, audited changes without requiring a full code deployment.
+    *   **Technology:** AWS AppConfig.
+    *   **Responsibilities:**
+        *   Stores and serves feature flags (e.g., enabling the `AI-Powered Merge` for Pro users).
+        *   Manages operational parameters, allowing for real-time adjustments.
+        *   Provides validation and deployment strategies for configuration changes, reducing the risk of outages.
 
 ### Level 3: Components (Inside the KMP Shared Module)
 
@@ -472,15 +498,16 @@ data class CanonicalSleepSession(
 | **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) across the mobile app and a potential JVM backend, while maintaining native UI performance. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Serverless Backend** | **AWS (Lambda, SQS, DynamoDB)** | **Massive Scalability & Reliability.** Event-driven architecture to meet our 1M DAU target with pay-per-use cost efficiency. |
+| **Schema Governance** | **AWS Glue Schema Registry** | **Data Integrity & Evolution.** Provides a managed, centralized registry for our canonical data schemas. Enforces backward-compatibility checks in the CI/CD pipeline, preventing breaking changes and ensuring system stability as new data sources are added. |
 | **Distributed Cache** | **Amazon ElastiCache for Redis** | **Performance & Scalability.** Provides a high-throughput, low-latency in-memory cache for reducing database load and implementing distributed rate limiting. |
 | **AI & Machine Learning (Future)** | **Amazon SageMaker, Amazon Bedrock** | **Rationale for Future Use:** When we implement AI features, these managed services will allow us to scale without managing underlying infrastructure, reducing operational overhead and allowing focus on feature development. |
 | **Secure Credential Storage** | **AWS Secrets Manager** | **Security & Manageability.** Provides a secure, managed service for storing, rotating, and retrieving the OAuth tokens required by our backend workers. Replicated across regions for high availability. |
+| **Configuration Management & Feature Flagging** | **AWS AppConfig** | **Operational Agility & Safety.** We will adopt AWS AppConfig for managing dynamic operational configurations (like log levels or API timeouts) and feature flags. This allows for safe, audited changes without requiring a full code deployment, significantly improving operational agility and reducing release risk. |
 | **Infrastructure as Code** | **Terraform** | **Reproducibility & Control.** Manages all cloud infrastructure as code, ensuring our setup is version-controlled and easily reproducible. |
 | **CI/CD**| **GitHub Actions** | **Automation & Quality.** Automates the build, test, and deployment of the mobile app and backend services, including security checks. |
 | **Monitoring & Observability** | **AWS CloudWatch, AWS X-Ray** | **Operational Excellence.** Provides a comprehensive suite for logging, metrics, tracing, and alerting, enabling proactive issue detection and performance analysis. |
 | **Local Development** | **LocalStack** | **High-Fidelity Local Testing.** Allows engineers to run and test the entire AWS serverless backend on their local machine, drastically improving the development and debugging feedback loop. |
 | **Load Testing** | **k6 (by Grafana Labs)** | **Validate Scalability Assumptions.** A modern, scriptable load testing tool to simulate traffic at scale, identify performance bottlenecks, and validate that the system can meet its 1M DAU target. |
-| **Feature Flagging** | **Unleash** | **Decouple Deployment from Release.** A feature flagging system is critical for safely deploying new code to production, enabling canary releases, A/B testing, and instant rollbacks, significantly reducing release risk. |
 
 ## 5. Cost-Effectiveness at Scale (1M DAU)
 
@@ -586,7 +613,9 @@ To ensure high development velocity and code quality, we will establish a stream
     *   **Load Tests:** To validate performance and scalability, using `k6` to script and execute tests against a dedicated staging environment.
 *   **Continuous Integration & Delivery (CI/CD):** Our CI/CD pipeline, managed with **GitHub Actions**, will automate the following:
     *   **On every commit:** Run linters, static analysis tools (Detekt, SwiftLint), and all unit tests.
-    *   **On every pull request:** Run all integration tests and Static Application Security Testing (SAST) scans (Snyk).
+    *   **On every pull request:**
+        *   Run all integration tests and Static Application Security Testing (SAST) scans (Snyk).
+        *   **Validate schema changes:** Any modifications to the canonical data models in the KMP module are validated against the AWS Glue Schema Registry to ensure backward compatibility.
     *   **On merge to `main`:**
         *   Automatically deploy the backend services to the staging environment.
         *   Trigger E2E tests against the staging environment.
@@ -616,7 +645,6 @@ These are technologies we believe have high potential and should be actively pro
 | Technology | Domain | Justification |
 | :--- | :--- | :--- |
 | **Metabase / Superset** | Business Intelligence | To empower product and business teams with self-service analytics without engineering effort. A trial is needed to select the best fit for our needs. |
-| **Unleash** | Feature Flagging | We have identified the need for feature flagging; Unleash is a strong open-source candidate to trial for this capability. |
 | **Docusaurus** | Documentation | As our API and developer ecosystem grows, a dedicated documentation portal will be invaluable. Docusaurus is a leading candidate to trial. |
 
 ### Assess

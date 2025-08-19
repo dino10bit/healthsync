@@ -79,8 +79,27 @@ Unit testing remains a critical part of the process, but it is now enforced by t
 *   **CI/CD Integration:** This test suite is a required check in the CI/CD pipeline. No code change that breaks a data mapping test will be deployed.
 *   **Benefit:** This creates a powerful regression suite. If a provider's API changes its response format, these unit tests will fail immediately, pinpointing the problem.
 
-## 5. Schema Versioning & Migration
-*(Unchanged)*
+## 5. Schema Versioning & Migration with AWS Glue Schema Registry
+
+To govern the evolution of our canonical data models, we are adopting the **AWS Glue Schema Registry**. This provides a robust, centralized framework for versioning, validation, and safe evolution of our schemas, which is critical for system stability.
+
+### Developer Workflow for Schema Changes
+
+When a developer needs to modify a canonical data model (e.g., adding a new field to `CanonicalWorkout`), they will follow this process:
+
+1.  **Update KMP Data Class:** The developer first modifies the `Serializable` Kotlin data class in the KMP shared module.
+2.  **Generate Schema Definition:** A gradle task will automatically generate a JSON Schema definition from the updated Kotlin data class. This generated schema file is committed to the repository along with the code changes.
+3.  **CI/CD Pipeline Validation:** When a pull request is created, the CI/CD pipeline (as defined in `06-technical-architecture.md`) executes the following critical step:
+    *   The pipeline takes the generated JSON schema and sends it to the AWS Glue Schema Registry's `CheckSchemaVersionValidity` API.
+    *   The registry is configured with a strict compatibility rule: **`BACKWARD_ALL`**. This means that consumers using an older version of the schema can still read data produced with the new schema.
+    *   If the proposed change is not backward-compatible (e.g., a field is removed without a default value), the registry will return a failure, and the CI/CD pipeline will fail, blocking the pull request from being merged.
+4.  **Schema Registration:** Upon a successful merge to the `main` branch, the CI/CD pipeline will automatically register the new schema version in the Glue Schema Registry.
+
+### Benefits of this Approach
+
+*   **Prevents Breaking Changes:** The automated compatibility check is a safety gate that makes it impossible to accidentally deploy a schema change that would break existing clients or backend workers.
+*   **Centralized Governance:** The Schema Registry becomes the single source of truth for all versions of our canonical models.
+*   **Enables Future Evolution:** This robust process allows us to safely evolve our data models over time, for example, by enabling consumers to handle multiple versions of a schema for graceful upgrades.
 
 ## 6. Visual Diagrams
 
