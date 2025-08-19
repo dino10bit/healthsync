@@ -136,6 +136,21 @@ While `userId` is never logged by default, a critical operational gap exists for
     4.  **Debugging:** The engineer uses the retrieved `correlationId`s to find the relevant logs in CloudWatch to diagnose the issue. The mapping between `userId` and `correlationId` is not stored anywhere.
 *   **Future Enhancement:** Post-launch, this manual process will be replaced by a dedicated internal web tool that automates the approval and lookup workflow, but the core security principles (MFA, peer approval, auditing) will remain the same.
 
+#### 6.1.2. Break-Glass Lookup Index Design
+
+The "purpose-built lookup index" is a critical component of the break-glass procedure. It will be implemented as a dedicated, highly secure DynamoDB table with the following characteristics:
+
+*   **Table Name:** `SyncWellBreakGlassIndex`
+*   **Primary Key:**
+    *   **Partition Key (PK):** `USER#{userId}`
+    *   **Sort Key (SK):** `TIMESTAMP#{timestamp}`
+*   **Attributes:**
+    *   `correlationId`: The correlation ID for a specific request.
+    *   `ttl`: An epoch timestamp for automatic deletion.
+*   **Time-to-Live (TTL):** The `ttl` attribute will be enabled on this table. All items written to this table **must** have a TTL of **24 hours**. This ensures that the mapping between a user's permanent ID and their temporary correlation IDs is automatically and permanently deleted after a short period, enforcing the principle of data minimization.
+*   **Population:** The `AuthorizerLambda` at the API Gateway entrypoint will be the only component responsible for writing to this table. Upon successfully validating a user's JWT, it will write a new item containing the `userId` and the newly generated `correlationId` for that request.
+*   **Security:** Access to this table will be extremely restricted via IAM policies. Only the `AuthorizerLambda` will have write permissions. Read permissions will only be granted to a specific IAM role that can only be assumed by authorized engineers performing the peer-reviewed break-glass procedure.
+
 ## 7. Pre-Launch Security Audit Checklist
 
 ### Data Storage & Cryptography
@@ -145,7 +160,6 @@ While `userId` is never logged by default, a critical operational gap exists for
 
 ### Network Communication
 *   [ ] All network traffic uses TLS 1.2+.
-*   [ ] Certificate pinning is implemented for mobile-to-backend communication.
 *   [ ] Backend services are properly isolated in a VPC.
 
 ### Authentication & Authorization

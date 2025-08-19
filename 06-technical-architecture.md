@@ -100,6 +100,7 @@ graph TD
 
     subgraph "Future Capabilities"
         style AI_Service fill:#f9f,stroke:#333,stroke-width:2px
+        AnonymizerProxy[Anonymizer Proxy Lambda]
         AI_Service[AI Insights Service]
         AnalyticsService[Analytics Service]
         KinesisFirehose[Kinesis Data Firehose]
@@ -127,7 +128,8 @@ graph TD
     WorkerLambda -- "Reads/writes user config" --> DynamoDB
     WorkerLambda -- "Gets credentials" --> SecretsManager
     WorkerLambda -- "Reads/Writes" --> ElastiCache
-    WorkerLambda -.-> AI_Service
+    WorkerLambda -- "Calls for real-time merge" --> AnonymizerProxy
+    AnonymizerProxy -- "Forwards anonymized data to" --> AI_Service
     CICD -- "Registers & Validates Schemas in" --> GlueSchemaRegistry
     WorkerLambda -- "Uses Schemas during build/runtime" --> GlueSchemaRegistry
     WorkerLambda -- "Fetches runtime config from" --> AppConfig
@@ -176,7 +178,7 @@ graph TD
     *   **Responsibilities:**
         *   Stores all versions of the canonical data model schemas.
         *   Enforces schema evolution rules (e.g., backward compatibility) within the CI/CD pipeline, preventing the deployment of breaking changes.
-        *   Provides schemas to the worker service (both Fargate and Lambda) for serialization and deserialization tasks, ensuring data conforms to the expected structure.
+        *   Provides schemas to the worker service (AWS Lambda) for serialization and deserialization tasks, ensuring data conforms to the expected structure.
 
 8.  **Centralized Configuration Management (AWS AppConfig)**
     *   **Description:** To manage dynamic operational configurations (like log levels or API timeouts) and feature flags, we will adopt AWS AppConfig. This allows for safe, audited changes without requiring a full code deployment.
@@ -280,7 +282,7 @@ A secure and scalable strategy is essential for managing provider-specific confi
 
 *   **Provider-Specific Configuration:** Non-sensitive configuration, such as API endpoint URLs or supported data types, is stored in a configuration file co-located with the provider's implementation in the codebase.
 *   **Application API Credentials:** The OAuth `client_id` and `client_secret` for each third-party service are highly sensitive. These are stored securely in **AWS Secrets Manager**. The backend services retrieve these credentials at runtime using a narrowly-scoped IAM role that grants access only to the secrets required for that service.
-    *   **User OAuth Tokens:** User-specific `access_token` and `refresh_token` are never stored directly in the database. They are encrypted and stored in **AWS Secrets Manager**. The Amazon Resource Name (ARN) of this secret is then stored in the user's `Connection` item in the `SyncWellMetadata` DynamoDB table. When a worker task (Fargate or Lambda) processes a job, its IAM role grants it permission to retrieve *only* the specific secret for the connection it is working on, enforcing the principle of least privilege.
+    *   **User OAuth Tokens:** User-specific `access_token` and `refresh_token` are never stored directly in the database. They are encrypted and stored in **AWS Secrets Manager**. The Amazon Resource Name (ARN) of this secret is then stored in the user's `Connection` item in the `SyncWellMetadata` DynamoDB table. When a worker Lambda processes a job, its IAM role grants it permission to retrieve *only* the specific secret for the a connection it is working on, enforcing the principle of least privilege.
 
 ### Level 3: Components (Future AI Insights Service)
 
@@ -478,8 +480,8 @@ Given the requirement for a global launch across 5 continents, a high-availabili
 *   **Resilience Testing (Chaos Engineering):** To proactively validate our multi-region high availability, we will practice chaos engineering. We will use the **AWS Fault Injection Simulator (FIS)** to inject faults into our pre-production environments on a regular, scheduled basis (e.g., weekly). This practice is critical for building confidence in our system's ability to withstand turbulent conditions in production.
 
     **Example Experiment Catalog:**
-    *   **Worker Failure:** Terminate a random percentage (10-50%) of Fargate tasks or Lambda instances to ensure that SQS retries and the remaining fleet can handle the load.
-    *   **API Latency:** Inject a 500ms latency into calls from a worker task to a third-party API endpoint to verify that timeouts and retry logic work as expected.
+    *   **Worker Failure:** Terminate a random percentage (10-50%) of Lambda instances to ensure that SQS retries and the remaining fleet can handle the load.
+    *   **API Latency:** Inject a 500ms latency into calls from a worker Lambda to a third-party API endpoint to verify that timeouts and retry logic work as expected.
     *   **DynamoDB Latency:** Inject latency on DynamoDB reads/writes to test application-level timeouts.
     *   **Secrets Manager Unavailability:** Block access to AWS Secrets Manager for a short period to ensure that workers with cached credentials continue to function and that the failure to retrieve new credentials is handled gracefully.
     *   **Full Regional Failover Drill:** Use FIS and Route 53 health check manipulation to simulate a full regional outage, forcing a failover and allowing us to measure the real-world RTO.
@@ -547,6 +549,7 @@ The workflow for the distributed rate limiter is as follows:
         *   Required Concurrency = `3,000 jobs/s * 5s/job = 15,000 concurrent Lambda executions`.
         *   **Provisioned Concurrency:** Given that the `WorkerLambda` uses a KMP/JVM runtime with known cold start latencies, **Provisioned Concurrency** will be enabled for the `WorkerLambda` fleet. This keeps a specified number of execution environments warm and ready to respond instantly. This strategy is critical for eliminating cold start latency, making performance more predictable, and can be more cost-effective than on-demand Lambda for this type of predictable, high-throughput workload.
         *   **Note on Concurrency Calculation:** This is a high level of concurrency that will require an increase to the default AWS account limits for Lambda, but it is well within the service's capabilities.
+        *   **Feasibility & Risk Mitigation:** The projection of ~15,000 concurrent Lambda executions represents a significant operational and financial risk. This level of concurrency can place extreme load on downstream dependencies (e.g., third-party APIs, ElastiCache) and will incur substantial cost. Therefore, a full-scale load test **must** be conducted against a production-like environment to validate these assumptions before launch. The results of this test will inform the final provisioning strategy. A phased rollout, gradually increasing user load while monitoring system performance, will be mandatory.
     *   **DynamoDB:**
         *   We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased via a Savings Plan to cost-effectively handle the predictable average load. **On-Demand Capacity** will handle any traffic that exceeds the provisioned throughput, providing the best of both worlds in terms of cost and elasticity.
 
@@ -615,11 +618,24 @@ This structure provides a flexible and scalable foundation for our application's
 
 **Primary Strategy: "Hot User" Isolation via Dedicated Table**
 
-The recommended primary strategy is to isolate the hot user's data into a separate, dedicated DynamoDB table.
+The recommended primary strategy is to isolate the hot user's data into a separate, dedicated DynamoDB table. This provides complete performance isolation with minimal architectural complexity.
 
-*   **Concept:** When a user is identified as "hot" (e.g., via a flag in their user profile), all application logic will read/write that user's data to a different DynamoDB table (e.g., `SyncWellMetadata_HotUsers`). This table can have its own provisioned throughput tailored to the user's load.
-*   **Advantage - Drastically Reduced Complexity:** This approach completely avoids the complex, error-prone, and costly read-side logic of querying N shards and merging the results. The application's access patterns remain simple: it just checks the user's flag and directs the query to the correct table.
-*   **Advantage - Complete Isolation:** It provides perfect performance isolation, ensuring that a high-volume user cannot impact the performance of the general user population.
+*   **Identification and Flagging:**
+    *   A user is identified as "hot" through monitoring and operational alerts that detect sustained throttling on a specific partition key (`USER#{userId}`).
+    *   For the MVP, flagging a user will be a **manual operational procedure**. An authorized engineer will set a boolean attribute, `isHot`, to `true` on the user's `PROFILE` item in the main `SyncWellMetadata` table.
+
+*   **Application Logic:**
+    *   A centralized data access layer in the application code will be responsible for all interactions with the `SyncWellMetadata` table(s).
+    *   Before performing any operation for a user, this layer will first read the user's `PROFILE` item from the main table to check the `isHot` flag. This read can be heavily cached.
+    *   If `isHot` is `true`, all subsequent reads and writes for that user will be routed to a dedicated `SyncWellMetadata_HotUsers` table. If the flag is false or absent, requests are routed to the main table. The table name will be determined dynamically at runtime.
+
+*   **Migration:**
+    *   When a user is flagged as hot, a one-time script will be run to migrate all of that user's items from the main table to the `SyncWellMetadata_HotUsers` table.
+    *   The reverse process will be followed if a user's activity level returns to normal.
+
+*   **Advantages:**
+    *   **Simplicity:** This approach avoids the significant read-side complexity of other techniques like write-sharding, as the application logic only needs to select a table name, not query multiple shards and merge results.
+    *   **Isolation:** It provides perfect performance isolation, ensuring that a high-volume user cannot impact the performance of the general user population.
 
 **Secondary Strategy: Application-Level Write Sharding**
 
@@ -630,15 +646,20 @@ Application-level write sharding should only be considered if the "hot table" st
 
 Given its simplicity and effectiveness, the "hot table" strategy will be the first and preferred solution to be implemented and assessed.
 
-#### Degraded Mode: Resilience to Cache Failure
+#### Degraded Mode and Cache Resilience
 
-The ElastiCache for Redis cluster is a critical component for performance. However, the system must be resilient to a full cache failure. In such an event, the system will enter a **degraded mode**:
-*   **Mechanism:** If the application cannot connect to the Redis cluster, it will fall back to operating directly against DynamoDB.
-*   **Impact:**
-    *   **Latency:** API and sync latency will increase significantly.
-    *   **Functionality:** Features that rely solely on the cache, such as distributed locking and precise rate-limiting, will be disabled. Sync job race conditions will be possible, but the idempotency checks will prevent data corruption.
-    *   **Alerting:** A critical alert will be triggered to notify the on-call team of the cache failure.
-This strategy ensures that a cache failure results in a slower service, not a complete outage.
+The ElastiCache for Redis cluster is a critical component for performance and system stability. The strategy for handling a cache failure is multi-layered.
+
+*   **High Availability (Within a Region):** To prevent a single node failure from causing an outage, the ElastiCache for Redis cluster **must** be deployed in a **Multi-AZ configuration**. This provides automatic failover to a replica in a different Availability Zone, which is transparent to the application and handles the most common failure scenarios.
+
+*   **Resilience to Full Cluster Failure (Degraded Mode):** In the rare event of a full cluster failure that Multi-AZ cannot mitigate, the system must fail safely.
+    *   **Mechanism:** If the application cannot connect to the Redis cluster, it will enter a **degraded mode**.
+    *   **Impact:**
+        *   **Latency:** API and sync latency will increase significantly as all caching is bypassed.
+        *   **Distributed Locking:** This feature will be disabled. The primary idempotency key check will still prevent most data duplication, but the risk of concurrent processing increases.
+        *   **Rate Limiting:** This is the most critical function. In a degraded mode, the system **will not** proceed without rate limiting. Instead, all worker Lambdas will treat the failure to get a rate limit token as a transient error and will back off, effectively slowing down or pausing all third-party API calls until the cache is restored. This is a critical safety mechanism to prevent overwhelming downstream APIs.
+        *   **Alerting:** A critical alert will be triggered to notify the on-call team of the cache failure.
+This strategy ensures that a cache failure results in a slower, but safe, service, not a complete or dangerous one.
 
 ### Level 4: Historical Sync Workflow
 
@@ -835,7 +856,7 @@ Triggering automatic, periodic syncs for potentially millions of users is a sign
 4.  **Shard Processor Lambda:** Each invocation of this Lambda is responsible for a single shard. It performs the following logic:
     a. **Query for Eligible Users:** It queries the `SyncWellMetadata` DynamoDB table for all users within its assigned shard whose `lastSyncTime` is older than the configured sync interval (e.g., 1 hour). To make this query efficient, a GSI will be required.
     b. **Enqueue Jobs:** For each eligible user and sync configuration, the Lambda generates a `RealtimeSyncRequested` event and publishes it to the main EventBridge Event Bus.
-5.  **Job Processing:** From this point, the process follows the standard "hot path" for real-time syncs: the events are routed to the SQS queue and consumed by the Fargate worker fleet.
+5.  **Job Processing:** From this point, the process follows the standard "hot path" for real-time syncs: the events are routed to the SQS queue and consumed by the Lambda worker fleet.
 
 **Scalability and Resilience:**
 
@@ -876,7 +897,7 @@ graph TD
     G -- "Triggers" --> H;
 ```
 
-This diagram illustrates the entire scheduling pipeline. The process begins with a single **EventBridge Rule** that runs on a fixed schedule (e.g., every 15 minutes). This rule triggers a **Step Functions State Machine**, which orchestrates the main workflow. The state machine first calculates the number of parallel shards required to process the user base, then uses a **Map State** to invoke a `Shard Processor Lambda` for each shard simultaneously. Each Lambda instance is responsible for finding all users within its assigned shard who are due for a sync. It then publishes individual `SyncRequested` events to the main **EventBridge Bus**, which routes them to the SQS queue for the worker fleet to process. This fan-out architecture is highly scalable and avoids the anti-pattern of managing millions of individual timers.
+This diagram illustrates the entire scheduling pipeline. The process begins with a single **EventBridge Rule** that runs on a fixed schedule (e.g., every 15 minutes). This rule triggers a **Step Functions State Machine**, which orchestrates the main workflow. The state machine first calculates the number of parallel shards required to process the user base, then uses a **Map State** to invoke a `Shard Processor Lambda` for each shard simultaneously. Each Lambda instance is responsible for finding all users within its assigned shard who are due for a sync. It then publishes individual `SyncRequested` events to the main **EventBridge Bus**, which routes them to the SQS queue for the Lambda worker fleet to process. This fan-out architecture is highly scalable and avoids the anti-pattern of managing millions of individual timers.
 
 ```kotlin
 import kotlinx.serialization.Serializable
@@ -898,7 +919,28 @@ data class ProviderTokens(
     // A space-separated list of scopes granted by the user.
     val scope: String? = null
 )
-```
+
+### 3g. Client-Side Persistence and Offline Support Strategy
+
+To provide a responsive user experience and basic functionality when the user's device is offline, the mobile application will employ a client-side persistence strategy using the **SQLDelight** database.
+
+*   **Purpose of the Local Database:**
+    *   **Configuration Cache:** The local database will act as a cache for the user's connections and sync configurations. This allows the UI to load instantly without waiting for a network call to the backend. The backend remains the single source of truth.
+    *   **Offline Action Queue (Write-Ahead Log):** When a user performs a state-changing action while offline (e.g., creating a new sync configuration, disabling an existing one), the action will be saved to a dedicated "actions" table in the local database. This table acts as a write-ahead log of commands to be sent to the backend.
+
+*   **Offline Support Workflow:**
+    1.  The user opens the app while offline. The UI is populated from the local SQLDelight cache, showing the last known state.
+    2.  The user creates a new sync configuration. The app immediately updates the local UI to reflect this change and writes a `CREATE_SYNC_CONFIG` command to the local "actions" table.
+    3.  The user can continue to queue up actions (create, update, delete) while offline.
+
+*   **Data Reconciliation on Reconnection:**
+    1.  When the application detects that network connectivity has been restored, it will initiate a reconciliation process.
+    2.  It will read the queued commands from the "actions" table in the order they were created.
+    3.  For each command, it will make the corresponding API call to the backend (e.g., `POST /v1/sync-configs`). The client will use the `Idempotency-Key` it generated and stored offline for each action.
+    4.  Once the backend confirms the action was successful, the command is removed from the local "actions" table.
+    5.  After all queued actions are processed, the client will fetch the latest state from the backend to ensure it is fully in sync with the source of truth.
+
+This strategy ensures that the app remains responsive and that user actions are not lost during periods of no connectivity.
 
 ## 4. Technology Stack & Rationale
 
@@ -950,7 +992,7 @@ A detailed financial model is a mandatory prerequisite before implementation.
     *   **On-Device:** Any sensitive data (e.g., cached tokens) is stored in the native, hardware-backed secure storage systems: the Keychain on iOS and the Keystore on Android.
 *   **Access Control and Least Privilege:** Access to all backend resources is governed by the principle of least privilege. We use AWS Identity and Access Management (IAM) to enforce this.
     *   **Secure Authorizer Implementation:** The `AuthorizerLambda` is a security-critical component. To prevent common vulnerabilities and adhere to security best practices, it **must** use a well-vetted, open-source library for all JWT validation logic. A library like **AWS Lambda Powertools** will be used to handle the complexities of fetching the JWKS, validating the signature, and checking standard claims (`iss`, `aud`, `exp`). This avoids implementing complex and error-prone security logic from scratch.
-    *   **Granular IAM Roles:** Each compute component (API Lambda, Fargate Task, Worker Lambda) has its own unique IAM role with a narrowly scoped policy. For example, a worker for a specific third-party service is only granted permission to access the specific secrets and DynamoDB records relevant to its task. It cannot access resources related to other services.
+    *   **Granular IAM Roles:** Each compute component (e.g., API Gateway's IAM role, the Authorizer Lambda, and each Worker Lambda) has its own unique IAM role with a narrowly scoped policy. For example, a worker Lambda for a specific third-party service is only granted permission to access the specific secrets and DynamoDB records relevant to its task. It cannot access resources related to other services.
     *   **Resource-Based Policies:** Where applicable, resource-based policies are used as an additional layer of defense. For example, the AWS Secrets Manager secret containing third-party tokens will have a resource policy that only allows access from the specific IAM roles of the workers that need it.
 *   **Egress Traffic Control (Firewall):** To enforce the principle of least privilege at the network layer, an egress firewall will be implemented to control outbound traffic from the VPC. The `WorkerLambda` functions need to call third-party APIs, and this traffic will be routed through an **AWS Network Firewall**. A firewall policy will be configured with an allow-list of the specific Fully Qualified Domain Names (FQDNs) for required partners (Fitbit, Strava, etc.). This provides defense in depth; if a function were compromised, this control would prevent it from exfiltrating data or communicating with malicious domains. It also provides a centralized point for auditing all outbound connections.
 *   **Code & Pipeline Security:** Production builds will be obfuscated. Dependency scanning (Snyk) and static application security testing (SAST) will be integrated into the CI/CD pipeline, failing the build if critical vulnerabilities are found.
@@ -963,9 +1005,15 @@ A detailed financial model is a mandatory prerequisite before implementation.
 *   **AI Service Privacy:** The future AI Insights Service will be designed to not store any Personal Health Information (PHI). Data sent for inference will be processed ephemerally.
 
 ### Data Anonymization for Analytics and AI
-To enable future product improvements through analytics and machine learning without compromising user privacy, a strict data anonymization strategy will be implemented.
+To enable future product improvements through analytics and machine learning without compromising user privacy, a strict, dual-pronged data anonymization strategy will be implemented. This strategy differentiates between the needs of batch analytics and real-time operational AI features.
 
-*   **Anonymization & Ingestion Pipeline:** To handle analytics data at scale, a robust and cost-effective ingestion pipeline is required. At 1M DAU, sending millions of individual events directly to an analytics endpoint would be inefficient and expensive. To solve this, the architecture will use **Amazon Kinesis Data Firehose**.
+#### Real-Time Anonymization for Operational AI
+For features like the AI-Powered Merge, which require a synchronous, real-time response, a dedicated **Anonymizer Proxy Lambda** will be used.
+*   **Mechanism:** The `WorkerLambda` does not call the `AI Insights Service` directly. Instead, it makes a synchronous request to the `AnonymizerProxy`. This proxy function is responsible for stripping or replacing all PII from the request payload in real-time before forwarding the anonymized data to the `AI Insights Service`.
+*   **Privacy:** This proxy-based approach ensures that no raw user PII is ever processed by the AI models, upholding our core privacy principles in a low-latency manner suitable for operational workflows.
+
+#### Batch Anonymization for Analytics
+To handle analytics data at scale, a robust and cost-effective ingestion pipeline is required. At 1M DAU, sending millions of individual events directly to an analytics endpoint would be inefficient and expensive. To solve this, the architecture will use **Amazon Kinesis Data Firehose**.
     *   **Buffering and Batching:** The EventBridge bus will forward all raw analytics events to a Kinesis Data Firehose delivery stream. Firehose will automatically buffer these events—for example, for 60 seconds or until 5MB of data is collected—and then deliver them as a single, compressed file to the downstream analytics service (the S3 data lake). This dramatically reduces the number of ingest requests and associated costs.
     *   **On-the-fly Transformation:** Before delivering the data, Firehose will invoke the dedicated **Anonymization Lambda**. This function receives the entire batch of events, strips all Personally Identifiable Information (PII) from each record, and returns the scrubbed batch to Firehose. This ensures that only anonymized, privacy-safe data is ever persisted.
 
@@ -1168,6 +1216,6 @@ These are technologies that we have considered but have decided not to use at th
 
 | Technology | Domain | Justification |
 | :--- | :--- | :--- |
-| **Kubernetes (EKS / Self-Managed)** | Container Orchestration | While we have adopted containerization with AWS Fargate, we are holding on the added complexity of a full Kubernetes platform. Fargate meets our needs for serverless container orchestration without the management overhead of a Kubernetes cluster. |
+| **Kubernetes (EKS / Self-Managed)** | Container Orchestration | We are holding on the added complexity of a full Kubernetes platform. Our serverless-first approach with AWS Lambda meets our needs without the management overhead of a Kubernetes cluster. We may assess container-based orchestration with AWS Fargate in the future if a specific use case requires it. |
 | **ScyllaDB / Cassandra** | NoSQL Database | DynamoDB meets all of our current and projected needs for metadata storage. We will not consider alternative NoSQL databases unless we hit a specific, insurmountable limitation with DynamoDB. |
 | **Service Mesh (Linkerd, etc.)**| Service-to-Service | A service mesh is a solution for managing a large and complex microservices architecture. Our current architecture is too simple to justify this complexity. We will put this on hold indefinitely. |

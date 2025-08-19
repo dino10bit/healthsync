@@ -29,9 +29,9 @@ The data import process is a multi-step workflow that includes waiting for user 
 3.  **State Machine Execution (Backend):**
     *   **a. Parse & Validate:** A Lambda function downloads the file from S3 and uses a `Parser` to validate it and convert it into our `CanonicalActivity` model. If the file is corrupt, the state machine transitions to a `FAILED` state.
     *   **b. Duplicate Check:** A second Lambda queries destination APIs to check for potential duplicates. See section 2.1 for details on the logic.
-    *   **c. Wait for User Review:** The state machine saves the parsed data and enters a "wait" state using a **task token**. This token represents the paused workflow. The machine then publishes an event to SNS to trigger the `N-08` "Ready for Review" push notification.
-    *   **d. User Confirmation (Mobile):** The user reviews the import in the app. When they confirm, the app sends the confirmation choices and the **task token** to a backend API.
-    *   **e. Resume Execution:** The backend API calls the `SendTaskSuccess` Step Functions API action with the task token and the user's choices as output. This resumes the state machine execution.
+    *   **c. Wait for User Review (Secure Token Swap):** The state machine saves the parsed data and enters a "wait" state using a **task token**. To avoid exposing this sensitive token to the client, the state machine will then call a `CreateSecureCallbackToken` Lambda. This function generates a new, single-use opaque token (e.g., a UUID), stores the mapping (`opaque_token` -> `real_task_token`) in DynamoDB with a short TTL (e.g., 7 days), and returns the **opaque token**. The state machine then triggers the `N-08` "Ready for Review" push notification, providing this opaque token to the client.
+    *   **d. User Confirmation (Mobile):** The user reviews the import in the app. When they confirm, the app sends the confirmation choices and the **opaque token** to a backend API.
+    *   **e. Resume Execution:** The backend API receives the opaque token, looks it up in the DynamoDB mapping table to retrieve the real task token, and then calls the `SendTaskSuccess` Step Functions API action. After successfully resuming the workflow, it deletes the mapping item from the table.
     *   **f. Final Sync:** The final state in the machine places the approved sync job into the main `hot-queue` for processing by the standard sync workers.
 
 ### 2.1. Duplicate Check Logic
