@@ -77,8 +77,7 @@ Only if all these conditions are met are the two activity records sent to the AI
 *   **`Prioritize Source`:** The default behavior. New data from the source platform will always overwrite any existing data in the destination for the same time period.
 *   **`Prioritize Destination`:** Never overwrite existing data. If a conflicting entry is found in the destination, the source entry is ignored.
 *   **`AI-Powered Merge` (Activities Only - Pro Feature):** This advanced strategy uses a machine learning model to create the best possible "superset" of the data. Instead of fixed rules, it makes an intelligent prediction.
-    *   **Data Privacy & Anonymization:** To protect user privacy, all data sent to the AI service for merging **must** be anonymized in real-time. This is handled by a dedicated, synchronous **Anonymizer Proxy Lambda**.
-    *   **Mechanism:** The `WorkerLambda` does not call the `AI Insights Service` directly. Instead, it calls the Anonymizer Proxy, passing the two conflicting activity records. The proxy is responsible for stripping or replacing all PII (e.g., precise GPS coordinates, user-entered titles) before forwarding the anonymized data to the `AI Insights Service` for the merge prediction. This ensures that no raw user PII is ever processed or seen by the AI model, upholding our core privacy principles.
+    *   **Data Privacy & Anonymization:** To protect user privacy, all data sent to the AI service for merging **must** be anonymized in real-time. The detailed technical implementation of this critical privacy feature, including the real-time anonymization proxy, latency considerations, and PII stripping strategy, is specified in `06-technical-architecture.md`, Section "Real-Time Anonymization for Operational AI".
     *   **API Contract:** The request from the worker to the Anonymizer Proxy will conform to the following contract:
         ```json
         // POST /v1/merge-activities

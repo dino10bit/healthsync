@@ -47,34 +47,31 @@ The backend's error handling strategy is designed for maximum resilience and mes
 
 5.  **EventBridge Durability:** To provide an additional layer of durability, the EventBridge rule that targets the SQS queue will also be configured with its own DLQ. This ensures that if an event fails to be delivered to the SQS queue for any reason (e.g., a misconfiguration or temporary unavailability), the event is captured and can be reprocessed, preventing data loss.
 
-### 2.3. DLQ Management and Re-processing
+### 2.3. DLQ Management Strategy (Semi-Automated)
 
-Messages in a Dead-Letter Queue (DLQ) represent persistent failures that could not be resolved by automatic retries. A manual, operator-driven process is required to handle these messages to ensure no data is lost. The following runbook outlines the procedure for an on-call engineer.
+Messages in a Dead-Letter Queue (DLQ) represent persistent failures that could not be resolved by automatic retries. A purely manual process for handling these is not scalable at 1M DAU. Therefore, a **semi-automated DLQ handling process** will be implemented to reduce operational load while ensuring that unknown failures receive human review.
 
-**Runbook for DLQ Message Handling:**
+*   **DLQ Analyzer Lambda:** A dedicated Lambda function, the `DLQAnalyzer`, will be triggered whenever a message arrives in the DLQ. This function acts as an automated triage system.
 
-1.  **Alerting:** A CloudWatch Alarm triggers when the `ApproximateNumberOfMessagesVisible` metric for any DLQ is greater than zero for a sustained period (e.g., 15 minutes). The on-call engineer is paged.
-2.  **Inspection:** The engineer navigates to the SQS console in AWS to view the messages in the DLQ. The message body and attributes are inspected to understand the job context and the reason for failure (often available in the `ErrorMessage` attribute added by Lambda).
-3.  **Diagnosis:** The engineer uses the `correlationId` from the message to query CloudWatch Logs Insights for all related logs. This provides the full context of the failure, allowing the engineer to diagnose the root cause (e.g., a bug in the worker, a breaking change in a third-party API, unexpected data format).
-4.  **Archiving:** Before taking any action, all messages in the DLQ **must be archived** to a dedicated S3 bucket for long-term analysis and auditing. This can be done using a small, purpose-built Lambda function or a script.
-5.  **Decision and Action:**
-    *   **If the error is due to a transient issue that has since been resolved (e.g., a temporary third-party API outage):** The engineer can use the "Start DLQ redrive" feature in the SQS console to move the messages back to the main source queue for reprocessing.
-    *   **If the error is due to a bug in the worker code:** A high-priority ticket is created. Once a fix is deployed, the messages can be redriven from the DLQ.
-    *   **If the error is due to malformed data or a permanent, unrecoverable issue:** The messages are left in the archive S3 bucket, and the issue is logged for product/engineering review. The messages are then purged from the DLQ.
-
-This manual-first approach ensures that an operator carefully considers each failure case, preventing potential infinite failure loops and providing a high degree of safety for unknown issues.
-
-### 2.4. Scalable DLQ Handling (Semi-Automated)
-
-While a manual-first approach is safe, it is not scalable at 1M DAU. To reduce operational load, a semi-automated DLQ handling process will be implemented for known, recoverable errors.
-
-*   **DLQ Analyzer Lambda:** A dedicated Lambda function, the `DLQAnalyzer`, will be triggered whenever a message arrives in the DLQ.
-*   **Automated Triage:** This Lambda will inspect the message's error metadata. It will have logic to identify specific, well-understood failure patterns:
+*   **Automated Triage Logic:** The `DLQAnalyzer` inspects the message's error metadata and attempts to identify specific, well-understood failure patterns:
     *   **Known Transient Third-Party Errors:** If an error matches a known pattern of a temporary third-party API issue (e.g., a specific `503` error from a partner API that is known to be flaky), the `DLQAnalyzer` will automatically redrive the message back to the main queue after a much longer delay (e.g., 1 hour), without paging the on-call engineer.
-    *   **Known "Bad Data" Formats:** If an error is due to a known, unrecoverable data format issue from a specific provider that we cannot handle, the analyzer will automatically archive the message to a specific S3 bucket prefix for that provider and purge it from the DLQ. This will trigger a low-priority ticket for later analysis.
-*   **Alerting for Unknowns:** If a message's error does not match any of the known patterns, it is considered a true unknown. Only in this case will the `DLQAnalyzer` trigger the high-priority PagerDuty alert for manual investigation by the on-call engineer.
+    *   **Known "Bad Data" Formats:** If an error is due to a known, unrecoverable data format issue from a specific provider, the analyzer will automatically archive the message to a specific S3 bucket prefix for that provider and purge it from the DLQ. This will trigger a low-priority ticket for later analysis.
 
-This semi-automated strategy ensures that engineers are only alerted for novel and critical failures that require human intelligence, while known, non-urgent issues are handled automatically. This is critical for maintaining operational stability at scale.
+*   **Alerting for Unknown Failures:** If a message's error does not match any of the known patterns, it is considered a true unknown. Only in this case will the `DLQAnalyzer` trigger a high-priority alert (via PagerDuty) to the on-call engineer for manual investigation.
+
+This semi-automated strategy ensures that engineers are only alerted for novel and critical failures that require human intelligence.
+
+#### Runbook for Manual Handling of Unknown DLQ Messages
+
+When an on-call engineer is paged for an unknown DLQ message, they must follow this runbook:
+
+1.  **Inspection:** The engineer navigates to the SQS console in AWS to view the message(s) that triggered the alert. The message body and attributes are inspected to understand the job context and the reason for failure.
+2.  **Diagnosis:** The engineer uses the `correlationId` from the message to query CloudWatch Logs Insights for all related logs. This provides the full context of the failure, allowing the engineer to diagnose the root cause (e.g., a new bug in the worker, a new breaking change in a third-party API).
+3.  **Archiving:** Before taking any action, all messages in the DLQ **must be archived** to a dedicated S3 bucket for long-term analysis and auditing. This can be done using a small, purpose-built Lambda function or a script.
+4.  **Decision and Action:**
+    *   **If the error is due to a transient issue that has since been resolved:** The engineer can use the "Start DLQ redrive" feature in the SQS console to move the messages back to the main source queue for reprocessing.
+    *   **If the error is due to a bug in the worker code:** A high-priority ticket is created. Once a fix is deployed, the messages can be redriven from the DLQ. The new error pattern should be added to the `DLQAnalyzer`'s logic to prevent future alerts for the same issue.
+    *   **If the error is due to malformed data or a permanent, unrecoverable issue:** The messages are left in the archive S3 bucket, and the issue is logged for product/engineering review. The messages are then purged from the DLQ.
 
 ## 3. Unified Error Code Dictionary
 
