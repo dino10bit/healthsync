@@ -146,12 +146,12 @@ graph TD
 
     MobileApp -- Sync Request --> APIGateway
     APIGateway --> RequestLambda
-    RequestLambda -- Publishes Event --> EventBridge
 
+    RequestLambda -- "Publishes 'RealtimeSyncRequested' event" --> EventBridge
     EventBridge -- "Rule for real-time jobs" --> HotQueue
     HotQueue -- Triggers --> WorkerLambdas
 
-    EventBridge -- "Rule for historical jobs" --> HistoricalOrchestrator
+    RequestLambda -- "Starts execution for historical sync" --> HistoricalOrchestrator
     HistoricalOrchestrator -- Orchestrates & Invokes --> WorkerLambdas
 
     WorkerLambdas -- Read/Write --> DynamoDB

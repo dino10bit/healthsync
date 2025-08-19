@@ -88,7 +88,7 @@ All backend Lambda functions will output structured JSON logs to **AWS CloudWatc
   }
 }
 ```
-*   **PII Scrubbing & Traceability:** No sensitive data (e.g., OAuth tokens, PII) will ever be logged. To align with the strict privacy policy in `19-security-privacy.md`, permanent identifiers like `userId` **must not** be logged. The mandated Powertools library will automatically handle the injection and propagation of a temporary `correlationId` across all logs, ensuring full request traceability without compromising user privacy.
+*   **PII Scrubbing & Traceability:** No sensitive data (e.g., OAuth tokens, PII) will ever be logged. To align with the strict privacy policy in `19-security-privacy.md`, permanent identifiers like `userId` **must not** be logged. The mandated Powertools library will automatically handle the injection and propagation of a temporary `correlationId` across all logs, ensuring full request traceability without compromising user privacy. For the rare cases where debugging a specific user's issue is required, a secure, audited "break-glass" procedure, as defined in `19-security-privacy.md`, must be followed by authorized personnel.
 
 ## 5. Monitoring & Alerting Strategy
 

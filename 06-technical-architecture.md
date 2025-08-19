@@ -350,6 +350,13 @@ In a distributed, event-driven system, operations can be retried at multiple lev
 
 *   **Benefit:** This two-check approach provides comprehensive protection. The first check at the API level prevents duplicate synchronous operations. The second check in the asynchronous worker prevents duplicate processing in the case of event redeliveries, guaranteeing at-most-once execution for the entire operation.
 
+#### Idempotency Store Implementation
+
+The idempotency store will be implemented in the ElastiCache for Redis cluster with the following schema:
+*   **Key:** `idem#<Idempotency-Key>` (e.g., `idem#a1b2c3d4-e5f6-7890-1234-567890abcdef`)
+*   **Value:** The serialized JSON response that was originally returned to the client (e.g., the `202 Accepted` response for a sync job).
+*   **TTL (Time-to-Live):** 24 hours. This is a safe upper bound for any reasonable client-side retry window.
+
 ## 3b. Architecture for 1M DAU
 
 To reliably serve 1 million Daily Active Users, the architecture incorporates specific strategies for high availability, performance, and scalability.
@@ -453,7 +460,17 @@ This single-table design efficiently serves the following critical access patter
 
 This structure provides a flexible and scalable foundation for our application's metadata needs.
 
-**Note on "Viral User" Hot Partitions:** While this single-table design is highly efficient for the vast majority of users, it carries a risk for individual "power users" who might become exceptionally active. Because all data for a single user is on the same physical partition, a user with an extremely high volume of syncs could potentially be throttled by DynamoDB, even if the table's overall capacity is not stressed. For the MVP, this is an acceptable risk. For future iterations, a mitigation strategy such as **write sharding** could be employed for these high-volume users. This would involve distributing a single user's data across multiple partitions (e.g., using a sharded PK like `USER#{userId}-1`, `USER#{userId}-2`) to increase their individual throughput.
+**Note on "Viral User" Hot Partitions:** While this single-table design is highly efficient for the vast majority of users, it carries a risk for individual "power users" or influencers who might become exceptionally active. Because all data for a single user is on the same physical partition, a user with an extremely high volume of syncs could be throttled by DynamoDB. To mitigate this proactively, the system **will be built with a write-sharding capability from the start**. This feature will be controlled by a feature flag in AWS AppConfig, allowing it to be enabled for specific high-volume users without a new deployment. This involves distributing a single user's data across multiple partitions (e.g., using a sharded PK like `USER#{userId}-1`, `USER#{userId}-2`) to increase their individual throughput.
+
+#### Degraded Mode: Resilience to Cache Failure
+
+The ElastiCache for Redis cluster is a critical component for performance. However, the system must be resilient to a full cache failure. In such an event, the system will enter a **degraded mode**:
+*   **Mechanism:** If the application cannot connect to the Redis cluster, it will fall back to operating directly against DynamoDB.
+*   **Impact:**
+    *   **Latency:** API and sync latency will increase significantly.
+    *   **Functionality:** Features that rely solely on the cache, such as distributed locking and precise rate-limiting, will be disabled. Sync job race conditions will be possible, but the idempotency checks will prevent data corruption.
+    *   **Alerting:** A critical alert will be triggered to notify the on-call team of the cache failure.
+This strategy ensures that a cache failure results in a slower service, not a complete outage.
 
 ### Level 4: Historical Sync Workflow
 
@@ -523,13 +540,13 @@ Initiates a new synchronization job for a user.
       "sourceConnectionId": "conn_12345_fitbit",
       "destinationConnectionId": "conn_67890_strava",
       "dataType": "steps", // See enum below
-      "mode": "automatic" // "automatic" or "manual"
+      "mode": "manual" // This endpoint is only for user-initiated syncs
     }
     ```
     *   **`dataType` (enum):** `steps`, `weight`, `sleep`, `workout`
     *   **`mode` (enum):**
-        *   `automatic`: A background sync triggered by the system scheduler.
-        *   `manual`: A sync explicitly triggered by the user from the UI. This may be given higher priority in future implementations.
+        *   `manual`: A sync explicitly triggered by the user from the UI.
+    *   **Note on Automatic Syncs:** Automatic background syncs are not triggered via this public API. They are initiated by an internal scheduling mechanism (e.g., an Amazon EventBridge scheduled rule) that places jobs directly onto the event bus.
 
 *   **Success Response (202 Accepted):**
 
@@ -656,7 +673,7 @@ data class ProviderTokens(
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
 | **Authentication Service** | **Firebase Authentication** | **Cost-Effective & Developer-Friendly.** Provides a fully managed authentication backend with a generous free tier, excellent mobile SDKs, and built-in support for social logins, as detailed in `46-user-authentication.md`. |
-| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) across the mobile app and a potential JVM backend, while maintaining native UI performance. We acknowledge the trade-off of using a JVM-based Lambda, which can have higher cold-start times. For the MVP, code reuse is prioritized, but latency-critical functions may be re-evaluated for a different runtime in the future. |
+| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. However, to meet our strict latency SLOs, the KMP/JVM runtime should only be used for **asynchronous `WorkerLambda` functions** where cold starts are less critical. Latency-sensitive functions, such as the `RequestLambda` and `AuthorizerLambda`, **must be written in a faster-starting runtime like TypeScript or Python** to ensure the P99 API latency target can be met. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Primary Database** | **Amazon DynamoDB with Global Tables** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance required to support 1M DAU. The single-table design enables efficient, complex access patterns. We use On-Demand capacity mode, which is the most cost-effective choice for our unpredictable, spiky workload, as it automatically scales to meet traffic demands without the need for manual capacity planning. Global Tables provide the multi-region, active-active replication needed for high availability and low-latency access for our global user base.** |
 | **Serverless Backend** | **AWS (Lambda, EventBridge, SQS, DynamoDB)** | **Massive Scalability & Optimal Cost-Efficiency.** An event-driven, serverless-first architecture is chosen over container-based solutions (like EKS or Fargate) for several key reasons. It provides automatic scaling to handle unpredictable, spiky workloads without manual intervention, a purely pay-per-use cost model that is highly efficient during idle periods, and significantly reduced operational overhead as there are no servers or clusters to manage. This allows the engineering team to focus on application logic rather than infrastructure management, which is critical for meeting the 1M DAU target reliably and cost-effectively. |
@@ -671,16 +688,25 @@ data class ProviderTokens(
 | **Local Development** | **LocalStack** | **High-Fidelity Local Testing.** Allows engineers to run and test the entire AWS serverless backend on their local machine, drastically improving the development and debugging feedback loop. |
 | **Load Testing** | **k6 (by Grafana Labs)** | **Validate Scalability Assumptions.** A modern, scriptable load testing tool to simulate traffic at scale, identify performance bottlenecks, and validate that the system can meet its 1M DAU target. |
 
-## 5. Cost-Effectiveness at Scale (1M DAU)
+## 5. Cost-Effectiveness and Financial Modeling at Scale (1M DAU)
 
-The architecture is explicitly designed to be cost-effective while scaling to 1 million Daily Active Users.
+While the serverless architecture is designed to be cost-effective, operating at the scale of 1 million DAU introduces significant financial risks that must be proactively managed. The "pay-per-use" model can lead to unexpectedly high costs if not carefully modeled and monitored.
 
-1.  **Serverless First:** The core backend is built on AWS Lambda, SQS, and DynamoDB. This is a pay-per-use model. If there are no syncs, we pay virtually nothing. As usage scales to 1M DAU, costs scale linearly with it. This avoids the high fixed costs of provisioning and managing a large fleet of servers.
-2.  **Efficient Data Handling:** The backend processes data ephemerally and does not store raw health data, which dramatically reduces storage costs and security liabilities. Metadata is stored in DynamoDB, which is highly cost-effective for key-value lookups at scale.
-3.  **Kotlin Multiplatform (KMP):** While primarily a development velocity benefit, KMP reduces costs by minimizing the need for separate, specialized engineering teams for each platform. A single team can manage the core logic across iOS, Android, and potentially a JVM backend.
-4.  **Managed AI Services:** Using Amazon SageMaker and Bedrock abstracts away the complexity and cost of managing GPU clusters for model training and inference. We pay for the API calls and endpoint hosting, which is more cost-effective than building and maintaining this infrastructure from scratch.
-5.  **Right-Sized Resources:** Infrastructure as Code (Terraform) allows us to define and manage resource allocation precisely. Lambda memory, DynamoDB capacity, and other resources can be fine-tuned based on real-world usage data from our monitoring systems, preventing over-provisioning.
-6.  **Monitoring Global Data Transfer Costs:** While the multi-region architecture provides significant performance and availability benefits, it introduces costs for cross-region data transfer. Every write to a DynamoDB Global Table incurs a data transfer cost. This will be a key metric to monitor, and we must factor it into our financial projections.
+**A detailed financial model and cost projection is a mandatory prerequisite before beginning implementation.** This model must be based on the peak projections (~17,500 concurrent Lambdas) and account for the following major cost drivers:
+
+1.  **AWS Lambda Concurrency:** This is likely to be the largest cost. While Lambda is pay-per-use, the cost of running tens of thousands of concurrent functions, even for short durations, is substantial. The cost of Provisioned Concurrency for any functions requiring low latency must also be factored in.
+2.  **Cross-Region Data Transfer:** This is a significant and often underestimated cost. The active-active multi-region architecture incurs data transfer costs for every write operation across all replicated services:
+    *   **DynamoDB Global Tables:** Every write, update, or delete is replicated and billed.
+    *   **AWS Secrets Manager:** Replicating secrets incurs costs.
+    *   **ElastiCache Global Datastore:** Cross-region replication traffic is a direct cost.
+3.  **CloudWatch Logs, Metrics, and Traces:** At the projected scale (~90 million jobs/day), the volume of logs, metrics, and traces generated will be massive. The costs for CloudWatch Logs ingest, storage, and analysis (via Insights queries) will be a major operational expense.
+4.  **NAT Gateway Data Processing:** Any outbound traffic from Lambdas in a private VPC to third-party APIs will pass through a NAT Gateway, which incurs a per-gigabyte data processing charge.
+
+**Cost Management Strategy:**
+*   **Mandatory Financial Modeling:** Develop a detailed cost model using the AWS Pricing Calculator and the high-end projections from this document.
+*   **Explore Savings Plans:** For predictable compute usage (like a baseline level of Lambda or potential Fargate), utilize AWS Savings Plans to significantly reduce costs.
+*   **Aggressive Log Management:** Implement strict log-level controls (via AppConfig), short retention periods in CloudWatch, and automated archiving to S3/Glacier to manage logging costs.
+*   **Cost Anomaly Detection:** Configure AWS Cost Anomaly Detection to automatically alert the team to any unexpected spikes in the daily or monthly bill.
 
 ## 6. Security, Privacy, and Compliance
 

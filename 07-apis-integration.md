@@ -75,6 +75,16 @@ interface DataProvider {
 }
 ```
 
+### 2.3. SDK Packaging and Versioning
+
+To ensure that all `DataProvider` implementations use a consistent set of tools and interfaces, the `DataProvider` SDK will be managed and distributed as a formal, internal library.
+
+*   **Packaging:** The SDK, which is part of the KMP shared module, will be packaged as a private Maven package.
+*   **Versioning:** The SDK will follow Semantic Versioning (SemVer). All `WorkerLambda` functions will declare a dependency on a specific version of the SDK.
+*   **Distribution:** The package will be hosted in a private artifact repository (e.g., AWS CodeArtifact or a private GitHub Packages repository). The CI/CD pipeline for the backend services will be configured to pull the specified version of the SDK during the build process.
+
+This approach ensures that updates to the core SDK logic can be rolled out in a controlled and predictable manner, and it prevents individual `DataProvider` implementations from falling out of sync with the core framework.
+
 ## 3. Authentication: A Secure Hybrid Flow
 
 All cloud-based APIs will use the **OAuth 2.0 Authorization Code Flow with PKCE**. The key security principle is that **long-lived tokens never touch the user's device**.

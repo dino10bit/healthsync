@@ -33,7 +33,7 @@ This internal specification is a blueprint for the **engineering team** to imple
 | Threat Scenario | Description | Countermeasure(s) |
 | :--- | :--- | :--- |
 | **Backend Server Compromise** | An attacker gains access to the backend infrastructure. | - **Strict IAM Roles & Least Privilege:** Lambda functions can only access the specific resources they need. <br>- **AWS Secrets Manager:** User OAuth tokens are stored encrypted in a dedicated, secure service. <br>- **VPC & Security Groups:** Backend services are isolated from the public internet where possible. <br>- **Regular Audits & Pen Testing:** Proactively identify and fix vulnerabilities. |
-| **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** Used for any on-device secrets. <br>- **Jailbreak/Root Detection:** The app will detect if it is running on a compromised device. |
+| **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** This is the primary countermeasure for protecting on-device secrets, as it utilizes hardware-backed secure storage. <br>- **Jailbreak/Root Detection (Defense-in-Depth):** The app will make a best effort to detect if it is running on a compromised OS. While this is not a foolproof countermeasure and can be bypassed, it serves as a valuable deterrent and an additional layer of security. |
 | **Man-in-the-Middle (MitM) Attack** | An attacker intercepts traffic between the app and the backend. | - **TLS 1.2+:** All network traffic is encrypted. <br>- **Dynamic Certificate Pinning:** Implemented for calls to our own backend. To mitigate the operational risk of bricking older app versions, we will implement a dynamic pinning strategy. The app will fetch the latest pin-set from a secure, out-of-band endpoint and cache it. This allows us to rotate certificates without forcing an immediate app update. We will also pin to an intermediate certificate in addition to the leaf to provide a backup. A detailed operational runbook for certificate rotation will be created and tested. |
 | **Insecure Data Storage** | Sensitive data is stored insecurely. | - **Backend:** All user tokens are stored encrypted in AWS Secrets Manager. <br>- **On-Device:** The local settings database is encrypted. |
 | **Vulnerable Third-Party Dependency (Supply Chain Attack)** | A library used by the app or backend has a known security vulnerability, or a build tool/dependency is compromised. | - **Automated Dependency Scanning:** The CI/CD pipeline will use Snyk/Dependabot to scan for known CVEs. <br>- **Dependency Pinning:** All dependencies will be pinned to specific, audited versions. <br>- **Reproducible Builds:** Build environments will be scripted and version-controlled to detect unauthorized changes. |
@@ -107,7 +107,21 @@ To comply with privacy regulations like GDPR and to protect user anonymity, our 
 
 *   **No Persistent User Identifiers:** We will **not** log the permanent `userId` in any backend service. Logging unique identifiers that can be tied to a specific person is a violation of our privacy promise and can be a legal liability.
 *   **Use of Correlation IDs:** For debugging and tracing purposes, each request will be assigned a temporary, randomly generated `correlationId`. This ID can be used to trace a single request's journey through our backend systems. This ID will have no link to the user's permanent ID and should be considered ephemeral.
-*   **Strict PII Scrubbing:** All logging libraries and services will be configured with strict scrubbing rules to remove any potential PII (names, emails, locations, etc.) that might accidentally be captured in error messages or stack traces.
+*   **Strict PII Scrubbing:** All logging libraries and services will be configured with strict scrubbing rules to remove any potential PII (names,emails, locations, etc.) that might accidentally be captured in error messages or stack traces.
+
+#### 6.1.1. "Break-Glass" Procedure for User-Specific Debugging
+
+While `userId` is never logged by default, a critical operational gap exists for debugging specific user-reported issues. To address this, a secure, audited "break-glass" procedure will be implemented for authorized support engineers.
+
+*   **Mechanism:** A dedicated, internal-only "Support Tool" (e.g., a Lambda function fronted by a simple web UI) will be created. This tool will require strong authentication (e.g., SSO with MFA) and will be governed by a strict IAM policy.
+*   **Workflow:**
+    1.  An authorized engineer, working on a specific support ticket, authenticates to the tool.
+    2.  The engineer provides a valid `ticketId` and the user's `userId`.
+    3.  The tool performs a temporary lookup to find the recent `correlationId`s associated with that `userId`.
+    4.  This mapping is made available for a short, time-boxed period (e.g., 60 minutes) and is **not** stored in the main logging system.
+*   **Auditing:** Every use of this tool **must** be logged to a separate, high-security audit trail (e.g., a dedicated CloudTrail S3 bucket with restricted delete access). These logs will record who performed the lookup, for which user, and for what reason (the `ticketId`). Automated alerts will be configured to notify the security team of every use of this tool.
+
+This procedure allows us to resolve user issues effectively while maintaining our privacy-first principles by making the act of associating a `correlationId` with a `userId` an explicit, temporary, and fully audited security event.
 
 ## 7. Pre-Launch Security Audit Checklist
 
@@ -129,3 +143,34 @@ To comply with privacy regulations like GDPR and to protect user anonymity, our 
 ### Code Quality & Build Settings
 *   [ ] The app is obfuscated in production builds.
 *   [ ] All third-party dependencies (mobile and backend) have been scanned for known vulnerabilities.
+
+## 8. Data Portability and Deletion
+
+To comply with privacy regulations such as GDPR, the system must provide users with the ability to export their data and to permanently delete their account and all associated information. These flows are critical for user trust and legal compliance.
+
+### 8.1. User Data Export
+
+Users will be able to request an export of all their configuration data stored by SyncWell.
+
+*   **Workflow:**
+    1.  A user initiates a data export from the app settings.
+    2.  The app sends a request to a dedicated backend API endpoint.
+    3.  A `DataExportLambda` is triggered, which queries the `SyncWellMetadata` table in DynamoDB to retrieve all items associated with that `USER#{userId}`.
+    4.  The function formats this data into a human-readable JSON file.
+    5.  The JSON file is saved to a secure, private S3 bucket with a randomly generated, time-limited path.
+    6.  The user is sent a push notification (see `29-notifications-alerts.md`) with a secure, pre-signed S3 URL to download their data export. This URL will have a short expiry (e.g., 24 hours).
+
+### 8.2. Account Deletion ("Right to be Forgotten")
+
+Users will have a clear and irreversible option to delete their account. This process must be comprehensive, ensuring all user-related metadata and credentials are purged from our systems.
+
+*   **Workflow:**
+    1.  A user confirms their intent to delete their account from the app settings. This is a high-friction action requiring re-authentication.
+    2.  The app sends a request to a dedicated `DELETE /v1/user/me` endpoint.
+    3.  An `AccountDeletionLambda` is triggered with the user's validated `userId`.
+    4.  The Lambda function executes a "scorched earth" policy in the following order:
+        a. **Revoke and Delete Credentials:** It iterates through all `CONN#{connectionId}` items for the user. For each, it retrieves the `CredentialArn`, fetches the tokens from AWS Secrets Manager, calls the third-party provider's token revocation endpoint, and then permanently deletes the secret from Secrets Manager.
+        b. **Delete DynamoDB Data:** It deletes all items from the `SyncWellMetadata` table with the partition key `USER#{userId}`. This includes the user profile, all connections, and all sync configurations.
+    5.  Once the process is complete, the user is logged out of the mobile app.
+
+*   **Data in Backups:** User data will remain in DynamoDB backups (e.g., PITR) for their retention period (e.g., 35 days). This is an accepted practice under GDPR, provided the data is not used for any purpose and is overwritten in due course. This will be clearly stated in our public privacy policy.

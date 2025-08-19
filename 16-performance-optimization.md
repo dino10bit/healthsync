@@ -60,11 +60,11 @@ A distributed, in-memory cache using **Amazon ElastiCache for Redis** is a corne
 To ensure the system can handle the load from 1M DAU, we have projected the required capacity, as detailed in `06-technical-architecture.md`.
 
 *   **Total Daily Jobs:** ~90 million jobs per day (real-time and historical).
-*   **Peak Throughput:** ~3,125 requests per second (RPS) at peak.
-*   **Required Lambda Concurrency:** ~5,200 concurrent executions.
+*   **Peak Throughput:** The system is designed to handle a peak of **3,500 requests per second (RPS)**, as defined in `06-technical-architecture.md`.
+*   **Required Lambda Concurrency:** Based on the governing NFR of 3,500 RPS and an average job duration of 5 seconds, the projected peak concurrency is **~17,500 concurrent executions**.
 
 **Actions:**
-1.  The default AWS account limit for Lambda concurrency (1,000) **must be increased** to support the projected load.
+1.  The default AWS account limit for Lambda concurrency (1,000) **must be significantly increased** to support this projected load. This level of concurrency has major cost and architectural implications that must be carefully managed.
 2.  DynamoDB will be configured in **On-Demand Capacity Mode** to automatically scale read/write units, which is more cost-effective for our spiky workload.
 3.  API Gateway and SQS scale automatically and require no specific pre-provisioning for this load.
 
