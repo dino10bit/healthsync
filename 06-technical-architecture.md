@@ -654,6 +654,7 @@ Application-level write sharding should only be considered if the "hot table" st
 
 *   **Concept:** This feature involves distributing a single user's data across multiple partitions within the *same* table by appending a shard number to the partition key (e.g., `USER#{userId}-1`, `USER#{userId}-2`).
 *   **Read-Side Complexity:** This approach introduces significant implementation complexity. Fetching all data for a sharded user requires the application to query all N shards and merge the results in the application logic, which increases latency and cost.
+*   **Write-Heavy User Scenario:** The "hot table" strategy is primarily designed for read-heavy users. A user whose write traffic is high enough to threaten the partition's throughput is a different and more complex scenario. While the "hot table" still provides some isolation, true write-sharding would be the ultimate solution. This would be a major architectural project and is considered out of scope for the MVP, but it is a known "unknown" that must be monitored.
 
 Given its simplicity and effectiveness, the "hot table" strategy will be the first and preferred solution to be implemented and assessed.
 
@@ -714,15 +715,15 @@ Retrieves a list of all third-party applications the user has connected to their
     {
       "connections": [
         {
-          "connectionId": "conn_12345_fitbit",
-          "provider": "fitbit",
-          "displayName": "Fitbit",
+          "connectionId": "conn_12345_providerA",
+          "provider": "providerA",
+          "displayName": "Provider A",
           "status": "active"
         },
         {
-          "connectionId": "conn_67890_strava",
-          "provider": "strava",
-          "displayName": "Strava",
+          "connectionId": "conn_67890_providerB",
+          "provider": "providerB",
+          "displayName": "Provider B",
           "status": "active"
         }
       ]
@@ -739,9 +740,9 @@ Initiates a new synchronization job for a user.
 
     ```json
     {
-      "sourceConnectionId": "conn_12345_fitbit",
-      "destinationConnectionId": "conn_67890_strava",
-      "dataType": "steps",
+      "sourceConnectionId": "conn_12345_providerA",
+      "destinationConnectionId": "conn_67890_providerB",
+      "dataType": "workout",
       "mode": "manual"
     }
     ```
@@ -961,8 +962,8 @@ This strategy ensures that the app remains responsive and that user actions are 
 
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
-| **Authentication Service** | **Firebase Authentication** | **Rationale vs. Amazon Cognito:** While Amazon Cognito is a native AWS service, Firebase Authentication has been chosen for the MVP due to its superior developer experience, higher-quality client-side SDKs (especially for social logins on iOS and Android), and more generous free tier. This choice prioritizes rapid development and a smooth user onboarding experience. The cross-cloud dependency is an acceptable trade-off for the MVP, but a migration to Cognito could be considered in the future if the benefits of a single-cloud solution outweigh the advantages of Firebase's SDKs. |
-| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. However, to meet our strict latency SLOs, the KMP/JVM runtime should only be used for **asynchronous `WorkerLambda` functions** where cold starts are less critical. The latency-sensitive API entrypoint is handled by API Gateway's direct integrations, and the `AuthorizerLambda` **must be written in a faster-starting runtime like TypeScript or Python** to ensure the P99 API latency target can be met. |
+| **Authentication Service** | **Firebase Authentication** | **Rationale vs. Amazon Cognito:** While Amazon Cognito is a native AWS service, Firebase Authentication has been chosen for the MVP due to its superior developer experience, higher-quality client-side SDKs (especially for social logins on iOS and Android), and more generous free tier. This choice prioritizes rapid development and a smooth user onboarding experience. The cross-cloud dependency is an acceptable trade-off for the MVP, but a migration to Cognito could be considered in the future if the benefits of a single-cloud solution outweigh the advantages of Firebase's SDKs. **Dependency Risk:** This introduces a hard dependency on Google Cloud. An outage in Firebase Authentication would prevent all users from logging in, even if the AWS backend is healthy. This risk is formally accepted by the product owner. |
+| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. However, to meet our strict latency SLOs, the KMP/JVM runtime should only be used for **asynchronous `WorkerLambda` functions** where cold starts are less critical. The latency-sensitive API entrypoint is handled by API Gateway's direct integrations, and the `AuthorizerLambda` **must be written in a faster-starting runtime like TypeScript or Python** to ensure the P99 API latency target can be met. **Alternative Considered:** A "backend-for-frontend" (BFF) approach, where the backend is written in a separate, more performant runtime (like Go or Rust) and only shares the canonical data models with the client, was considered. The current KMP-on-Lambda approach was chosen for the MVP to maximize code reuse and development speed. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Primary Database** | **Amazon DynamoDB with Global Tables** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance required to support 1M DAU. The single-table design enables efficient, complex access patterns. We use On-Demand capacity mode, which is the most cost-effective choice for our unpredictable, spiky workload, as it automatically scales to meet traffic demands without the need for manual capacity planning. Global Tables provide the multi-region, active-active replication needed for high availability and low-latency access for our global user base.** |
 | **Backend Compute** | **AWS Lambda** | **Unified Compute Model for MVP.** All backend compute for the initial launch—including the API layer and all asynchronous workers—will run on **AWS Lambda**. This unified serverless model is chosen for its scalability, operational simplicity, and ability to handle the 3,000 RPS target. As detailed in the Technology Radar (see Appendix A), AWS Fargate is being assessed as a potential future optimization for cost-performance at extreme scale (Phase 2), but a pure Lambda approach is the definitive strategy for the MVP. |
@@ -1153,6 +1154,7 @@ This section defines the key non-functional requirements for the SyncWell platfo
 | **Availability** | Core Service Uptime | Monthly Uptime % | > 99.9% | Measured for core API endpoints and sync processing. Excludes scheduled maintenance. |
 | | Disaster Recovery RTO | Recovery Time Objective | < 4 hours | Maximum time to restore service in the DR region after a primary region failure is declared. |
 | | Disaster Recovery RPO | Recovery Point Objective | < 15 minutes | Maximum acceptable data loss in a disaster recovery scenario. Governed by PITR backup frequency. |
+| | Cache Failover RTO | Recovery Time Objective | < 5 minutes | Time for the ElastiCache cluster to automatically fail over to a Multi-AZ replica within the same region. |
 | **Performance** | Manual Sync Latency | P95 Latency | < 45 seconds | This end-to-end latency is highly dependent on third-party API performance. Internal processing time will be tracked separately as a more precise SLO. |
 | | API Gateway Latency | P99 Latency | < 500ms | For all synchronous API endpoints, measured at the gateway. |
 | | Global User Read Latency | P95 Latency | < 200ms | For users accessing data from a local regional replica of the DynamoDB Global Table. |
@@ -1216,6 +1218,13 @@ To ensure high development velocity and code quality, we will establish a stream
     *   **Process:** When a new version is deployed, a small percentage of production traffic (e.g., 5%) will be routed to the new version (the "canary"), while the majority of traffic continues to go to the stable, existing version.
     *   **Monitoring:** The canary is closely monitored for an increase in error rates, latency, or other key metrics.
     *   **Rollout/Rollback:** If the canary version performs as expected for a predefined period (e.g., 1 hour), traffic is gradually shifted to it until it serves 100% of requests. If any issues are detected, traffic is immediately routed back to the stable version, and the canary is rolled back. This strategy significantly reduces the blast radius of a potentially bad deployment.
+
+## 10. Known Limitations & Architectural Trade-offs
+
+This section documents known limitations of the architecture and explicit trade-offs that have been made.
+
+*   **Account Merging:** The current data model, which partitions all data by `USER#{userId}`, does not support account merging. If a user accidentally creates two separate accounts (e.g., one with Google Sign-In, one with Apple Sign-In), there is no automated process to merge them. This would require a complex, manual engineering process and is considered a non-supported feature for the MVP.
+*   **Cross-Cloud Dependency:** The use of Firebase Authentication creates a hard dependency on Google Cloud for a critical function (user login). This was a deliberate trade-off to leverage Firebase's superior client-side SDKs and developer experience for the MVP.
 
 ## Appendix A: Technology Radar
 
