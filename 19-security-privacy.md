@@ -32,7 +32,7 @@ This internal specification is a blueprint for the **engineering team** to imple
 
 | Threat Scenario | Description | Countermeasure(s) |
 | :--- | :--- | :--- |
-| **Backend Server Compromise** | An attacker gains access to the backend infrastructure. | - **Strict IAM Roles & Least Privilege:** All compute services (Lambda, Fargate) have narrowly scoped roles that grant access only to the specific resources they need. <br>- **AWS Secrets Manager:** User OAuth tokens are stored encrypted in a dedicated, secure service. <br>- **VPC & Security Groups:** Backend services are isolated from the public internet where possible. <br>- **Regular Audits & Pen Testing:** Proactively identify and fix vulnerabilities. |
+| **Backend Server Compromise** | An attacker gains access to the backend infrastructure. | - **Strict IAM Roles & Least Privilege:** All compute services (Lambda functions) have narrowly scoped roles that grant access only to the specific resources they need. <br>- **AWS Secrets Manager:** User OAuth tokens are stored encrypted in a dedicated, secure service. <br>- **VPC & Security Groups:** Backend services are isolated from the public internet where possible. <br>- **Regular Audits & Pen Testing:** Proactively identify and fix vulnerabilities. |
 | **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** This is the primary countermeasure for protecting on-device secrets, as it utilizes hardware-backed secure storage. <br>- **Jailbreak/Root Detection (Defense-in-Depth):** The app will make a best effort to detect if it is running on a compromised OS. While this is not a foolproof countermeasure and can be bypassed, it serves as a valuable deterrent and an additional layer of security. |
 | **Man-in-the-Middle (MitM) Attack** | An attacker intercepts traffic between the app and the backend. | - **TLS 1.2+:** All network traffic is encrypted. This is the primary and sufficient countermeasure for the MVP. <br>- **(Future) Dynamic Certificate Pinning:** While providing an additional layer of security, dynamic certificate pinning adds significant operational complexity and risk (e.g., "bricking" older app versions). This feature is **deferred for the MVP** and will be re-assessed for a future release when the product's risk profile justifies the added complexity. |
 | **Insecure Data Storage** | Sensitive data is stored insecurely. | - **Backend:** All user tokens are stored encrypted in AWS Secrets Manager. <br>- **On-Device:** The local settings database is encrypted. |
@@ -60,7 +60,7 @@ graph TD
     end
     subgraph AWS Backend
         C[API Gateway]
-        D[Fargate Workers]
+        D[Worker Lambdas]
         E[AWS Secrets Manager]
         F[DynamoDB]
     end
@@ -85,7 +85,7 @@ The lifecycle of user credentials is managed by the backend to maximize security
 
 *   **Creation:** Tokens are acquired via the secure hybrid OAuth 2.0 flow detailed in `07-apis-integration.md`.
 *   **Storage:** Tokens are stored encrypted in **AWS Secrets Manager**.
-*   **Usage:** Worker tasks (running on Fargate) are granted temporary, role-based access to retrieve the tokens they need for a specific job.
+*   **Usage:** Worker Lambda functions are granted temporary, role-based access to retrieve the tokens they need for a specific job.
 *   **Deletion:** When a user de-authorizes an app via the mobile client:
     1.  The mobile app sends a "revoke" request to the SyncWell backend.
     2.  The backend retrieves the token from Secrets Manager.
@@ -97,8 +97,8 @@ The lifecycle of user credentials is managed by the backend to maximize security
 The backend is a core component and must be secured accordingly.
 
 *   **Authentication:** Communication between the mobile app and our backend API Gateway will be authenticated using short-lived JSON Web Tokens (JWTs) or a similar standard.
-*   **Authorization:** All backend compute services (API Gateway, Lambda functions, Fargate services) will use strict IAM roles, adhering to the principle of least privilege. A worker task for Fitbit should not have access to Garmin tokens.
-*   **Network Security:** Services will be placed in a Virtual Private Cloud (VPC). Access to databases and secret stores will be restricted to services within the VPC, not exposed to the public internet.
+*   **Authorization:** All backend compute services (API Gateway and Lambda functions) will use strict IAM roles, adhering to the principle of least privilege. A worker for Fitbit should not have access to Garmin tokens.
+*   **Network Security:** Services are isolated in a Virtual Private Cloud (VPC). To ensure traffic between our backend Lambda functions and other AWS services (like DynamoDB, SQS, and Secrets Manager) does not traverse the public internet, we use **VPC Endpoints**. This creates a private, secure connection to these services from within our VPC, reducing the attack surface and preventing potential data exposure. Access to databases and secret stores is restricted to services within the VPC via security groups and network ACLs.
 *   **Logging & Monitoring:** All API calls and backend activity will be logged and monitored for anomalous behavior using services like AWS CloudTrail and CloudWatch. All logs will be scrubbed of sensitive data before being persisted.
 
 ### 6.1. Secure Logging Practices
@@ -177,5 +177,5 @@ Users will have a clear and irreversible option to delete their account. This pr
 
 *   **Data in Backups:** User data will remain in DynamoDB backups (e.g., PITR) for their retention period (e.g., 35 days). This is an accepted practice under GDPR, provided the data is not used for any purpose and is overwritten in due course. This will be clearly stated in our public privacy policy.
 *   **Access Control and Least Privilege:** Access to all backend resources is governed by the principle of least privilege. We use AWS Identity and Access Management (IAM) to enforce this.
-    *   **Granular IAM Roles:** Each backend compute service (Lambda function, Fargate task definition) will have its own unique IAM role with a narrowly scoped policy. For example, a worker task for a specific third-party service is only granted permission to access the specific secrets and DynamoDB records relevant to its task. It cannot access resources related to other services.
-    *   **Resource-Based Policies:** Where applicable, resource-based policies are used as an additional layer of defense. For example, the AWS Secrets Manager secret containing third-party tokens will have a resource policy that only allows access from the specific IAM roles of the worker tasks that need it.
+    *   **Granular IAM Roles:** Each backend compute service (Lambda function) will have its own unique IAM role with a narrowly scoped policy. For example, a worker for a specific third-party service is only granted permission to access the specific secrets and DynamoDB records relevant to its task. It cannot access resources related to other services.
+    *   **Resource-Based Policies:** Where applicable, resource-based policies are used as an additional layer of defense. For example, the AWS Secrets Manager secret containing third-party tokens will have a resource policy that only allows access from the specific IAM roles of the worker Lambdas that need it.

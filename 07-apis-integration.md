@@ -131,7 +131,7 @@ All cloud-based APIs will use the **OAuth 2.0 Authorization Code Flow with PKCE*
 3.  **User Consent (Mobile):** The user logs in and grants consent on the provider's web page.
 4.  **Redirect with Auth Code (Mobile):** The provider redirects to SyncWell's redirect URI (e.g., `syncwell://oauth-callback`) with a one-time `authorization_code`.
 5.  **Secure Hand-off to Backend (Mobile -> Backend):** The mobile app sends the `authorization_code` and `code_verifier` to a secure endpoint on the SyncWell backend.
-6.  **Token Exchange (Backend):** The backend worker task exchanges the `authorization_code` and `code_verifier` for an `access_token` and `refresh_token` from the provider.
+6.  **Token Exchange (Backend):** A dedicated backend Lambda function, invoked via API Gateway, exchanges the `authorization_code` and `code_verifier` for an `access_token` and `refresh_token` from the provider.
 7.  **Secure Storage (Backend):** The backend stores the encrypted `access_token` and `refresh_token` in **AWS Secrets Manager**, associated with the user's ID. The tokens are now ready for use by the sync worker tasks.
 
 ## 4. Token Management & Granular Error Handling
