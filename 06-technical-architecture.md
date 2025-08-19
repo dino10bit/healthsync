@@ -70,6 +70,7 @@ graph TD
         APIGateway[API Gateway]
         AuthorizerLambda[Lambda Authorizer]
         EventBus[EventBridge Event Bus]
+        SQSQueue[SQS Queue for Buffering]
         ElastiCache[ElastiCache for Caching & Rate Limiting]
         RequestLambda[Request Lambda]
         WorkerLambda[Worker Lambdas]
@@ -105,7 +106,8 @@ graph TD
     AuthorizerLambda -- "Caches and validates against Google's public keys"--> FirebaseAuth
     APIGateway -- Invokes --> RequestLambda
     RequestLambda -- "Publishes 'SyncJobRequested' event" --> EventBus
-    EventBus -- "Rule: 'SyncJobRequested'" --> WorkerLambda
+    EventBus -- "Rule: 'SyncJobRequested' sends to" --> SQSQueue
+    SQSQueue -- "Triggers" --> WorkerLambda
     EventBus -- "Rule: All Events" --> AnalyticsService
     WorkerLambda -- Reads/writes user config --> DynamoDB
     WorkerLambda -- Gets credentials --> SecretsManager
@@ -133,8 +135,8 @@ graph TD
     *   **Responsibilities:** Manages user credentials, issues short-lived JWTs to the mobile client after a successful authentication event, and provides public keys for backend token verification.
 
 3.  **Scalable Serverless Backend (AWS)**
-    *   **Description:** A decoupled, event-driven serverless backend on AWS that orchestrates all syncs. Instead of direct service-to-service communication, components publish semantic events (e.g., `SyncJobRequested`) to a central **EventBridge Event Bus**. Other services can then subscribe to these events without the producer needing to know about the consumers. This highly extensible model is secured at the edge by a **Lambda Authorizer** that validates the JWT provided by the client. The backend does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
-    *   **Technology:** AWS Lambda, API Gateway with Lambda Authorizer, **Amazon EventBridge**, DynamoDB Global Tables.
+    *   **Description:** A decoupled, event-driven serverless backend on AWS that orchestrates all syncs. Instead of direct service-to-service communication, components publish semantic events (e.g., `SyncJobRequested`) to a central **EventBridge Event Bus**. For high-volume asynchronous jobs, EventBridge rules forward events to an **Amazon SQS queue**, which acts as a durable buffer. This queue decouples the `RequestLambda` from the `WorkerLambda`, absorbing traffic spikes and improving system resilience by retaining jobs for processing even if workers fail temporarily. This highly extensible model is secured at the edge by a **Lambda Authorizer** that validates the JWT provided by the client. The backend does not **persist** any raw user health data; data is only processed ephemerally in memory during active sync jobs.
+    *   **Technology:** AWS Lambda, API Gateway with Lambda Authorizer, **Amazon EventBridge**, **Amazon SQS**, DynamoDB Global Tables.
     *   **Responsibilities:** Publishes and subscribes to events, orchestrates sync jobs, executes cloud-to-cloud syncs, securely stores third-party integration credentials, and stores user metadata. The `sub` (user ID) from the validated JWT is used to identify the user for all backend operations.
 
 4.  **Distributed Cache (Amazon ElastiCache for Redis)**
@@ -199,18 +201,19 @@ To ensure reliability and accommodate platform constraints, SyncWell uses a hybr
 *   **Flow:**
     1.  The Mobile App sends a request to API Gateway to start a sync.
     2.  The `RequestLambda` validates the request and publishes a semantic `SyncJobRequested` event to the **EventBridge Event Bus**.
-    3.  An EventBridge rule filters for `SyncJobRequested` events and invokes the `WorkerLambda`.
-    4.  The `WorkerLambda` handles the sync logic: fetching from the source, transforming, and writing to the destination.
+    3.  An EventBridge rule filters for `SyncJobRequested` events and sends them to an **Amazon SQS queue**. This queue acts as a buffer, protecting the system from load spikes and ensuring jobs are not lost.
+    4.  The SQS queue triggers the `WorkerLambda`, which processes the job. The worker handles the sync logic: fetching from the source, transforming, and writing to the destination.
     5.  Upon completion, the `WorkerLambda` can publish a `SyncJobSucceeded` or `SyncJobFailed` event back to the bus for other services (e.g., notifications, analytics) to consume.
-    6.  **Advantage:** This is a highly reliable and extensible model. The `RequestLambda` does not need to know which service(s) will handle the sync, allowing for greater flexibility and easier addition of new features like auditing or logging.
+    6.  **Advantage:** This is a highly reliable and extensible model. The use of an SQS queue adds a layer of resilience, and the `RequestLambda` does not need to know which service(s) will handle the sync, allowing for greater flexibility.
 
 ```mermaid
 graph TD
     A[Mobile App] -- 1. Initiate --> B[API Gateway]
     B -- 2. Publishes event --> C[EventBridge]
-    C -- 3. Event triggers --> D[Worker Lambda]
-    D -- 4. Fetch/Write data --> E[Third-Party APIs]
-    D -- 5. Publishes result event --> C
+    C -- 3. Forwards to --> SQS[SQS Queue]
+    SQS -- 4. Triggers --> D[Worker Lambda]
+    D -- 5. Fetch/Write data --> E[Third-Party APIs]
+    D -- 6. Publishes result event --> C
 ```
 
 ### Model 2: Device-to-Cloud Sync
@@ -497,7 +500,8 @@ data class CanonicalSleepSession(
 | **Authentication Service** | **Firebase Authentication** | **Cost-Effective & Developer-Friendly.** Provides a fully managed authentication backend with a generous free tier, excellent mobile SDKs, and built-in support for social logins, as detailed in `46-user-authentication.md`. |
 | **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) across the mobile app and a potential JVM backend, while maintaining native UI performance. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
-| **Serverless Backend** | **AWS (Lambda, SQS, DynamoDB)** | **Massive Scalability & Reliability.** Event-driven architecture to meet our 1M DAU target with pay-per-use cost efficiency. |
+| **Primary Database** | **Amazon DynamoDB with Global Tables** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance required to support 1M DAU. The single-table design enables efficient, complex access patterns. We use On-Demand capacity mode, which is the most cost-effective choice for our unpredictable, spiky workload, as it automatically scales to meet traffic demands without the need for manual capacity planning. Global Tables provide the multi-region, active-active replication needed for high availability and low-latency access for our global user base.** |
+| **Serverless Backend** | **AWS (Lambda, EventBridge, SQS, DynamoDB)** | **Massive Scalability & Optimal Cost-Efficiency.** An event-driven, serverless-first architecture is chosen over container-based solutions (like EKS or Fargate) for several key reasons. It provides automatic scaling to handle unpredictable, spiky workloads without manual intervention, a purely pay-per-use cost model that is highly efficient during idle periods, and significantly reduced operational overhead as there are no servers or clusters to manage. This allows the engineering team to focus on application logic rather than infrastructure management, which is critical for meeting the 1M DAU target reliably and cost-effectively. |
 | **Schema Governance** | **AWS Glue Schema Registry** | **Data Integrity & Evolution.** Provides a managed, centralized registry for our canonical data schemas. Enforces backward-compatibility checks in the CI/CD pipeline, preventing breaking changes and ensuring system stability as new data sources are added. |
 | **Distributed Cache** | **Amazon ElastiCache for Redis** | **Performance & Scalability.** Provides a high-throughput, low-latency in-memory cache for reducing database load and implementing distributed rate limiting. |
 | **AI & Machine Learning (Future)** | **Amazon SageMaker, Amazon Bedrock** | **Rationale for Future Use:** When we implement AI features, these managed services will allow us to scale without managing underlying infrastructure, reducing operational overhead and allowing focus on feature development. |

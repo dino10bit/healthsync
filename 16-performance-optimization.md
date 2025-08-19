@@ -93,11 +93,13 @@ Syncing years of historical data (User Story **US-10**) is a performance and rel
 
 ## 5. Scalability
 
-The SyncWell architecture is designed from the ground up for massive, automatic scalability.
+The SyncWell architecture is designed from the ground up for massive, automatic scalability to support 1M+ DAU. This is achieved through a serverless-first approach and a focus on decoupled, elastic components.
 
-*   **Horizontally Scalable Services:** The core of our backend—API Gateway, SQS, and Lambda—are all managed, serverless services that scale horizontally automatically. As the number of incoming requests increases, AWS automatically provisions more capacity to handle the load.
-*   **Decoupled Architecture:** The use of SQS queues decouples the incoming request flow from the actual processing. This allows the system to absorb huge spikes in traffic without failing. If 100,000 users all trigger a sync at the same time, the requests are safely queued, and the worker fleet will scale up to process them.
-*   **Elastic Database:** DynamoDB is an elastic NoSQL database that scales to handle virtually any amount of read/write throughput. Using **On-Demand Capacity Mode** aligns costs directly with usage and removes the need for manual capacity planning.
+*   **Serverless Compute for Automatic Scaling:** The core of our backend is built on **AWS Lambda**. We chose this serverless compute service over container-based solutions (like AWS Fargate or EKS) because it automatically handles the scaling of our worker fleet from zero to thousands of concurrent executions in response to demand. This eliminates the need for manual capacity planning and the operational overhead of managing a container cluster. For our event-driven and often spiky workload, this provides the best combination of performance and cost-effectiveness.
+
+*   **Resilient Decoupling with SQS:** The use of **Amazon SQS queues** as a buffer between the `RequestLambda` (via EventBridge) and the `WorkerLambdas` is a critical component of our scalability and reliability strategy. The queue acts as a shock absorber, smoothing out unpredictable traffic spikes. If 100,000 users all trigger a sync simultaneously, the jobs are safely persisted in the queue. The worker fleet can then scale up to process this backlog at a sustainable pace without being overwhelmed, ensuring no jobs are lost and the user experience remains stable.
+
+*   **Elastic Database with DynamoDB On-Demand:** Our primary database is **Amazon DynamoDB**, chosen for its ability to deliver consistent, single-digit millisecond performance at any scale. We specifically use **On-Demand Capacity Mode**. This configuration is ideal for our unpredictable traffic patterns, as it automatically provisions and scales read/write capacity to meet the exact needs of our application. This prevents API throttling during peak traffic while remaining highly cost-efficient during quieter periods, as we only pay for the resources we consume.
 
 ## 6. Visual Diagrams
 *   **[Diagram] Caching Architecture:** A diagram showing how Lambda workers interact with ElastiCache for config caching, distributed locking, and rate limiting before accessing DynamoDB or third-party APIs.
