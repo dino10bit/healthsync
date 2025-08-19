@@ -48,12 +48,15 @@ The notification architecture is designed to be robust, scalable, and decoupled 
 
 This decoupled architecture ensures that the core AWS backend does not need to have direct credentials or knowledge of FCM, improving security and separation of concerns.
 
+**Architectural Rationale & Trade-offs:**
+This AWS -> Firebase cross-cloud architecture was chosen deliberately to leverage the strengths of each platform. Firebase Cloud Messaging (FCM) provides superior, best-in-class SDKs for client-side integration on iOS and Android, which simplifies development and improves reliability. While a simpler alternative would be to have an AWS Lambda function call the FCM API directly (keeping the entire backend in AWS), this would require managing FCM credentials within AWS and tightly coupling our core backend to the notification delivery mechanism. The chosen decoupled approach is preferred for its security posture and modularity, even though it introduces the complexity of a cross-cloud integration.
+
 ## 4. Detailed Notification Catalog
 
 | ID | Name | Type | Trigger | Default | Content (Title / Body) | Deep Link | User Control Setting |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **N-01**| Sync Error | Push | A sync job fails all its retry attempts. This event is signaled by a message arriving in the SQS Dead-Letter Queue (DLQ), which triggers an alert and this notification. | On | **Sync Error** / Could not sync {{dataType}} from {{source}}. Please tap to fix. | The specific sync configuration screen that has the error. | Sync Alerts |
-| **N-02**| Trial Ending | Push | Scheduled locally to fire 24 hours before trial ends. | On | **Trial Ending Soon** / Your SyncWell free trial ends tomorrow. Don't lose your syncs! | The Paywall screen. | App Reminders |
+| **N-01**| Sync Error | Push | The `DLQAnalyzer` service (see `17-error-handling.md`) determines that a sync job has failed persistently and requires user action (e.g., re-authentication). The analyzer then publishes an event to trigger this notification. This ensures notifications are not sent for transient errors that the system can automatically recover from. | On | **Sync Error** / Could not sync {{dataType}} from {{source}}. Please tap to fix. | The specific sync configuration screen that has the error. | Sync Alerts |
+| **N-02**| Trial Ending | Push | **Primary Trigger:** Scheduled locally on the client to fire 24 hours before the trial ends. <br> **Backend Fallback:** To mitigate the risk of the user uninstalling/reinstalling the app, a backend-driven daily job will run to find any users whose trials are expiring within 24 hours and who have not yet seen the trial ending notification. For these users, a fallback push notification will be sent from the backend. | On | **Trial Ending Soon** / Your SyncWell free trial ends tomorrow. Don't lose your syncs! | The Paywall screen. | App Reminders |
 | **N-03**| New Feature | Push | Manually triggered by developer via backend. | On | **New Integration!** / SyncWell now supports {{newPlatform}}! Tap to connect. | The "Connected Apps" screen. | News & Updates |
 | **N-04**| Sync Success| Push | A background sync completes successfully. | **Off**| **Sync Complete** / Your {{dataType}} data was successfully synced. | The app's main dashboard. | Sync Alerts |
 | **A-01**| Needs Re-auth| In-App Banner | App launch detects an invalid refresh token for a connected app. | N/A | "Your connection to {{appName}} has expired. Tap here to sign in again." | The "Connected Apps" screen. | N/A |
@@ -87,11 +90,13 @@ The "Notification Settings" screen within the app will provide users with granul
 | Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
 | :--- | :--- | :--- | :--- | :--- |
 | **R-79** | Users find the notifications annoying ("notification fatigue") and disable them globally. | Medium | High | The granular settings are the key mitigation. We will also be extremely conservative with "News & Updates" messages, sending them no more than once a month. "Sync Success" is off by default because it provides low value for high noise. |
-| **R-80** | A bug causes notifications to be sent repeatedly or at the wrong time. | Low | High | The server-side functions will have rate-limiting logic to prevent sending more than one notification of the same type to a user within a given window (e.g., 1 hour). |
+| **R-80** | A bug causes notifications to be sent repeatedly or at the wrong time. | Low | High | The `Notification Dispatcher` function will implement rate-limiting using the main **ElastiCache for Redis** cluster. Before sending a notification, it will check a key like `notif-rate-limit##{userId}##{notificationType}`. If a notification of the same type has been sent recently (e.g., within the last hour), the new notification will be suppressed. This prevents notification storms. |
 | **R-81** | Deep links from notifications are broken or lead to the wrong screen. | Medium | Medium | A centralized navigation and deep linking service must be implemented. A test plan must include manually tapping every type of notification to verify its destination. |
 
 ## 7. Optional Visuals / Diagram Placeholders
-*   **[Diagram] Notification Data Flow:** A sequence diagram showing the flow for both a client-scheduled notification (Trial Ending) and a server-triggered notification (Sync Error).
-*   **[Mockup] Notification Settings Screen:** A high-fidelity mockup of the settings screen described in Section 5.
-*   **[Mockup] Notification Banner Styles:** Mockups of the different in-app banners (e.g., Offline, Needs Re-auth).
-*   **[Table] Notification Catalog:** A comprehensive table of all notifications as described in Section 4.
+*   **Notification Data Flow:**
+    *   *A sequence diagram showing the flow for both a client-scheduled notification (Trial Ending) and a server-triggered notification (Sync Error). [Placeholder - Diagram to be created]*
+*   **Notification Settings Screen:**
+    *   *A high-fidelity mockup of the settings screen described in Section 5. [Placeholder - Mockup to be created]*
+*   **Notification Banner Styles:**
+    *   *Mockups of the different in-app banners (e.g., Offline, Needs Re-auth). [Placeholder - Mockup to be created]*
