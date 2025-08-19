@@ -31,15 +31,15 @@ The data synchronization engine is a server-side, event-driven system built on A
 *   **Cold Path (for Historical Syncs):** This path is designed for long-running, complex, and potentially error-prone historical data backfills. It uses AWS Step Functions to orchestrate the entire workflow, providing state management, error handling, and observability.
 
 The core components are:
-*   **`API Gateway` + `Request Lambda`:** The public-facing entry point. The `RequestLambda` validates requests and routes them to the appropriate path by either publishing an event to EventBridge (hot path) or starting a state machine execution (cold path).
-*   **`EventBridge Event Bus`:** The central nervous system for the hot path. It receives `RealtimeSyncRequested` events and routes them to the SQS queue.
+*   **`API Gateway`:** The public-facing entry point. It uses **direct service integrations** to validate requests and route them to the appropriate path, enhancing performance and reducing cost by removing the need for an intermediate Lambda function.
+*   **`EventBridge Event Bus`:** The central nervous system for the hot path. It receives `RealtimeSyncRequested` events directly from API Gateway and routes them to the SQS queue.
 *   **`SQS Queue (Hot Path)`:** A primary, durable SQS queue that acts as a critical buffer for real-time sync jobs, absorbing traffic spikes and ensuring no jobs are lost.
-*   **`AWS Step Functions (Cold Path)`:** A managed workflow orchestrator that manages the entire lifecycle of a historical sync, breaking it into chunks and coordinating worker Lambda functions.
+*   **`SQS Dead-Letter Queue (DLQ)`:** A secondary SQS queue configured as the DLQ for the primary queue. If a `WorkerLambda` fails to process a message after multiple retries, SQS automatically moves the message here for analysis, preventing it from blocking the main queue.
+*   **`AWS Step Functions (Cold Path)`:** A managed workflow orchestrator that manages the entire lifecycle of a historical sync, with executions started directly by API Gateway.
 *   **`Worker Service (AWS Lambda)`:** The heart of the engine. A serverless function running on AWS Lambda that contains the core sync logic. It's invoked either in response to SQS messages (for hot path jobs) or by the Step Functions orchestrator (for cold path jobs).
 *   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration must implement.
 *   **`Smart Conflict Resolution Engine`:** A core component within the worker that intelligently resolves data conflicts before writing.
 *   **`DynamoDB`:** The `SyncWellMetadata` table stores all essential state for the sync process.
-*   **`S3 for Dead-Letter Queues`**: Messages that fail processing repeatedly in the SQS queue are sent to a Dead-Letter Queue (DLQ) and stored in an S3 bucket for analysis.
 
 ## 3. The Synchronization Algorithm (Server-Side Delta Sync)
 
@@ -140,11 +140,11 @@ graph TD
     end
     subgraph AWS
         APIGateway[API Gateway]
-        RequestLambda[Request Lambda]
         EventBridge[EventBridge Bus]
 
         subgraph "Hot Path"
             HotQueue[SQS for Real-time Jobs]
+            DLQ_SQS[SQS DLQ]
         end
 
         subgraph "Cold Path"
@@ -153,7 +153,6 @@ graph TD
 
         WorkerLambda[Worker Service (Lambda)]
         DynamoDB[DynamoDB]
-        DLQ_S3[S3 for DLQ]
         AI_Service[AI Insights Service]
     end
     subgraph External
@@ -161,19 +160,18 @@ graph TD
     end
 
     MobileApp -- Sync Request --> APIGateway
-    APIGateway --> RequestLambda
 
-    RequestLambda -- "Publishes 'RealtimeSyncRequested' event" --> EventBridge
+    APIGateway -- "Direct Integration<br>Publishes 'RealtimeSyncRequested' event" --> EventBridge
     EventBridge -- "Rule for real-time jobs" --> HotQueue
     HotQueue -- Triggers --> WorkerLambda
+    HotQueue -- "On Failure, redrives to" --> DLQ_SQS
 
-    RequestLambda -- "Starts execution for historical sync" --> HistoricalOrchestrator
+    APIGateway -- "Direct Integration<br>Starts execution for historical sync" --> HistoricalOrchestrator
     HistoricalOrchestrator -- Orchestrates & Invokes --> WorkerLambda
 
     WorkerLambda -- Read/Write --> DynamoDB
     WorkerLambda -- Syncs Data --> ThirdPartyAPIs
     WorkerLambda -- Calls for intelligence --> AI_Service
-    HotQueue -- On Failure --> DLQ_S3
 ```
 
 ### Sequence Diagram for Delta Sync (with AI-Powered Merge)

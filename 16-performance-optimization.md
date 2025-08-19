@@ -85,6 +85,7 @@ Syncing years of historical data (User Story **US-10**) is a performance and rel
 
 *   **Compute Performance:**
     *   **Worker Lambdas:** Right-size the memory allocation for the worker functions to balance cost and performance.
+    *   **Provisioned Concurrency for Hot Path Workers:** To eliminate cold start latency for the latency-sensitive `WorkerLambda` fleet, **Provisioned Concurrency** will be enabled. Given the KMP/JVM runtime, cold starts can be significant and would jeopardize the performance SLOs. By keeping a pre-warmed pool of Lambda environments ready, this strategy ensures that sync jobs on the "hot path" can be processed instantly, providing a consistent and fast user experience.
     *   **API Layer:** The API layer has been optimized by removing the initial request handler Lambda in favor of direct API Gateway integrations, which eliminates cold starts and an entire network hop for all incoming requests.
 *   **Database Performance:**
     *   **Smart Key Design:** Use appropriate partition and sort keys in DynamoDB to ensure efficient queries.

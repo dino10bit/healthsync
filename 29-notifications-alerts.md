@@ -52,7 +52,7 @@ This decoupled architecture ensures that the core AWS backend does not need to h
 
 | ID | Name | Type | Trigger | Default | Content (Title / Body) | Deep Link | User Control Setting |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **N-01**| Sync Error | Push | A sync job fails all its retry attempts. | On | **Sync Error** / Could not sync {{dataType}} from {{source}}. Please tap to fix. | The specific sync configuration screen that has the error. | Sync Alerts |
+| **N-01**| Sync Error | Push | A sync job fails all its retry attempts. This event is signaled by a message arriving in the SQS Dead-Letter Queue (DLQ), which triggers an alert and this notification. | On | **Sync Error** / Could not sync {{dataType}} from {{source}}. Please tap to fix. | The specific sync configuration screen that has the error. | Sync Alerts |
 | **N-02**| Trial Ending | Push | Scheduled locally to fire 24 hours before trial ends. | On | **Trial Ending Soon** / Your SyncWell free trial ends tomorrow. Don't lose your syncs! | The Paywall screen. | App Reminders |
 | **N-03**| New Feature | Push | Manually triggered by developer via backend. | On | **New Integration!** / SyncWell now supports {{newPlatform}}! Tap to connect. | The "Connected Apps" screen. | News & Updates |
 | **N-04**| Sync Success| Push | A background sync completes successfully. | **Off**| **Sync Complete** / Your {{dataType}} data was successfully synced. | The app's main dashboard. | Sync Alerts |

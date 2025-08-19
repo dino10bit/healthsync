@@ -120,6 +120,9 @@ This approach ensures that updates to the core SDK logic can be rolled out in a 
 
 This approach ensures that updates to the core SDK logic can be rolled out in a controlled and predictable manner, and it prevents individual `DataProvider` implementations from falling out of sync with the core framework.
 
+### 2.4. Network Environment & Security
+All backend `DataProvider` logic runs within the main application's VPC on AWS. As a critical security measure, all outbound traffic from this VPC is routed through an **AWS Network Firewall**. This means that for a new `DataProvider` to function, the domain name(s) of the third-party API it needs to call **must** be added to the firewall's allow-list. This enforces a "least privilege" model at the network level and is a mandatory part of the process for enabling a new provider.
+
 ## 3. Authentication: A Secure Hybrid Flow
 
 All cloud-based APIs will use the **OAuth 2.0 Authorization Code Flow with PKCE**. The key security principle is that **long-lived tokens never touch the user's device**.
