@@ -33,7 +33,11 @@ The backend's error handling strategy is designed for maximum resilience and mes
 
 2.  **Handling Transient Failures with Retries:** A worker task (Fargate or Lambda) may fail for transient reasons, such as a temporary network issue, a brief third-party API outage, or being throttled. The system handles this gracefully:
     *   For SQS-triggered Fargate tasks, the SQS message remains on the queue and becomes visible again after its "visibility timeout" expires, causing the service to retry the job.
-    *   For Step Functions-triggered Lambda tasks, the state machine itself is configured with a retry policy (typically 3-5 attempts with exponential backoff). This built-in mechanism automatically re-invokes the function, giving the transient issue time to resolve itself without any custom code.
+    *   For Step Functions-triggered Lambda tasks (used for the "Cold Path" historical syncs), the state machine provides both automated retries and a rich set of observability features that are critical for debugging complex workflows:
+        *   **Automated Retries:** The state machine itself is configured with a declarative retry policy (e.g., 3-5 attempts with exponential backoff) for transient failures.
+        *   **Visual Monitoring:** The visual workflow in the AWS Console provides a real-time graph of each execution, allowing operators to instantly identify which step in a long-running job has failed.
+        *   **Detailed Execution History:** Every state transition, including the full input and output payload for each step, is logged. This provides an invaluable audit trail for debugging, eliminating the need to manually add extensive logging inside the business logic.
+        *   **Integrated Tracing:** With AWS X-Ray enabled, it's possible to get a complete service map of the entire workflow, including the time spent in each state and in the invoked Lambda functions.
 
 3.  **Isolating Persistent Failures with a Dead-Letter Queue (DLQ):** If a job fails all of its retry attempts, it is considered a persistent failure (e.g., due to a bug in the code, malformed data that causes a crash, or a permanent issue with a third-party API).
     *   To prevent this single bad message from blocking the queue and being retried indefinitely, SQS automatically moves it to a pre-configured **Dead-Letter Queue (DLQ)**.

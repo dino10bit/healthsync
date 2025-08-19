@@ -86,10 +86,11 @@ Syncing years of historical data (User Story **US-10**) is a performance and rel
 *   **Compute Performance:**
     *   **Worker Lambdas:** Right-size the memory allocation for the worker functions to balance cost and performance.
     *   **Provisioned Concurrency for Hot Path Workers:** To eliminate cold start latency for the latency-sensitive `WorkerLambda` fleet, **Provisioned Concurrency** will be enabled. Given the KMP/JVM runtime, cold starts can be significant and would jeopardize the performance SLOs. By keeping a pre-warmed pool of Lambda environments ready, this strategy ensures that sync jobs on the "hot path" can be processed instantly, providing a consistent and fast user experience.
-    *   **API Layer:** The API layer has been optimized by removing the initial request handler Lambda in favor of direct API Gateway integrations, which eliminates cold starts and an entire network hop for all incoming requests.
+    *   **API Layer & Authorizer Caching:** The API layer has been optimized by removing the initial request handler Lambda in favor of direct API Gateway integrations. To further minimize latency, the architecture will leverage **API Gateway's native caching for the Lambda Authorizer**. The generated IAM policy from a successful authorization is cached for a configurable TTL (e.g., 5 minutes), which completely avoids invoking the `AuthorizerLambda` for most requests, significantly reducing both latency and cost.
 *   **Database Performance:**
     *   **Smart Key Design:** Use appropriate partition and sort keys in DynamoDB to ensure efficient queries.
     *   **Caching:** Utilize **Amazon ElastiCache for Redis** as the primary caching layer, as described above. This is preferred over DynamoDB Accelerator (DAX) because it provides more flexibility for our varied caching needs (e.g., counters for rate limiting, distributed locks).
+    *   **Hot Partition Mitigation:** To handle the "viral user" scenario, the primary strategy will be to isolate the user's data into a dedicated DynamoDB table. This "hot table" approach is preferred over more complex solutions like write-sharding because it avoids significant read-side complexity and provides complete performance isolation.
 *   **VPC Networking Optimization:** To improve security and reduce costs, all communication from the `WorkerLambda` functions (which run in a VPC to access ElastiCache) to other AWS services now uses **VPC Endpoints**. This keeps traffic on the private AWS network instead of routing through a NAT Gateway. This not only enhances security but also provides a performance boost by reducing network latency for calls to services like DynamoDB, SQS, and EventBridge.
 
 ## 5. Scalability
@@ -103,6 +104,8 @@ The SyncWell architecture is designed from the ground up for massive, automatic 
 *   **Resilient Decoupling with SQS:** The use of **Amazon SQS queues** as a buffer between the API layer and the Lambda worker service is a critical component of our scalability and reliability strategy. The queue acts as a shock absorber, smoothing out unpredictable traffic spikes. If 100,000 users all trigger a sync simultaneously, the jobs are safely persisted in the queue. The Lambda service can then scale out its concurrent executions to process this backlog at a sustainable pace without being overwhelmed.
 
 *   **Elastic Database with DynamoDB:** Our primary database is **Amazon DynamoDB**, chosen for its ability to deliver consistent, single-digit millisecond performance at any scale. We will use a **hybrid capacity model** (Provisioned + On-Demand) to balance cost and performance, preventing throttling during peak traffic while remaining cost-efficient.
+
+*   **Scalable Analytics Ingestion:** For backend-generated analytics events, the architecture uses **Amazon Kinesis Data Firehose**. This provides a fully managed, scalable ingestion pipeline that automatically handles buffering, batching, and compression of data. This is far more performant and resilient at scale than sending individual events to an analytics endpoint.
 
 ## 6. Visual Diagrams
 *   **[Diagram] Caching Architecture:** A diagram showing how Fargate worker tasks interact with ElastiCache for config caching, distributed locking, and rate limiting before accessing DynamoDB or third-party APIs.
