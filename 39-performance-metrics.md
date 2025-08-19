@@ -51,7 +51,8 @@ This dashboard will be built in AWS CloudWatch and provides a real-time view of 
 | **Lambda Worker Errors**| Time Series | `Errors` count | AWS CloudWatch | < 0.5% |
 | **Lambda Worker Throttles**| Time Series | `Throttles` count | AWS CloudWatch | 0 |
 | **SQS Hot Path Queue Depth**| Big Number / Time Series | `ApproximateNumberOfMessagesVisible` for the "Hot" queue | AWS CloudWatch | < 100 (sustained) |
-| **SQS Cold Path Queue Depth**| Big Number / Time Series | `ApproximateNumberOfMessagesVisible` for the "Cold" queue | AWS CloudWatch | < 1000 (sustained) |
+| **Step Functions (Cold Path) Failures**| Time Series | `ExecutionsFailed` for all historical sync state machines | AWS CloudWatch | 0 |
+| **Step Functions (Cold Path) Timeouts**| Time Series | `ExecutionsTimedOut` for all historical sync state machines | AWS CloudWatch | 0 |
 | **DynamoDB Throttled Requests**| Time Series | `ReadThrottleEvents`, `WriteThrottleEvents` | AWS CloudWatch | 0 |
 
 ## 5. The Sync Health Dashboard (Combined)
@@ -60,8 +61,8 @@ This dashboard provides a holistic view of the end-to-end sync process, combinin
 
 | Widget Title | Chart Type | Metric(s) | Data Source | SLO Target |
 | :--- | :--- | :--- | :--- | :--- |
-| **E2E Sync Success Rate (24h)**| Gauge | (Lambda Successes) / (Lambda Invocations) | AWS CloudWatch | > 99.5% |
-| **Sync Failure Rate by Provider**| Bar Chart | Custom Logged Event: `sync_job_failed` grouped by `source_provider` | Firebase Analytics | N/A (Diagnostic) |
+| **E2E Sync Success Rate (24h)**| Gauge | Count of `SyncSuccess` events / Count of `SyncStarted` events | Custom Metrics (CloudWatch) | > 99.5% |
+| **Sync Failure Rate by Provider**| Bar Chart | Custom Metric: `SyncFailed` events grouped by `source_provider` dimension | AWS CloudWatch | N/A (Diagnostic) |
 | **Sync Failure Rate by Error Code**| Table | `Errors` metric grouped by error type in Lambda logs | AWS CloudWatch Logs | N/A (Diagnostic) |
 | **E2E Sync Job Latency (P90)**| Time Series | Lambda `Duration` metric | AWS CloudWatch | < 30s (for delta sync) |
 | **Dead-Letter Queue Size** | Big Number | `ApproximateNumberOfMessagesVisible` for the DLQ | AWS CloudWatch | 0 |

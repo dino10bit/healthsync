@@ -31,9 +31,9 @@ The backend's error handling strategy is designed for maximum resilience and mes
 
 1.  **Guaranteed Delivery & Message Durability:** When a sync job is accepted, it is first published as an event to EventBridge, which then forwards it to a durable **Amazon SQS queue**. SQS guarantees that the message is stored redundantly across multiple availability zones until a worker successfully processes it. This ensures that even if the entire worker fleet is down, no sync jobs are lost.
 
-2.  **Handling Transient Failures with Retries:** A worker task (Fargate or Lambda) may fail for transient reasons, such as a temporary network issue, a brief third-party API outage, or being throttled. The system handles this gracefully:
-    *   For SQS-triggered Fargate tasks, the SQS message remains on the queue and becomes visible again after its "visibility timeout" expires, causing the service to retry the job.
-    *   For Step Functions-triggered Lambda tasks (used for the "Cold Path" historical syncs), the state machine provides both automated retries and a rich set of observability features that are critical for debugging complex workflows:
+2.  **Handling Transient Failures with Retries:** A worker Lambda may fail for transient reasons, such as a temporary network issue, a brief third-party API outage, or being throttled. The system handles this gracefully depending on the invocation source:
+    *   **Hot Path (SQS-triggered Lambdas):** If a worker Lambda triggered from the main SQS queue fails, it throws an exception. This makes the message visible on the SQS queue again after the "visibility timeout" expires. SQS will then automatically attempt to deliver the message to another Lambda worker, effectively retrying the job.
+    *   **Cold Path (Step Functions-triggered Lambdas):** For historical syncs, the Step Functions state machine provides its own declarative, automated retry logic. This is configured directly in the state machine definition (e.g., 3-5 attempts with exponential backoff) for transient failures. This is supplemented by the rich observability features of Step Functions:
         *   **Automated Retries:** The state machine itself is configured with a declarative retry policy (e.g., 3-5 attempts with exponential backoff) for transient failures.
         *   **Visual Monitoring:** The visual workflow in the AWS Console provides a real-time graph of each execution, allowing operators to instantly identify which step in a long-running job has failed.
         *   **Detailed Execution History:** Every state transition, including the full input and output payload for each step, is logged. This provides an invaluable audit trail for debugging, eliminating the need to manually add extensive logging inside the business logic.
@@ -62,7 +62,19 @@ Messages in a Dead-Letter Queue (DLQ) represent persistent failures that could n
     *   **If the error is due to a bug in the worker code:** A high-priority ticket is created. Once a fix is deployed, the messages can be redriven from the DLQ.
     *   **If the error is due to malformed data or a permanent, unrecoverable issue:** The messages are left in the archive S3 bucket, and the issue is logged for product/engineering review. The messages are then purged from the DLQ.
 
-This manual-first approach ensures that an operator carefully considers each failure case, preventing potential infinite failure loops and providing a high degree of safety.
+This manual-first approach ensures that an operator carefully considers each failure case, preventing potential infinite failure loops and providing a high degree of safety for unknown issues.
+
+### 2.4. Scalable DLQ Handling (Semi-Automated)
+
+While a manual-first approach is safe, it is not scalable at 1M DAU. To reduce operational load, a semi-automated DLQ handling process will be implemented for known, recoverable errors.
+
+*   **DLQ Analyzer Lambda:** A dedicated Lambda function, the `DLQAnalyzer`, will be triggered whenever a message arrives in the DLQ.
+*   **Automated Triage:** This Lambda will inspect the message's error metadata. It will have logic to identify specific, well-understood failure patterns:
+    *   **Known Transient Third-Party Errors:** If an error matches a known pattern of a temporary third-party API issue (e.g., a specific `503` error from a partner API that is known to be flaky), the `DLQAnalyzer` will automatically redrive the message back to the main queue after a much longer delay (e.g., 1 hour), without paging the on-call engineer.
+    *   **Known "Bad Data" Formats:** If an error is due to a known, unrecoverable data format issue from a specific provider that we cannot handle, the analyzer will automatically archive the message to a specific S3 bucket prefix for that provider and purge it from the DLQ. This will trigger a low-priority ticket for later analysis.
+*   **Alerting for Unknowns:** If a message's error does not match any of the known patterns, it is considered a true unknown. Only in this case will the `DLQAnalyzer` trigger the high-priority PagerDuty alert for manual investigation by the on-call engineer.
+
+This semi-automated strategy ensures that engineers are only alerted for novel and critical failures that require human intelligence, while known, non-urgent issues are handled automatically. This is critical for maintaining operational stability at scale.
 
 ## 3. Unified Error Code Dictionary
 

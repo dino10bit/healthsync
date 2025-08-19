@@ -53,7 +53,7 @@ A distributed, in-memory cache using **Amazon ElastiCache for Redis** is a corne
 
 *   **Configuration Caching:** User-specific sync configurations and settings are cached, dramatically reducing read operations on DynamoDB for every sync job. This lowers latency and cost.
 *   **Distributed Locking:** ElastiCache provides a mechanism for distributed locks, preventing race conditions where multiple workers might attempt to process the same sync job for the same user simultaneously. This ensures data integrity without relying on slower database locks.
-*   **Rate Limit Enforcement:** The cache acts as a high-speed, centralized counter for our global rate-limiting engine, enabling us to manage third-party API call frequency across tens of thousands of concurrent Fargate tasks.
+*   **Rate Limit Enforcement:** The cache acts as a high-speed, centralized counter for our global rate-limiting engine, enabling us to manage third-party API call frequency across tens of thousands of concurrent Lambda executions.
 
 ### 3.2. Load Projections & Resource Planning
 
@@ -67,6 +67,7 @@ To ensure the system can handle the load from 1M DAU, we have projected the requ
 1.  The AWS Lambda service for the worker fleet will scale automatically. The account concurrency limits must be raised to support the projected peak of 15,000 concurrent executions.
 2.  DynamoDB will be configured in a **hybrid capacity model** (Provisioned + On-Demand) to balance cost and elasticity.
 3.  API Gateway and SQS scale automatically and require no specific pre-provisioning for this load.
+4.  **Mandatory Load Testing:** The projection of ~15,000 concurrent executions is a significant technical risk. A proof-of-concept load test **must** be conducted to validate the performance and stability of the end-to-end system (including downstream third-party APIs) at this scale before launch.
 
 ### 3.3. Resilient Historical Syncs with Job Chunking
 
@@ -108,5 +109,5 @@ The SyncWell architecture is designed from the ground up for massive, automatic 
 *   **Scalable Analytics Ingestion:** For backend-generated analytics events, the architecture uses **Amazon Kinesis Data Firehose**. This provides a fully managed, scalable ingestion pipeline that automatically handles buffering, batching, and compression of data. This is far more performant and resilient at scale than sending individual events to an analytics endpoint.
 
 ## 6. Visual Diagrams
-*   **[Diagram] Caching Architecture:** A diagram showing how Fargate worker tasks interact with ElastiCache for config caching, distributed locking, and rate limiting before accessing DynamoDB or third-party APIs.
-*   **[Diagram] Job Chunking Flow:** A visual representation of how a large historical sync request is broken into multiple jobs that are placed on the SQS queue for processing by the Fargate service.
+*   **[Diagram] Caching Architecture:** A diagram showing how Lambda worker functions interact with ElastiCache for config caching, distributed locking, and rate limiting before accessing DynamoDB or third-party APIs.
+*   **[Diagram] Job Chunking Flow:** A visual representation of how a large historical sync request is broken into multiple jobs that are placed on the SQS queue for processing by the Lambda service.
