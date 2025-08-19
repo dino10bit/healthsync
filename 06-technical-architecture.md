@@ -73,6 +73,7 @@ graph TD
         subgraph "Hot Path (Real-time Syncs)"
             HotPathEventBus[EventBridge Event Bus]
             RealtimeSyncQueue[SQS for Real-time Jobs]
+            RealtimeSyncDLQ[SQS DLQ for Failures]
             WorkerLambda["Worker Service (AWS Lambda)"]
         end
 
@@ -83,7 +84,7 @@ graph TD
         ElastiCache[ElastiCache for Caching & Rate Limiting]
         DynamoDB[DynamoDB Global Table for Metadata]
         SecretsManager[Secrets Manager for Tokens]
-        S3[S3 for Dead-Letter Queue]
+        S3[S3 for Archiving & Backup]
         Observability["Monitoring & Observability (CloudWatch)"]
         GlueSchemaRegistry[AWS Glue Schema Registry]
         AppConfig[AWS AppConfig]
@@ -111,11 +112,12 @@ graph TD
     MobileApp -- "HTTPS Request (with Firebase JWT)" --> APIGateway
     APIGateway -- "Validates JWT with" --> AuthorizerLambda
     AuthorizerLambda -- "Caches and validates against Google's public keys"--> FirebaseAuth
-    APIGateway -- "Publishes 'RealtimeSyncRequested' event to" --> HotPathEventBus
-    APIGateway -- "Starts execution for historical sync" --> HistoricalOrchestrator
+    APIGateway -- "Direct Service Integration<br>Publishes 'RealtimeSyncRequested' event" --> HotPathEventBus
+    APIGateway -- "Direct Service Integration<br>Starts execution for historical sync" --> HistoricalOrchestrator
 
     HotPathEventBus -- "Rule routes to" --> RealtimeSyncQueue
     RealtimeSyncQueue -- "Target for" --> WorkerLambda
+    RealtimeSyncQueue -- "On failure, redrives to" --> RealtimeSyncDLQ
 
     HistoricalOrchestrator -- "Orchestrates and invokes" --> WorkerLambda
 
@@ -124,7 +126,6 @@ graph TD
     WorkerLambda -- "Gets credentials" --> SecretsManager
     WorkerLambda -- "Reads/Writes" --> ElastiCache
     WorkerLambda -.-> AI_Service
-    WorkerLambda -- "On failure, sends to" --> S3
     CICD -- "Registers & Validates Schemas in" --> GlueSchemaRegistry
     WorkerLambda -- "Uses Schemas during build/runtime" --> GlueSchemaRegistry
     WorkerLambda -- "Fetches runtime config from" --> AppConfig
@@ -308,11 +309,12 @@ Cloud-to-cloud syncs are handled by two distinct architectural patterns dependin
 *   **Use Case:** Handling frequent, automatic, and user-initiated manual syncs for recent data.
 *   **Flow:**
     1.  The Mobile App sends a request to API Gateway to start a sync.
-    2.  **API Gateway** uses a direct service integration to validate the request and publish a semantic `RealtimeSyncRequested` event to the **EventBridge Event Bus**.
-    3.  An EventBridge rule filters for these events and sends them to an **Amazon SQS queue**. To ensure that no sync requests are lost if EventBridge fails to deliver to SQS, the rule is configured with a Dead-Letter Queue (DLQ). The main SQS queue acts as a buffer, protecting the system from load spikes and ensuring jobs are not lost.
+    2.  **API Gateway** uses a direct service integration (labeled in the diagram above) to validate the request and publish a semantic `RealtimeSyncRequested` event to the **EventBridge Event Bus**.
+    3.  An EventBridge rule filters for these events and sends them to the primary **Amazon SQS queue**. This queue acts as a buffer, protecting the system from load spikes.
     4.  The SQS queue triggers the `WorkerLambda`, which processes the job.
-    5.  Upon completion, the `WorkerLambda` can publish a result event back to the bus for other services to consume.
-*   **Advantage:** This is a highly reliable and extensible model for high-volume, short-lived jobs.
+    5.  **Failure Handling:** The worker's logic is simplified. On a non-transient processing error, it throws an exception. The primary SQS queue is configured with a **Dead-Letter Queue (DLQ)**. After a configured number of retries (`maxReceiveCount`), SQS automatically moves the failed message to the DLQ for out-of-band analysis, improving reliability and observability.
+    6.  Upon successful completion, the `WorkerLambda` can publish a result event back to the bus for other services to consume.
+*   **Advantage:** This is a highly reliable and extensible model. Leveraging the native SQS DLQ feature simplifies the worker logic, increases reliability, and improves observability through standard CloudWatch metrics on the DLQ.
 
 ```mermaid
 graph TD
@@ -523,6 +525,7 @@ This sequence diagram shows a **Worker Lambda** needing to make an external API 
         *   The critical metric for provisioning is peak concurrency. SQS can easily handle this throughput.
         *   Assuming an average real-time sync job takes 5 seconds to complete, the required concurrency during peak hours can be estimated using Little's Law (`L = λW`).
         *   Required Concurrency = `3,000 jobs/s * 5s/job = 15,000 concurrent Lambda executions`.
+        *   **Provisioned Concurrency:** Given that the `WorkerLambda` uses a KMP/JVM runtime with known cold start latencies, **Provisioned Concurrency** will be enabled for the `WorkerLambda` fleet. This keeps a specified number of execution environments warm and ready to respond instantly. This strategy is critical for eliminating cold start latency, making performance more predictable, and can be more cost-effective than on-demand Lambda for this type of predictable, high-throughput workload.
         *   **Note on Concurrency Calculation:** This is a high level of concurrency that will require an increase to the default AWS account limits for Lambda, but it is well within the service's capabilities.
     *   **DynamoDB:**
         *   We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased via a Savings Plan to cost-effectively handle the predictable average load. **On-Demand Capacity** will handle any traffic that exceeds the provisioned throughput, providing the best of both worlds in terms of cost and elasticity.
@@ -916,6 +919,7 @@ A detailed financial model is a mandatory prerequisite before implementation.
 *   **Access Control and Least Privilege:** Access to all backend resources is governed by the principle of least privilege. We use AWS Identity and Access Management (IAM) to enforce this.
     *   **Granular IAM Roles:** Each compute component (API Lambda, Fargate Task, Worker Lambda) has its own unique IAM role with a narrowly scoped policy. For example, a worker for a specific third-party service is only granted permission to access the specific secrets and DynamoDB records relevant to its task. It cannot access resources related to other services.
     *   **Resource-Based Policies:** Where applicable, resource-based policies are used as an additional layer of defense. For example, the AWS Secrets Manager secret containing third-party tokens will have a resource policy that only allows access from the specific IAM roles of the workers that need it.
+*   **Egress Traffic Control (Firewall):** To enforce the principle of least privilege at the network layer, an egress firewall will be implemented to control outbound traffic from the VPC. The `WorkerLambda` functions need to call third-party APIs, and this traffic will be routed through an **AWS Network Firewall**. A firewall policy will be configured with an allow-list of the specific Fully Qualified Domain Names (FQDNs) for required partners (Fitbit, Strava, etc.). This provides defense in depth; if a function were compromised, this control would prevent it from exfiltrating data or communicating with malicious domains. It also provides a centralized point for auditing all outbound connections.
 *   **Code & Pipeline Security:** Production builds will be obfuscated. Dependency scanning (Snyk) and static application security testing (SAST) will be integrated into the CI/CD pipeline, failing the build if critical vulnerabilities are found.
 
 ### Compliance
