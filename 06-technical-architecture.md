@@ -90,7 +90,6 @@ graph TD
     MobileApp -- HTTPS Request --> APIGateway
     APIGateway -- Invokes --> RequestLambda
     RequestLambda -- Puts job --> SQSQueue
-    RequestLambda -- Reads/Writes --> ElastiCache
     WorkerLambda -- Polls for jobs --> SQSQueue
     WorkerLambda -- Reads/writes config --> DynamoDB
     WorkerLambda -- Gets credentials --> SecretsManager
@@ -132,7 +131,7 @@ graph TD
 
 ### Level 3: Components (Inside the KMP Shared Module)
 
-The KMP module contains the core business logic. This code can be executed **on the device** (for HealthKit syncs) or **on the backend** (if using a JVM-based Lambda), maximizing code reuse.
+The KMP module contains the core business logic. This code can be executed **on the device** (for HealthKit syncs) or **on the backend**. For the backend, the KMP module will be compiled to a JAR and run on a standard JVM-based AWS Lambda runtime, maximizing code reuse.
 
 *   **`SyncManager`:** Orchestrates the sync process based on instructions from the backend.
 *   **`ConflictResolutionEngine`:** Detects data conflicts. The initial version will use deterministic strategies (e.g., newest data wins, source priority).
@@ -189,7 +188,14 @@ Given the requirement for a global launch across 5 continents, a high-availabili
     *   **DynamoDB Global Tables:** User metadata and sync configurations will be stored in a DynamoDB Global Table. This provides built-in, fully managed, multi-master replication across all deployed regions, ensuring that data written in one region is automatically propagated to others with low latency.
     *   **Write Conflict Resolution:** By using a multi-master database, write conflicts can occur (e.g., if a user changes a setting in two regions simultaneously). Our application will be designed to be idempotent, and for configuration data, we will rely on DynamoDB's default "last writer wins" conflict resolution strategy. This is an acceptable trade-off for the types of non-transactional metadata we are storing.
 *   **Credential Storage:** **AWS Secrets Manager** secrets will be replicated to each active region. This ensures that worker Lambdas in any region can access the necessary third-party OAuth tokens to perform sync jobs.
-*   **Resilience Testing (Chaos Engineering):** To proactively validate our multi-region high availability, we will practice chaos engineering. We will use the **AWS Fault Injection Simulator (FIS)** to inject faults into our pre-production environments. Example experiments include terminating Lambda functions, introducing latency between services, or simulating the failure of an entire AWS region. This practice is critical for building confidence in our system's ability to withstand turbulent conditions in production.
+*   **Resilience Testing (Chaos Engineering):** To proactively validate our multi-region high availability, we will practice chaos engineering. We will use the **AWS Fault Injection Simulator (FIS)** to inject faults into our pre-production environments on a regular, scheduled basis (e.g., weekly). This practice is critical for building confidence in our system's ability to withstand turbulent conditions in production.
+
+    **Example Experiment Catalog:**
+    *   **Lambda Failure:** Terminate a random percentage (10-50%) of `WorkerLambda` instances to ensure that SQS retries and the remaining fleet can handle the load.
+    *   **API Latency:** Inject a 500ms latency into calls from the `WorkerLambda` to a third-party API endpoint to verify that timeouts and retry logic work as expected.
+    *   **DynamoDB Latency:** Inject latency on DynamoDB reads/writes to test application-level timeouts.
+    *   **Secrets Manager Unavailability:** Block access to AWS Secrets Manager for a short period to ensure that workers with cached credentials continue to function and that the failure to retrieve new credentials is handled gracefully.
+    *   **Full Regional Failover Drill:** Use FIS and Route 53 health check manipulation to simulate a full regional outage, forcing a failover and allowing us to measure the real-world RTO.
 
 ### Performance & Scalability: Caching & Load Projections
 
@@ -203,7 +209,7 @@ Given the requirement for a global launch across 5 continents, a high-availabili
         *   1,000,000 DAU.
         *   Average user has 3 active sync configurations.
         *   Syncs run automatically every ~1 hour (24 syncs/day). Manual syncs add 25% overhead.
-        *   Peak usage is concentrated in a 4-hour window (e.g., 7-9am and 8-10pm), accounting for 50% of daily traffic.
+        *   Peak usage is concentrated in a 4-hour window (e.g., 7-9am and 8-10pm), accounting for 50% of daily traffic. This assumption is based on common mobile application usage patterns and should be validated with real-world data post-launch.
     *   **API Gateway & Request Lambdas:**
         *   Total daily requests: `1M users * 3 configs * 24 syncs/day * 1.25 = 90M requests/day`.
         *   Average RPS: `90M / 86400s = ~1,042 RPS`.
@@ -211,7 +217,8 @@ Given the requirement for a global launch across 5 continents, a high-availabili
     *   **Worker Lambdas & SQS:**
         *   Total daily jobs: `90M jobs/day`.
         *   SQS can handle virtually unlimited throughput. The key is Lambda concurrency, which must be sized for peak load.
-        *   Assuming an average job takes 5 seconds, the required concurrency during peak hours is `3,125 jobs/s * 5s/job = 15,625 concurrent executions`.
+        *   Assuming an average job takes 5 seconds, a simple calculation for required concurrency during peak hours is `3,125 jobs/s * 5s/job = 15,625 concurrent executions`.
+        *   **Note on Concurrency Calculation:** This is a straightforward, upper-bound estimate based on Little's Law (`L = λW`). While this provides a reasonable starting point for capacity planning and financial modeling, the actual required concurrency may be lower due to statistical variance in job arrival and processing times. We will monitor the `ConcurrentExecutions` metric in CloudWatch closely and adjust our provisioned concurrency and AWS account limits based on empirical data.
         *   This peak concurrency number is critical. The default AWS account limit (1,000) must be significantly increased, and this level of concurrency has major cost implications that must be factored into financial models.
     *   **DynamoDB:**
         *   We will use **On-Demand Capacity Mode**. This is more cost-effective for spiky, unpredictable workloads than provisioned throughput. It automatically scales to handle the required read/write operations, although we must monitor for throttling if traffic patterns become extreme.
@@ -242,6 +249,8 @@ Below are the different data entities, or "item types," that will be stored in t
 | **Hist. Sync Job** | `USER#{userId}` | `HISTORICAL##{orchestrationId}` | `ExecutionArn`, `StartDate`, `Status`. Acts as a pointer to the AWS Step Functions execution that orchestrates a large historical data sync. The definitive status is stored in the state machine itself. |
 
 *Example `SYNCCONFIG` SK:* `SYNCCONFIG#fitbit#to#googlefit#steps` (Note: single `#` delimiters are used for clarity and parsing reliability).
+
+**Note on Historical Sync Job Items:** Storing a potentially large number of `HISTORICAL` items in the same item collection as the `PROFILE` and `CONN` items can lead to performance degradation when fetching core user data. The query to "Get all settings for a user" (`PK = USER#{userId}`) will retrieve these job items, increasing payload size and read costs. To mitigate this, client-side queries for a user's core profile should explicitly filter to only retrieve items with SKs beginning with `PROFILE`, `CONN`, or `SYNCCONFIG`. This avoids fetching the potentially large list of historical job pointers unless they are explicitly needed.
 
 ### Supporting Operational Access Patterns
 
@@ -340,63 +349,69 @@ Below are examples of our core canonical models.
 
 ### `CanonicalWorkout`
 
-Represents a single workout or activity session.
+Represents a single workout or activity session. The definitive schema is implemented as a Kotlin `data class` in the KMP shared module.
 
-```typescript
-interface CanonicalWorkout {
-  // A unique identifier for the workout from its source system.
-  sourceId: string;
+```kotlin
+import kotlinx.serialization.Serializable
 
-  // The platform the workout originated from (e.g., "strava", "garmin").
-  sourceProvider: string;
+@Serializable
+data class CanonicalWorkout(
+    // A unique identifier for the workout from its source system.
+    val sourceId: String,
 
-  // The type of activity. We will maintain a standard enum of activities.
-  // e.g., "run", "cycle", "swim", "strength_training"
-  activityType: string;
+    // The platform the workout originated from (e.g., "strava", "garmin").
+    val sourceProvider: String,
 
-  // Timestamps in ISO 8601 format (UTC).
-  startTimestamp: string;
-  endTimestamp: string;
+    // The type of activity. We will maintain a standard enum of activities.
+    // e.g., "run", "cycle", "swim", "strength_training"
+    val activityType: String,
 
-  // Duration of the workout in seconds.
-  durationSeconds: number;
+    // Timestamps in ISO 8601 format (UTC).
+    val startTimestamp: String,
+    val endTimestamp: String,
 
-  // Distance in meters.
-  distanceMeters?: number;
+    // Duration of the workout in seconds.
+    val durationSeconds: Long,
 
-  // Energy burned in kilocalories.
-  energyKcal?: number;
+    // Distance in meters.
+    val distanceMeters: Double? = null,
 
-  // Optional title or name for the activity.
-  title?: string;
-}
+    // Energy burned in kilocalories.
+    val energyKcal: Double? = null,
+
+    // Optional title or name for the activity.
+    val title: String? = null
+)
 ```
 
 ### `CanonicalSleepSession`
 
-Represents a period of sleep.
+Represents a period of sleep. The definitive schema is implemented as a Kotlin `data class` in the KMP shared module.
 
-```typescript
-interface CanonicalSleepSession {
-  sourceId: string;
-  sourceProvider: string;
+```kotlin
+import kotlinx.serialization.Serializable
 
-  // Timestamps in ISO 8601 format (UTC).
-  startTimestamp: string;
-  endTimestamp: string;
+@Serializable
+data class CanonicalSleepSession(
+    val sourceId: String,
+    val sourceProvider: String,
 
-  // Total time in bed, in seconds.
-  timeInBedSeconds: number;
+    // Timestamps in ISO 8601 format (UTC).
+    val startTimestamp: String,
+    val endTimestamp: String,
 
-  // Total time asleep (timeInBed - awake time), in seconds.
-  timeAsleepSeconds: number;
+    // Total time in bed, in seconds.
+    val timeInBedSeconds: Long,
 
-  // Time spent in different sleep stages, in seconds.
-  deepSleepSeconds?: number;
-  lightSleepSeconds?: number;
-  remSleepSeconds?: number;
-  awakeSeconds?: number;
-}
+    // Total time asleep (timeInBed - awake time), in seconds.
+    val timeAsleepSeconds: Long,
+
+    // Time spent in different sleep stages, in seconds.
+    val deepSleepSeconds: Long? = null,
+    val lightSleepSeconds: Long? = null,
+    val remSleepSeconds: Long? = null,
+    val awakeSeconds: Long? = null
+)
 ```
 
 ## 4. Technology Stack & Rationale

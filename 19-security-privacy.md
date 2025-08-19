@@ -34,9 +34,10 @@ This internal specification is a blueprint for the **engineering team** to imple
 | :--- | :--- | :--- |
 | **Backend Server Compromise** | An attacker gains access to the backend infrastructure. | - **Strict IAM Roles & Least Privilege:** Lambda functions can only access the specific resources they need. <br>- **AWS Secrets Manager:** User OAuth tokens are stored encrypted in a dedicated, secure service. <br>- **VPC & Security Groups:** Backend services are isolated from the public internet where possible. <br>- **Regular Audits & Pen Testing:** Proactively identify and fix vulnerabilities. |
 | **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** Used for any on-device secrets. <br>- **Jailbreak/Root Detection:** The app will detect if it is running on a compromised device. |
-| **Man-in-the-Middle (MitM) Attack** | An attacker intercepts traffic between the app and the backend. | - **TLS 1.2+:** All network traffic is encrypted. <br>- **Certificate Pinning:** Implemented for calls to our own backend to ensure the app is talking to our legitimate server. |
+| **Man-in-the-Middle (MitM) Attack** | An attacker intercepts traffic between the app and the backend. | - **TLS 1.2+:** All network traffic is encrypted. <br>- **Dynamic Certificate Pinning:** Implemented for calls to our own backend. To mitigate the operational risk of bricking older app versions, we will implement a dynamic pinning strategy. The app will fetch the latest pin-set from a secure, out-of-band endpoint and cache it. This allows us to rotate certificates without forcing an immediate app update. We will also pin to an intermediate certificate in addition to the leaf to provide a backup. A detailed operational runbook for certificate rotation will be created and tested. |
 | **Insecure Data Storage** | Sensitive data is stored insecurely. | - **Backend:** All user tokens are stored encrypted in AWS Secrets Manager. <br>- **On-Device:** The local settings database is encrypted. |
-| **Vulnerable Third-Party Dependency** | A library used by the app or backend has a known security vulnerability. | - **Automated Dependency Scanning:** The CI/CD pipeline will use Snyk to scan for vulnerabilities. |
+| **Vulnerable Third-Party Dependency (Supply Chain Attack)** | A library used by the app or backend has a known security vulnerability, or a build tool/dependency is compromised. | - **Automated Dependency Scanning:** The CI/CD pipeline will use Snyk/Dependabot to scan for known CVEs. <br>- **Dependency Pinning:** All dependencies will be pinned to specific, audited versions. <br>- **Reproducible Builds:** Build environments will be scripted and version-controlled to detect unauthorized changes. |
+| **AI Service Data Poisoning or Leakage** | The future AI Insights Service is attacked, either by "poisoning" the training data to produce incorrect results, or by an attacker crafting inputs to extract information about the model or other users' data. | - **Ephemeral Processing:** The AI service will process data ephemerally, just like the core sync engine. <br>- **Input Sanitization:** All inputs to the AI service will be strictly sanitized and validated. <br>- **Model Monitoring:** The outputs of the AI models will be monitored for anomalous results or statistical drift. <br>- **Data Provenance:** The training data for any future ML models will come from trusted, audited sources. |
 
 ## 4. Data Flow & Classification
 
@@ -98,7 +99,15 @@ The backend is a core component and must be secured accordingly.
 *   **Authentication:** Communication between the mobile app and our backend API Gateway will be authenticated using short-lived JSON Web Tokens (JWTs) or a similar standard.
 *   **Authorization:** API Gateway and Lambda functions will use strict IAM roles, adhering to the principle of least privilege. A worker for Fitbit should not have access to Garmin tokens.
 *   **Network Security:** Services will be placed in a Virtual Private Cloud (VPC). Access to databases and secret stores will be restricted to services within the VPC, not exposed to the public internet.
-*   **Logging & Monitoring:** All API calls and backend activity will be logged (without sensitive data) and monitored for anomalous behavior using services like AWS CloudTrail and CloudWatch.
+*   **Logging & Monitoring:** All API calls and backend activity will be logged and monitored for anomalous behavior using services like AWS CloudTrail and CloudWatch. All logs will be scrubbed of sensitive data before being persisted.
+
+### 6.1. Secure Logging Practices
+
+To comply with privacy regulations like GDPR and to protect user anonymity, our logging strategy will adhere to the following principles:
+
+*   **No Persistent User Identifiers:** We will **not** log the permanent `userId` in any backend service. Logging unique identifiers that can be tied to a specific person is a violation of our privacy promise and can be a legal liability.
+*   **Use of Correlation IDs:** For debugging and tracing purposes, each request will be assigned a temporary, randomly generated `correlationId`. This ID can be used to trace a single request's journey through our backend systems. This ID will have no link to the user's permanent ID and should be considered ephemeral.
+*   **Strict PII Scrubbing:** All logging libraries and services will be configured with strict scrubbing rules to remove any potential PII (names, emails, locations, etc.) that might accidentally be captured in error messages or stack traces.
 
 ## 7. Pre-Launch Security Audit Checklist
 

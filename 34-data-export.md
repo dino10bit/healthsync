@@ -19,22 +19,20 @@ This document provides the detailed specification for the **Data Export** featur
 
 To ensure reliability and performance, especially for large exports, this feature is built on an **asynchronous, backend-driven architecture**. This specification details the process of offloading export jobs to the backend, processing them reliably, and notifying the user when the export is ready for download.
 
-## 2. Data Export Architecture (Backend-Driven)
+## 2. Data Export Architecture (Orchestrated by AWS Step Functions)
 
-The export process is offloaded to the backend to avoid performance, battery, and reliability issues associated with on-device processing.
+To robustly handle a potentially long-running and multi-step process, the Data Export feature will be orchestrated by a dedicated **AWS Step Functions state machine**. This aligns with the architecture for Historical Syncs, promoting architectural consistency, reliability, and observability.
 
-1.  **Initiation (Mobile):** The user selects the source, date range, and format in the mobile app and taps "Start Export."
-2.  **Job Request (Mobile -> Backend):** The app sends a request to a new `/export` endpoint on our API Gateway.
-3.  **Queueing (Backend):** The backend creates a new export job entry in a DynamoDB table and places a corresponding job message into a dedicated **`export-queue` in SQS**.
-4.  **Processing (Backend):** A dedicated fleet of **`export-workers` (AWS Lambdas)** polls the `export-queue`. A worker processes the job by:
-    *   Fetching all the required data from the third-party API.
-    *   Using the `Exporter` modules to format the data into the requested file type(s).
-    *   Compressing the files into a single `.zip` archive.
-5.  **Storage & Notification (Backend):**
-    *   The worker uploads the final `.zip` file to a secure, temporary folder in **S3**.
-    *   The worker updates the job's status to `COMPLETED` in DynamoDB and adds the secure, time-limited S3 download URL.
-    *   The backend sends a **push notification** to the user.
-6.  **Download (Mobile):** The user taps the notification, and the mobile app downloads the file from the S3 URL.
+1.  **Initiation (Mobile):** The user selects the source, date range, and format and taps "Start Export."
+2.  **Start Execution (Mobile -> Backend):** The app calls an API endpoint that triggers a new execution of the `DataExport` state machine, passing in the user's parameters.
+3.  **State Machine Execution (Backend):** The state machine manages the entire workflow:
+    *   **a. Fetch Data in Chunks:** The first step breaks the date range into manageable chunks. A `Map` state processes these chunks in parallel, invoking a Lambda function for each to fetch data from the source API and store it temporarily (e.g., in S3).
+    *   **b. Consolidate & Format:** Once all data is fetched, a single Lambda function consolidates the temporary data and uses the `Exporter` modules to format it into the requested file type(s).
+    *   **c. Compress & Store:** The formatted files are compressed into a single `.zip` archive and uploaded to a secure, temporary folder in S3.
+    *   **d. Finalize & Notify:** The final step updates a DynamoDB table with the job's `COMPLETED` status and the secure, time-limited S3 download URL. It then publishes an event to the `PushNotificationEvents` SNS topic to inform the user.
+4.  **Download (Mobile):** The user taps the notification (`N-07`), and the mobile app downloads the file from the S3 URL.
+
+This approach elegantly handles the risk of Lambda timeouts for large exports, as the state machine can reliably orchestrate many short-lived Lambda functions.
 
 ## 3. User Experience & Workflow
 
@@ -67,35 +65,37 @@ To ensure the integrity of our exported files, a validation process will be impl
 | Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
 | :--- | :--- | :--- | :--- | :--- |
 | **R-91** | The generated export files are corrupt or non-compliant. | **Low** | **High** | The formal "Export Validation Suite" in the backend CI/CD pipeline is the primary mitigation. |
-| **R-92** | An export job for a very large date range exceeds the maximum Lambda execution time (15 mins). | **Medium** | **Medium** | The `export-worker` will be designed to be pausable and resumable. It will process data in chunks and, if nearing the timeout, will save its state and re-queue itself to continue where it left off. |
+| **R-92** | An export job for a very large date range exceeds the maximum Lambda execution time (15 mins). | **Low** | **Medium** | **Mitigated by Design.** The AWS Step Functions architecture breaks the export into multiple, smaller Lambda invocations, ensuring no single function will approach the 15-minute timeout. |
 | **R-93** | The temporary S3 bucket for downloads is misconfigured, allowing public access. | **Low** | **Critical**| All S3 bucket policies will be defined in Terraform and will be set to private by default. Download links will be pre-signed, time-limited URLs, which provide secure, temporary access. |
 
 ## 7. Visual Diagrams
 
-### Backend-Driven Export Architecture
+### Export Architecture (Orchestrated by Step Functions)
 ```mermaid
 graph TD
     subgraph Mobile App
         A[Initiate Export]
-        H[Download File]
+        I[Download File]
     end
     subgraph AWS Backend
         B[API Gateway]
-        C[SQS Export Queue]
-        D[Export Workers (Lambda)]
-        E[DynamoDB Job Table]
-        F[S3 for Exports]
-        G[Push Notification Service]
+        C[Step Functions<br>Export State Machine]
+        D[Fetch Data Chunks (Lambda)]
+        E[Consolidate & Format (Lambda)]
+        F[Compress & Store (Lambda)]
+        G[Finalize & Notify (Lambda)]
+        H[S3 for Exports]
+        J[SNS]
     end
 
-    A --> B;
-    B -- Job Request --> C;
-    B -- Creates Job --> E;
-    D -- Polls --> C;
-    D -- Fetches/Formats Data --> D;
-    D -- Uploads File --> F;
-    D -- Updates Status & URL --> E;
-    D -- Triggers Push --> G;
-    G --> H;
-    H -- Uses URL from Backend --> F;
+    A -- Triggers --> B
+    B -- Starts Execution --> C
+    C -- Invokes --> D
+    C -- Invokes --> E
+    C -- Invokes --> F
+    C -- Invokes --> G
+    F -- Uploads .zip to --> H
+    G -- Publishes event to --> J
+    J -- via FCM --> I
+    I -- Uses URL from Backend --> H
 ```
