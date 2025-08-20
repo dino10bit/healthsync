@@ -14,18 +14,18 @@
 
 ## 1. Executive Summary
 
-This document specifies the strategy for data recovery and service resilience for the SyncWell application, architected to support 1 million DAU. Our strategy has evolved from simple backups to a comprehensive **Disaster Recovery (DR) and High Availability (HA)** plan centered on a **multi-region AWS deployment**. The primary objective is to ensure near-continuous availability and data durability, even in the event of a full regional outage, providing a seamless and reliable user experience.
+This document specifies the strategy for data backup, high availability, and disaster recovery for the SyncWell application's MVP. To balance cost, complexity, and time-to-market, the MVP will be deployed to a **single AWS region**. The strategy is therefore focused on **intra-region high availability** and a robust, well-tested plan for recovering from a disaster scenario such as data corruption or the failure of an entire Availability Zone.
 
-## 2. The Recovery Model: A Highly Available Backend
+## 2. High Availability Strategy (Intra-Region)
 
-The concept of a "backup" is superseded by a model of continuous replication and automated failover. The user's configuration and operational metadata are treated as critical assets, and the architecture is designed to protect them.
+High availability for the MVP is achieved by deploying services across multiple Availability Zones (AZs) within our primary AWS region.
+*   **Stateless Services:** API Gateway and AWS Fargate are inherently highly available and run across multiple AZs by default.
+*   **Stateful Services:**
+    *   **DynamoDB:** The `SyncWellMetadata` table is configured for Multi-AZ deployment.
+    *   **ElastiCache for Redis:** The Redis cluster is configured with Multi-AZ failover.
+    *   **Secrets Manager:** This is a regional service that is resilient to AZ failure by default.
 
-*   **User Account:** Each user is identified by a stable, unique ID from "Sign in with Apple/Google".
-*   **Backend State:** All data associated with this user ID is stored in a highly available and durable backend:
-    *   **Sync Configurations & App Settings:** Stored in a **DynamoDB Global Table**.
-    *   **OAuth Tokens:** Encrypted and stored in **AWS Secrets Manager with cross-region replication**.
-
-This means a user can install the app on any device, sign in, and their experience will be instantly restored. More importantly, the service itself is resilient to major infrastructure failures.
+This multi-AZ approach ensures that the failure of a single Availability Zone does not result in a service outage.
 
 ## 3. The New Device / Re-install Experience
 *(Unchanged from previous version, as this flow remains the same)*
@@ -34,82 +34,59 @@ The recovery process is an integral part of the onboarding flow for a returning 
 
 1.  **First Launch:** On first launch, the app presents the user with "Sign in with Apple" and "Sign in with Google" options.
 2.  **Authentication:** The user signs in with the same method they used originally.
-3.  **State Recovery:** The app, directed by Route 53 to the nearest healthy region, sends the user's ID to the SyncWell backend. The backend retrieves the user's complete configuration from the local replica of the DynamoDB Global Table.
+3.  **State Recovery:** The app sends the user's ID to the SyncWell backend. The backend retrieves the user's complete configuration from the DynamoDB table.
 4.  **Instant Setup:** The app UI populates with all the user's sync configurations.
-5.  **Seamless Syncing:** The user's OAuth tokens are available in the region, so syncs can resume immediately.
+5.  **Seamless Syncing:** The user's OAuth tokens are retrieved from Secrets Manager, and syncs can resume immediately.
 
-## 4. Disaster Recovery Strategy: Active-Active Multi-Region
+## 4. Disaster Recovery Strategy (Single-Region MVP)
 
-As defined in `06-technical-architecture.md`, we will operate in an **active-active multi-region architecture** to achieve maximum availability and resilience. A "disaster" is now defined as an event that makes an entire AWS region unavailable.
+For the single-region MVP, a "disaster" is defined as an event that makes the service entirely unavailable or results in widespread data corruption. This could be a full regional outage or a critical bug. The recovery plan is manual and focuses on restoring data integrity and service functionality from backups.
 
-This strategy yields different recovery objectives depending on the nature of the disaster.
+This strategy yields the following recovery objectives, which are aligned with the NFRs in `06-technical-architecture.md`:
 
 | Failure Scenario | Recovery Time Objective (RTO) | Recovery Point Objective (RPO) | Mechanism |
 | :--- | :--- | :--- | :--- |
-| **Full Regional Outage** | **< 5 minutes** | **< 2 seconds** | **Automated Failover.** Amazon Route 53 health checks detect the failure and automatically redirect traffic to a healthy region. The RPO is governed by the replication lag of DynamoDB Global Tables. |
-| **Cache Cluster Failure** | **< 5 minutes** | **N/A** | **Automatic Failover.** The ElastiCache for Redis cluster is deployed in a Multi-AZ configuration. Failover to a replica is automatic and transparent to the application, consistent with the RTO defined in `06-technical-architecture.md`. |
-| **Data Corruption Event** (e.g., bad code deployment) | **< 4 hours** | **< 5 minutes** | **Manual Restore.** An engineer initiates a DynamoDB Point-in-Time Recovery (PITR) and uses AWS AppConfig to redirect traffic to the restored table. RPO is governed by the continuous backup window of PITR. See the detailed runbook below. |
+| **Full Regional Outage** or **Data Corruption Event** | **< 4 hours** | **< 15 minutes** | **Manual Restore.** An engineer initiates a DynamoDB Point-in-Time Recovery (PITR) to a new table. The application is then repointed to the new table using AWS AppConfig. The RPO is governed by the continuous backup window of PITR. |
+| **Availability Zone Failure** | **< 5 minutes** | **~0** | **Automatic Failover.** Handled automatically by the Multi-AZ configuration of AWS services. |
 
 ### Recovery Mechanisms:
 
-*   **Infrastructure as Code (IaC):** The entire backend infrastructure is defined in **Terraform**. This allows for consistent and repeatable deployments across multiple regions.
-*   **Automated Traffic Failover (Amazon Route 53):**
-    *   We will use Route 53 with latency-based routing and health checks.
-    *   If the health checks for one region fail, Route 53 will automatically stop sending users to the unhealthy region and redirect all traffic to the healthy region(s). This failover is automatic and requires no manual intervention.
-
-*   **Replicated Configuration Data (DynamoDB Global Tables):**
-    *   Our core user metadata tables are configured as **DynamoDB Global Tables**.
-    *   This provides a fully managed, multi-master database that automatically replicates data between AWS regions with typical latency of under one second.
-    *   Both regions have a complete, live copy of the data, so if one region fails, the other can continue operating seamlessly.
-
-*   **Replicated Credentials (AWS Secrets Manager):**
-    *   The OAuth tokens stored in Secrets Manager are critical for our service.
-    *   We will configure **cross-region replication** for our secrets. When a secret is updated in the primary region (e.g., a refreshed token), Secrets Manager automatically replicates that change to the replica secret in the secondary region.
-    *   This ensures that if the primary region fails, the workers in the failover region have access to the up-to-date credentials needed to continue processing sync jobs.
-
+*   **Infrastructure as Code (IaC):** The entire backend infrastructure is defined in **Terraform**. In the event of a full regional outage, this allows for the rapid redeployment of the entire stack to a new, healthy region.
+*   **Data Backup (DynamoDB Point-in-Time Recovery):**
+    *   Our primary recovery mechanism for data is **DynamoDB Point-in-Time Recovery (PITR)**, which is enabled on the `SyncWellMetadata` table.
+    *   PITR provides continuous backups of our table data, allowing us to restore to any single second in the preceding 35 days. This provides an RPO of minutes, or even seconds, depending on how quickly the incident is detected.
+*   **Credential Backup (AWS Secrets Manager):** Secrets Manager is a highly available regional service. In the event of a full regional outage, the secrets would need to be restored from a backup or recreated as part of the recovery process in a new region.
+*   **Configuration-Driven Recovery (AWS AppConfig):**
+    *   The application code does not contain hardcoded resource names (like the DynamoDB table name). Instead, it fetches these from **AWS AppConfig** at startup.
+    *   This is a crucial element of the DR strategy. After restoring a table via PITR, which creates a new table with a new name, an engineer simply updates the `tableName` configuration value in AppConfig.
+    *   This allows the entire application to be repointed to the restored database without requiring a new code deployment, dramatically reducing the RTO.
 *   **Stateless Compute (AWS Fargate):**
-    *   The backend worker fleet is implemented as a set of stateless services running on **AWS Fargate**.
-    *   These tasks do not store any persistent data locally. All state is externalized to DynamoDB and Secrets Manager.
-    *   This stateless design is what enables a seamless, rapid failover. In a regional outage, traffic is simply redirected to the Fargate fleet in a healthy region, which can immediately resume processing using the replicated data stores. No instance-level recovery is required.
+    *   The backend worker fleet is stateless. This is critical for recovery, as no data is stored on the compute instances themselves. In a disaster recovery scenario, a new Fargate fleet can be deployed, and it can immediately start processing jobs once the data layer (DynamoDB) is restored and repointed.
 
-*   **Distributed Locking (DynamoDB Conditional Writes):**
-    *   To prevent race conditions (e.g., two workers processing the same sync job concurrently), a distributed locking mechanism is required.
-    *   **Anti-Pattern Avoidance:** Using a replicated cache (like ElastiCache Global Datastore) for distributed locking in an active-active, multi-region setup is a known anti-pattern. The inherent replication lag can break the mutual exclusion guarantee of a lock, leading to data corruption.
-    *   **Correct Implementation:** We will use **DynamoDB's conditional write** functionality to implement a robust, consistent distributed lock. A worker will attempt to acquire a lock by creating a specific lock item in the `SyncWellMetadata` table with a condition that fails if the item already exists. This leverages DynamoDB's strong consistency for a single-region write, providing a reliable locking mechanism. The lock item will have a short TTL to prevent deadlocks.
-*   **Replicated Cache Data (Amazon ElastiCache):**
-    *   The ElastiCache for Redis cluster is a critical component for **caching and rate-limiting**. A regional failure would lead to a "cache stampede" that could overwhelm the database.
-    *   To mitigate this, each regional ElastiCache cluster will operate independently. In the event of a regional failover, the cache in the newly active region will be cold. This is an acceptable trade-off, as the system will gracefully handle the initial cache misses, and the cache will warm up quickly, preventing a prolonged service degradation.
-
-### Disaster Recovery Flow (Regional Outage)
+### Disaster Recovery Flow (Data Corruption)
 ```mermaid
 graph TD
-    subgraph "Users"
-        UserDevice
-    end
-    subgraph "DNS"
-        Route53
-    end
-    subgraph "AWS Region 1 (Healthy)"
-        App_R1[SyncWell App - Region 1]
-    end
-    subgraph "AWS Region 2 (Failed)"
-        App_R2[SyncWell App - Region 2]
-    end
-
-    UserDevice -- DNS Query --> Route53
-    Route53 -- Health Check OK --> App_R1
-    Route53 -- Health Check FAILED --> App_R2
-    UserDevice -- Traffic --> App_R1
+    A[Data Corruption Detected] --> B(Declare Incident & Halt Writes);
+    B --> C(Identify Restore Point in Time);
+    C --> D(Initiate DynamoDB PITR);
+    D --> E[New Restored Table Created];
+    E --> F(Validate Restored Data);
+    F --> G(Update Table Name in AppConfig);
+    G --> H(Deploy AppConfig Change);
+    H --> I[Service Restored];
 ```
 
 ## 5. Risk Analysis & Mitigation
 
 | Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
 | :--- | :--- | :--- | :--- | :--- |
-| **R-50** | A bug in our code corrupts user configuration data in DynamoDB. | Low | High | Use DynamoDB Point-in-Time Recovery (PITR) to restore the table to a state before the corruption occurred. This is a manual recovery process, separate from the automated HA failover. |
-| **R-51** | A full AWS regional outage makes one of our backend deployments unavailable. | Low | Critical | **Mitigated by Design.** The active-active multi-region architecture with Route 53 failover, DynamoDB Global Tables, and replicated secrets ensures the service remains available. |
-| **R-52** | User loses access to their Apple/Google account. | Medium | Medium | Provide a clear path to contact support for a defined manual account recovery process. See Section 6. |
-| **R-53** | Cross-region replication lag for DynamoDB or Secrets Manager exceeds the RPO. | Low | Medium | Monitor replication lag metrics in CloudWatch. Configure alarms to notify the on-call team of unusual delays. |
+| **R-50** | A bug in our code corrupts user configuration data in DynamoDB. | Low | High | **Mitigated.** Use the manual DynamoDB Point-in-Time Recovery (PITR) runbook to restore the table to a state before the corruption occurred. |
+| **R-51** | A full AWS regional outage makes the backend unavailable. | Low | Critical | **Partially Mitigated.** The RTO is < 4 hours via a manual restore process to a new region using IaC and PITR. The business has accepted this RTO for the MVP to avoid the cost and complexity of a multi-region architecture. |
+| **R-52** | User loses access to their Apple/Google account. | Medium | Medium | **Accepted Risk for MVP.** Manual account recovery is not supported for the MVP due to the high security risk. See Section 6 for details. |
+
+## 6. Future Enhancement: Multi-Region Active-Active
+
+As specified in `06-technical-architecture.md`, a future enhancement to dramatically improve the RTO and RPO is to migrate to a **multi-region, active-active architecture**. This would involve promoting the DynamoDB table to a Global Table, enabling cross-region replication for Secrets Manager, and using Route 53 for automatic, latency-based failover. This would reduce the RTO for a regional outage from hours to minutes, but it is deferred from the MVP due to its significant cost and operational complexity.
 
 ## 6. Detailed Recovery Runbooks
 

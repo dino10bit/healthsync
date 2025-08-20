@@ -23,8 +23,8 @@ This section provides a detailed, bottom-up cost estimation based on the full te
 | :--- | :--- | :--- | :--- |
 | **Core Compute** | AWS Fargate | 90% Spot + Batching (95% of load) | $140.17 |
 | | AWS Lambda | Authorizer, Webhook, WebSocket, etc. | $53.00 |
-| **API & Messaging** | Amazon SQS | FIFO Queue for ~376M jobs * $0.50/M | $188.10 |
-| | Amazon EventBridge| Bus (228M events) | $228.00 |
+| **API & Messaging** | Amazon SQS | FIFO & Standard Queues (~421M messages total) | $206.34 |
+| | Amazon EventBridge| Bus (~57M events post-coalescing) | $57.00 |
 | | API Gateway | WebSocket API for hot users | $10.00 |
 | | AWS Step Functions| Scheduling state machine: ~1.5M transitions | $37.50 |
 | **Database & Cache** | Amazon DynamoDB | No Idempotency Writes | $114.29 |
@@ -36,15 +36,15 @@ This section provides a detailed, bottom-up cost estimation based on the full te
 | | AWS Secrets Manager| App secrets + cached API calls | $11.00 |
 | **Data Storage** | Amazon S3 | Log & backup storage with lifecycle policies | $8.00 |
 | | Amazon CloudFront | CDN for static assets | $5.00 |
-| **Total** | | | **~$1,344.16** |
+| **Total** | | | **~$1,191.40** |
 
 ### 2.1. Analysis of Deep Cost Model
-This detailed, bottom-up analysis reveals that the true operational cost is approximately **$1,344 per month**. This model incorporates a full suite of advanced cost optimizations, including SQS FIFO-based deduplication and a WebSocket tier for active users.
+This detailed, bottom-up analysis reveals that the true operational cost is approximately **$1,191 per month**. This model incorporates a full suite of advanced cost optimizations, including SQS FIFO-based deduplication, event coalescing, and a WebSocket tier for active users.
 
-*   **Key Cost Drivers:** After extensive optimization, the remaining primary cost drivers are eventing (EventBridge/SQS), compute (Fargate), and core database/cache services.
+*   **Key Cost Drivers:** After extensive optimization, the remaining primary cost drivers are messaging (SQS), compute (Fargate), security (WAF), and core database/cache services.
 *   **Fixed vs. Variable Costs:**
     *   **Fixed:** The largest fixed costs are the hourly charges for the NAT Gateway (~$65) and the ElastiCache cluster (~$101). Total fixed costs are approximately **$200/month**.
-    *   **Variable:** The remaining **~$1,144/month** are variable costs that scale directly with user activity.
+    *   **Variable:** The remaining **~$991/month** are variable costs that scale directly with user activity.
 *   **Note on Optimization Savings:** The cost model applies a conservative 10% reduction to Fargate costs for batching efficiencies and a 50% reduction to DynamoDB write costs for the "write-avoidance" strategy. The true savings may be higher and should be validated with a proof-of-concept. The "Fargate Warm Pool" strategy is not explicitly modeled as a cost reduction, but it enables more aggressive scale-to-zero configurations, which is implicitly included in the overall Spot instance savings.
 
 ### 2.2. Granular Analysis of Key Cost Drivers
@@ -60,17 +60,18 @@ The observability suite cost has been heavily optimized via dynamic sampling for
 | **Custom Metrics & Alarms**| Placeholder for various metrics and alarms | $50.00 |
 | **Total** | | **~$119.50** |
 
-#### Amazon EventBridge & SQS Costs (~$416/month)
+#### Amazon EventBridge & SQS Costs (~$263/month)
 The eventing and messaging layer is a critical part of the architecture. Costs are driven by the high volume of events flowing through the system. The following optimizations are in place:
 *   The expensive EventBridge Scheduler has been replaced by a more cost-effective SQS-based delayed polling mechanism.
 *   The highest-volume ingestion path (API Gateway -> SQS) now bypasses EventBridge entirely.
 *   The core `HotPathSyncQueue` uses SQS FIFO, which has a different pricing model than Standard queues.
+*   Event coalescing is used on webhook events to dramatically reduce the number of events sent to EventBridge.
 
 | Service | Component | Calculation | Estimated Cost (per Month) |
 | :--- | :--- | :--- | :--- |
-| **EventBridge** | Custom Event Puts | 228M events * $1.00/M | $228.00 |
-| **SQS** | FIFO Queues | ~376M messages * $0.50/M | $188.10 |
-| **Total** | | | **~$416.10** |
+| **EventBridge** | Custom Event Puts | ~57M events * $1.00/M | $57.00 |
+| **SQS** | FIFO & Standard Queues | ~421M messages * $0.50/M (avg) | $206.34 |
+| **Total** | | | **~$263.34** |
 
 ## 3. Cost Analysis: Peak Load
 
@@ -89,62 +90,62 @@ The following costs are calculated on an **hourly basis**, representing the cost
 | :--- | :--- | :--- | :--- |
 | **Core Compute** | AWS Fargate | Worker Fleet scales to ~310 tasks * $0.055/hr | $17.05 |
 | **Messaging & Events** | Amazon SQS | 10.8M messages * $0.40/M | $4.32 |
-| | Amazon EventBridge| Bus: ~21.6M events * $1.00/M | $21.60 |
+| | Amazon EventBridge| Bus: ~5.4M events * $1.00/M | $5.40 |
 | **Database & Cache** | Amazon DynamoDB | 10.8M writes * $1.25/M | $13.50 |
 | **Observability** | AWS CloudWatch | Logs: ~53 GB ingested * $0.50/GB | $26.50 |
-| **Networking & Security**| AWS Network Firewall| Data: ~77 GB processed * $0.065/GB | $5.01 |
+| **Networking & Security**| AWS NAT Gateway | Data: ~77 GB processed * $0.045/GB | $3.47 |
 | | AWS WAF | 10.8M requests * $0.60/M | $6.48 |
-| **Fixed Costs** | ElastiCache, Firewall Endpoints, etc. | Prorated hourly cost | $0.93 |
-| **Total** | | | **~$95.39 per hour** |
+| **Fixed Costs** | ElastiCache, NAT Gateway, etc. | Prorated hourly cost | $0.23 |
+| **Total** | | | **~$76.95 per hour** |
 
 ### Analysis
 
-Under a sustained peak load of 3,000 RPS, the estimated cost for the infrastructure is approximately **$95 per hour**. This is a significant increase from the normal operating cost of ~$4.83/hour ($3,481 / 720 hours).
+Under a sustained peak load of 3,000 RPS, the estimated cost for the infrastructure is approximately **$77 per hour**. This is a significant increase from the normal operating cost of ~$1.65/hour ($1,191 / 720 hours).
 
-*   **Primary Drivers:** During a peak event, the primary cost drivers shift to services that scale directly with request volume. **CloudWatch Log Ingestion** becomes the single largest expense, followed closely by **EventBridge** events and **Fargate** compute.
-*   **Financial Implications:** While a cost of nearly $100/hour is high, it's important to frame it within the context of a temporary spike. If such a peak were sustained for a full 24 hours, it would cost ~$2,280. This analysis confirms that the on-demand, serverless nature of the architecture allows it to handle extreme peaks in load, but highlights the importance of cost monitoring and anomaly detection to alert the team if such a peak is sustained for an unusual length of time.
+*   **Primary Drivers:** During a peak event, the primary cost drivers shift to services that scale directly with request volume. **CloudWatch Log Ingestion** becomes the single largest expense, followed by **Fargate** compute and **DynamoDB** writes.
+*   **Financial Implications:** While a cost of $77/hour is high, it's important to frame it within the context of a temporary spike. If such a peak were sustained for a full 24 hours, it would cost ~$1,848. This analysis confirms that the on-demand, serverless nature of the architecture allows it to handle extreme peaks in load, but highlights the importance of cost monitoring and anomaly detection to alert the team if such a peak is sustained for an unusual length of time.
 
 ## 4. Financial Projections & Scalability (Revised)
 
-This section is revised based on the new, fully-optimized cost model of ~$1,344/month.
+This section is revised based on the new, fully-optimized cost model of ~$1,191/month.
 
 ### 4.1. Annual Cost Projection (1M DAU)
-*   **Calculation:** $1,344/month * 12 months = **$16,128**
-*   **Projected Annual Cost:** Approximately **$16,100 per year**.
+*   **Calculation:** $1,191/month * 12 months = **$14,292**
+*   **Projected Annual Cost:** Approximately **$14,300 per year**.
 
 ### 4.2. Revised Scalability Analysis
-Based on the new cost structure (Fixed: ~$200/month, Variable: ~$1,144/month per 1M DAU). This table projects the costs for different user load scenarios.
+Based on the new cost structure (Fixed: ~$200/month, Variable: ~$991/month per 1M DAU). This table projects the costs for different user load scenarios.
 
 | Metric | 250k DAU (Projected) | 1M DAU (Baseline) | 5M DAU (Projected) | 10M DAU (Projected) | 20M DAU (Projected) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Variable Costs/Month**| ~$286 | ~$1,144 | ~$5,720 | ~$11,440 | ~$22,880 |
+| **Variable Costs/Month**| ~$248 | ~$991 | ~$4,955 | ~$9,910 | ~$19,820 |
 | **Fixed Costs/Month** | ~$200 | ~$200 | ~$200 | ~$200 | ~$200 |
-| **Total Monthly Cost**| **~$486** | **~$1,344** | **~$5,920** | **~$11,640** | **~$23,080** |
+| **Total Monthly Cost**| **~$448** | **~$1,191** | **~$5,155** | **~$10,110** | **~$20,020** |
 
 *Note: Fixed costs are held constant for this projection. A more detailed analysis is required to model how these costs (e.g., for cache clusters) will step-scale with significantly higher user loads.*
 
 ## 5. Cost of Goods Sold (COGS) Analysis (Revised)
 
-This analysis is updated with the new total monthly cost of ~$1,344.
+This analysis is updated with the new total monthly cost of ~$1,191.
 
-*   **Blended Average Cost Per User (ACPU):** $1,344 / 1,000,000 DAU = **$0.0013 per user per month**.
-*   **Tier-Specific Cost:** A Pro user now costs approximately **$0.0045 per month**, while a Free user costs **$0.0004 per month**.
+*   **Blended Average Cost Per User (ACPU):** $1,191 / 1,000,000 DAU = **$0.0012 per user per month**.
+*   **Tier-Specific Cost:** A Pro user now costs approximately **$0.0040 per month**, while a Free user costs **$0.0003 per month**.
 
 ## 6. Break-Even Analysis (Revised)
 
 With the fully optimized cost base, the break-even point is recalculated.
 
 *   **Assumption:** Pro Tier Price of $2.99/month.
-*   **Calculation:** `P * $2.99/month = $1,344/month`
-*   **Result:** `P ≈ 450`
-*   **Analysis:** The revenue from approximately **450 Pro subscribers** is required to cover the entire monthly infrastructure cost. This represents only **0.225%** of the 200,000 Pro users projected at the 1M DAU mark, indicating an extremely robust business model.
+*   **Calculation:** `P * $2.99/month = $1,191/month`
+*   **Result:** `P ≈ 398`
+*   **Analysis:** The revenue from approximately **398 Pro subscribers** is required to cover the entire monthly infrastructure cost. This represents only **0.20%** of the 200,000 Pro users projected at the 1M DAU mark, indicating an extremely robust business model.
 
 ## 7. Long-Term Data Storage Costs
 *(This analysis is still valid and integrated into the main table, but is kept for its detailed breakdown.)*
 
 ## 8. Sensitivity Analysis
 
-This section explores how the total monthly cost of the platform reacts to changes in key operational variables. The "Normal Load" model of ~$3,481/month is used as the baseline. This analysis helps identify which parts of the architecture are most sensitive to changes in workload characteristics, providing insight into potential future cost risks and optimization opportunities.
+This section explores how the total monthly cost of the platform reacts to changes in key operational variables. The "Normal Load" model of ~$1,191/month is used as the baseline. This analysis helps identify which parts of the architecture are most sensitive to changes in workload characteristics, providing insight into potential future cost risks and optimization opportunities.
 
 The following scenarios model the impact of a significant percentage increase in a specific cost driver.
 
