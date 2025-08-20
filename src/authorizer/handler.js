@@ -20,6 +20,32 @@ const dynamoDBClient = new DynamoDBClient({ region: process.env.AWS_REGION });
 // The name of the secure lookup table, passed in via environment variables.
 const BREAK_GLASS_TABLE_NAME = process.env.BREAK_GLASS_TABLE_NAME;
 
+// --- Structured Logger ---
+const LogLevel = {
+  DEBUG: 0,
+  INFO: 1,
+  WARN: 2,
+  ERROR: 3,
+};
+
+const CURRENT_LOG_LEVEL = LogLevel[process.env.LOG_LEVEL?.toUpperCase() || 'INFO'];
+
+function log(level, message, context = {}) {
+  if (level >= CURRENT_LOG_LEVEL) {
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      level: Object.keys(LogLevel).find(key => LogLevel[key] === level),
+      message,
+      ...context,
+    };
+    // Using console.log for all levels to output the JSON structure.
+    // CloudWatch Logs will parse this and allow for structured querying.
+    console.log(JSON.stringify(logEntry));
+  }
+}
+// --- End Structured Logger ---
+
+
 /**
  * Main handler for the Lambda Authorizer.
  * @param {object} event The event object from API Gateway.
@@ -27,12 +53,13 @@ const BREAK_GLASS_TABLE_NAME = process.env.BREAK_GLASS_TABLE_NAME;
  */
 export const handler = async (event) => {
   const correlationId = randomUUID();
-  console.log(`Starting authorization for request. CorrelationId: ${correlationId}`);
+  const base_context = { correlationId };
+  log(LogLevel.INFO, `Starting authorization for request.`, base_context);
 
   try {
     const token = getToken(event);
     if (!token) {
-      console.warn(`[${correlationId}] No token found in request.`);
+      log(LogLevel.WARN, `No token found in request.`, base_context);
       throw new Error('Unauthorized'); // This will result in a 401 response
     }
 
@@ -40,8 +67,9 @@ export const handler = async (event) => {
     // validate the JWT signature, issuer, audience, and expiration.
     // This typically involves fetching the public keys (JWKS) from the issuer.
     // For this example, we will assume validation is successful and returns a decoded token.
-    const decodedToken = await validateJwt(token);
+    const decodedToken = await validateJwt(token, base_context);
     const userId = decodedToken.sub; // 'sub' claim usually contains the user ID
+    const user_context = { ...base_context, userId };
 
     // Asynchronously write the mapping to the break-glass index.
     // We do not `await` this promise, as it is not on the critical path for
@@ -50,10 +78,10 @@ export const handler = async (event) => {
     writeToBreakGlassIndex(userId, correlationId).catch(err => {
       // It is critical to catch and log any errors here so that a failure
       // in our debugging mechanism does not cause the user's request to fail.
-      console.error(`[${correlationId}] Failed to write to break-glass index for user ${userId}:`, err);
+      log(LogLevel.ERROR, `Failed to write to break-glass index`, { ...user_context, error: err.message });
     });
 
-    console.log(`[${correlationId}] Successfully authorized user ${userId}.`);
+    log(LogLevel.INFO, `Successfully authorized user`, user_context);
 
     // Return the IAM policy that allows the request to proceed.
     // The `principalId` is set to the user's unique ID.
@@ -64,7 +92,7 @@ export const handler = async (event) => {
     });
 
   } catch (error) {
-    console.error(`[${correlationId}] Authorization failed:`, error.message);
+    log(LogLevel.ERROR, `Authorization failed`, { ...base_context, error: error.message });
     // In case of any error, explicitly deny access.
     return generatePolicy('user', 'Deny', event.methodArn);
   }
@@ -108,13 +136,14 @@ function getToken(event) {
 /**
  * A placeholder for a real JWT validation function.
  * @param {string} token The JWT to validate.
+ * @param {object} context Logging context
  * @returns {Promise<object>} The decoded token payload.
  */
-async function validateJwt(token) {
+async function validateJwt(token, context) {
   // In a real application, this would use a library like 'jsonwebtoken' or 'aws-jwt-verify'
   // to verify the token against the Firebase public keys (JWKS).
   // For this example, we'll return a mock decoded token.
-  console.log('Simulating JWT validation for token:', token.substring(0, 15) + '...');
+  log(LogLevel.DEBUG, 'Simulating JWT validation', { ...context, token: token.substring(0, 15) + '...' });
   return {
     sub: 'user-123-abc', // Mock user ID
     iss: 'https://securetoken.google.com/your-firebase-project',
