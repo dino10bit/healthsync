@@ -26,38 +26,39 @@ This section provides a detailed, bottom-up cost estimation based on the full te
 | **Messaging & Events** | Amazon SQS | Queue for 396M jobs * $0.40/M | $158.40 |
 | | Amazon EventBridge| Bus (228M events) | $228.00 |
 | | AWS Step Functions| Scheduling state machine: ~1.5M transitions | $37.50 |
-| **Database & Cache** | Amazon DynamoDB | Batching Savings (10%) | $293.02 |
+| **Database & Cache** | Amazon DynamoDB | Write-Avoidance & Batching Savings | $175.82 |
 | | Amazon ElastiCache| 2x `cache.t4g.medium` nodes for Redis | $100.80 |
-| **Observability** | AWS CloudWatch | Logs (114GB ingested), Metrics, Alarms, X-Ray | $232.00 |
+| **Observability** | AWS CloudWatch | Sampled Logs & Traces, Metrics, Alarms | $119.50 |
 | **Networking & Security**| AWS NAT Gateway | Egress for Fargate Fleet (1.6TB processed) | $137.00 |
 | | AWS WAF | Web ACL, rules, and 250M requests | $160.00 |
 | **Data Governance** | AWS Glue Schema Registry| 100 versions + 218M requests | $31.80 |
 | | AWS Secrets Manager| App secrets + cached API calls | $11.00 |
 | | AWS AppConfig | Free tier covers usage | $0.00 |
 | **Data Storage** | Amazon S3 | Log & backup storage with lifecycle policies | $8.00 |
-| **Total** | | | **~$1,862.07** |
+| | Amazon CloudFront | CDN for static assets | $5.00 |
+| **Total** | | | **~$1,637.37** |
 
 ### 2.1. Analysis of Deep Cost Model
-This detailed, bottom-up analysis reveals that the true operational cost is approximately **$1,900 per month**. This model incorporates a full suite of advanced cost optimizations.
+This detailed, bottom-up analysis reveals that the true operational cost is approximately **$1,650 per month**. This model incorporates a full suite of advanced cost optimizations.
 
-*   **Key Cost Drivers:** After extensive optimization, the remaining primary cost drivers are eventing (EventBridge/SQS), observability (CloudWatch), and core database/cache services.
+*   **Key Cost Drivers:** After extensive optimization, the remaining primary cost drivers are eventing (EventBridge/SQS), compute (Fargate), and core database/cache services.
 *   **Fixed vs. Variable Costs:**
     *   **Fixed:** The largest fixed costs are the hourly charges for the NAT Gateway (~$65) and the ElastiCache cluster (~$101). Total fixed costs are approximately **$200/month**.
-    *   **Variable:** The remaining **~$1,660/month** are variable costs that scale directly with user activity.
-*   **Note on Batching Savings:** The cost model applies a conservative 10% reduction to Fargate and DynamoDB costs to account for the expected efficiencies of worker batching. The true savings may be higher and should be validated with a proof-of-concept.
+    *   **Variable:** The remaining **~$1,450/month** are variable costs that scale directly with user activity.
+*   **Note on Optimization Savings:** The cost model applies a conservative 10% reduction to Fargate costs for batching efficiencies and a 50% reduction to DynamoDB write costs for the "write-avoidance" strategy. The true savings may be higher and should be validated with a proof-of-concept.
 
 ### 2.2. Granular Analysis of Key Cost Drivers
 To better understand the cost structure, this section provides a deeper look into the key cost drivers.
 
-#### Amazon CloudWatch Costs (~$232/month)
-The observability suite, while still a major expense, has been significantly optimized. The cost is now primarily driven by X-Ray traces and a baseline of sampled logs.
+#### Amazon CloudWatch Costs (~$120/month)
+The observability suite cost has been heavily optimized via dynamic sampling for both logs and traces.
 
 | CloudWatch Component | Calculation | Estimated Cost (per Month) |
 | :--- | :--- | :--- |
 | **Log Ingestion** | ~114 GB of logs * $0.50/GB (90% sampled) | $57.00 |
-| **X-Ray Traces** | ~25M traces * $5.00/M | $125.00 |
+| **X-Ray Traces** | ~2.5M traces * $5.00/M (90% sampled) | $12.50 |
 | **Custom Metrics & Alarms**| Placeholder for various metrics and alarms | $50.00 |
-| **Total** | | **~$232.00** |
+| **Total** | | **~$119.50** |
 
 #### Amazon EventBridge & SQS Costs (~$386/month)
 The eventing and messaging layer is a critical part of the architecture. Costs are driven by the high volume of events flowing through the system. The following optimizations are in place:

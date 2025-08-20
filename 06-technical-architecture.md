@@ -123,6 +123,11 @@ Designs for post-MVP features like the "cold path" for historical syncs have bee
         *   **Behavior:** The system should operate with sensible, hard-coded default configurations that are bundled with the application. For example, it would use a default logging level and disable non-essential features that rely on feature flags.
         *   **Critical Failure:** If a critical value like the DynamoDB table name cannot be retrieved, the service must fail fast and explicitly, logging a critical error.
 
+8.  **Static Asset Delivery (Amazon S3 & CloudFront)**
+    *   **Description:** A global content delivery network (CDN) to ensure that all static assets are delivered to users with low latency and high transfer speeds.
+    *   **Technology:** Amazon S3, Amazon CloudFront.
+    *   **Responsibilities:** Hosts and serves all static assets for the mobile application, such as provider icons, marketing banners, and tutorial images. The mobile client will fetch these assets directly from the nearest CloudFront edge location, not from the backend service. This is a critical best practice for performance and cost-effectiveness.
+
 ### Level 3: Components (Inside the KMP Shared Module)
 
 The KMP module contains the core, shareable business logic. The architectural strategy is to use **KMP for portable business logic** and **platform-native runtimes for performance-critical infrastructure code**.
@@ -346,7 +351,7 @@ To improve throughput and further reduce costs across compute, database, and net
 
 *   **SQS Batch Polling:** Instead of receiving a single message, the worker will be configured to receive a batch of up to 10 messages from the `HotPathSyncQueue` in a single poll.
 *   **Grouped Execution:** The worker will group the jobs from the batch by the third-party provider (e.g., all Fitbit jobs together). This enables more efficient execution by, for example, reusing a single authenticated HTTP client for multiple requests to the same provider.
-*   **Batch Database Writes:** When persisting metadata updates, the worker **must** use DynamoDB's `BatchWriteItem` operation to write multiple items in a single API call, reducing the number of provisioned write operations and lowering database costs.
+*   **Batch and Conditional Database Writes:** When persisting metadata updates, the worker **must** use DynamoDB's `BatchWriteItem` operation to write multiple items in a single API call. Critically, to avoid costs from "empty" polls that find no new data, the worker **must not** perform a write operation for any sync job that results in zero new records being processed. This "write-avoidance" strategy significantly reduces the number of database writes at scale.
 *   **Cascading Benefits:** This strategy reduces the per-job overhead, leading to lower Fargate compute times, fewer total API calls to DynamoDB, and potentially reduced data transfer.
 
 #### DynamoDB Capacity Model
@@ -745,6 +750,7 @@ For analytics, **Amazon Kinesis Data Firehose** will be used.
     *   **Success Path:** If a sync job completes successfully, the worker will only ingest the buffered logs into CloudWatch if a sampling condition is met (e.g., `hash(jobId) % 1000 == 0`). This means, for example, only 0.1% of successful job logs are stored. The sampling rate itself **must** be configurable via AWS AppConfig to allow for dynamic tuning in production.
     *   **Failure Path:** If a sync job fails for any reason (including transient errors, DLQ redrives, etc.), **all** buffered logs for that specific job execution will be ingested into CloudWatch to guarantee full diagnostic visibility.
     *   **Benefit:** This "Head/Tail" sampling approach provides full observability for errors and anomalies, while dramatically reducing the log volume—and therefore cost—for the vast majority of successful executions.
+*   **Dynamic X-Ray Trace Sampling:** By default, AWS X-Ray traces every request, which can be costly at scale. To manage this, the system will implement dynamic sampling. A low default sampling rate (e.g., 1 request per second and 5% of all requests) will be configured for the main API Gateway stage. This captures a baseline for performance monitoring. Additionally, specific, higher-volume sampling rules will be applied to critical user flows (e.g., new user sign-up, payment processing) to ensure full visibility into key interactions. This approach significantly reduces cost while retaining deep observability where it is most needed.
 *   **Key Metrics & Alerting:**
     *   **Idempotency Key Collisions:** This will be tracked via a custom CloudWatch metric published using the **Embedded Metric Format (EMF)** from the worker Fargate task. An alarm will trigger on any anomalous spike.
     *   **KPIs:** In addition to system metrics, we will track business and product KPIs. The following table provides a more complete view.
@@ -944,6 +950,8 @@ graph TD
     end
 
     subgraph "AWS Cloud"
+        CloudFront[CloudFront CDN]
+        S3Assets[S3 Bucket for Static Assets]
         WAF[AWS WAF]
         APIGateway[API Gateway]
         WebhookIngressLambda[Webhook Ingress Lambda]
@@ -969,6 +977,8 @@ graph TD
         end
     end
 
+    CloudFront -- "Serves content from" --> S3Assets
+    MobileApp -- "Fetches static assets from" --> CloudFront
     MobileApp -- "Signs up / signs in with" --> FirebaseAuth
     MobileApp -- "HTTPS Request (with Firebase JWT)" --> WAF
     WAF -- "Filters traffic to" --> APIGateway
