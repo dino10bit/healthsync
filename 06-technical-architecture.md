@@ -128,6 +128,11 @@ Designs for post-MVP features like the "cold path" for historical syncs have bee
     *   **Technology:** Amazon S3, Amazon CloudFront.
     *   **Responsibilities:** Hosts and serves all static assets for the mobile application, such as provider icons, marketing banners, and tutorial images. The mobile client will fetch these assets directly from the nearest CloudFront edge location, not from the backend service. This is a critical best practice for performance and cost-effectiveness.
 
+9.  **Real-time WebSocket API (API Gateway)**
+    *   **Description:** A persistent, stateful connection endpoint for foreground users to provide a near real-time sync experience and reduce load on the asynchronous backend.
+    *   **Technology:** API Gateway (WebSocket API), AWS Lambda.
+    *   **Responsibilities:** Manages the WebSocket lifecycle (`$connect`, `$disconnect`, `$default`). When a sync is requested over the WebSocket, it is routed to a lightweight `SyncOverSocketLambda` which can process the sync and return the result directly over the connection. This bypasses the entire SQS/Fargate flow for "hot users," providing lower latency and reducing costs.
+
 ### Level 3: Components (Inside the KMP Shared Module)
 
 The KMP module contains the core, shareable business logic. The architectural strategy is to use **KMP for portable business logic** and **platform-native runtimes for performance-critical infrastructure code**.
@@ -206,8 +211,8 @@ For the MVP, cloud-to-cloud syncs are handled by a single, reliable architectura
 *   **Use Case:** Handling frequent, automatic, and user-initiated manual syncs for recent data.
 *   **Flow:**
     1.  The Mobile App sends a request to API Gateway to start a sync.
-    2.  **API Gateway** uses a direct AWS service integration to validate the request and send the `HotPathSyncRequested` message directly to the **Amazon SQS queue** (`HotPathSyncQueue`). This is a critical cost optimization that bypasses the more expensive EventBridge service for this specific high-volume ingestion path.
-    3.  The SQS queue, which now receives messages directly from API Gateway, acts as a buffer to protect the system from load spikes.
+    2.  **API Gateway** uses a direct AWS service integration to validate the request and send the `HotPathSyncRequested` message directly to the **Amazon SQS FIFO queue** (`HotPathSyncQueue`). This is a critical cost optimization that bypasses the more expensive EventBridge service for this specific high-volume ingestion path.
+    3.  The SQS FIFO queue, which now receives messages directly from API Gateway, acts as a buffer to protect the system from load spikes.
     4.  The SQS queue is polled by the `Worker Fargate Task`, which processes the job.
     5.  **Failure Handling:** The primary SQS queue is configured with a **Dead-Letter Queue (DLQ)**. On a **non-transient processing error** (e.g., an invalid credentials error `401`, a permanent API change `404`, or an internal code bug), the worker throws an exception. After a configured number of retries (`maxReceiveCount`), SQS automatically moves the failed message to the DLQ for out-of-band analysis.
         *   **`maxReceiveCount` Rationale:** This will be set to **5**. This value is chosen to balance allowing recovery from intermittent, transient network or third-party API errors against not waiting too long to detect a persistent failure. A message that fails 5 times over approximately 1-2 minutes indicates a persistent issue that requires manual intervention and aligns with our goal of identifying and fixing broken integrations quickly.
@@ -254,20 +259,14 @@ In a distributed, event-driven system, operations can be retried, making a robus
 #### Post-MVP: Idempotency for Historical Syncs (Step Functions)
 For long-running historical syncs, an additional layer of idempotency will be required at the orchestration level. The design for this is captured alongside the Historical Sync architecture in `45-future-enhancements.md`.
 
-#### Idempotency Store Implementation
+#### Idempotency via SQS FIFO Deduplication
 
-To ensure a single, consistent, and highly-available locking mechanism, the idempotency check **must** be implemented using **DynamoDB's conditional write functionality**. While Redis is used for caching, DynamoDB is superior for this critical locking mechanism as it provides stronger consistency guarantees and durability, which is essential for preventing duplicate processing. This avoids potential race conditions from cache replication lag and consolidates our locking strategy on a durable database.
+To ensure jobs are processed exactly once while minimizing cost and complexity, the system will leverage the native deduplication feature of **Amazon SQS FIFO queues**. This is a more cost-effective and simpler approach than maintaining a separate locking mechanism in DynamoDB.
 
-*   **Item Schema (in `SyncWellMetadata` table):**
-    *   **PK:** `IDEM##{idempotencyKey}`
-    *   **SK:** `IDEM##{idempotencyKey}`
-    *   **status:** A string indicating the status: `INPROGRESS` or `COMPLETED`.
-    *   **ttl:** A standard DynamoDB TTL attribute to ensure automatic cleanup of old records.
-*   **TTL Rationale:** A **24-hour TTL** is used on `COMPLETED` keys. This is a specific requirement to support clients that may be offline for up to a day. If an offline client retries an operation after coming back online, this TTL ensures the operation is not duplicated. The `INPROGRESS` lock will have a much shorter TTL (5 minutes) to prevent deadlocks if a worker crashes.
-
-The following sequence diagram illustrates the robust end-to-end flow using DynamoDB.
-
-*(See Diagram 5 in the "Visual Diagrams" section below.)*
+*   **Queue Type:** The `HotPathSyncQueue` will be converted from a Standard SQS queue to a FIFO queue.
+*   **Deduplication ID:** The client-generated `Idempotency-Key` (passed in the API header) will be used as the `MessageDeduplicationId` when the message is sent to the SQS FIFO queue.
+*   **Mechanism:** SQS FIFO queues automatically prevent messages with the same `MessageDeduplicationId` from being delivered more than once within the 5-minute deduplication interval. This guarantees that a retried API call from the client will not result in a duplicate job being processed.
+*   **Benefit:** This approach eliminates an entire class of database operations (one write and potentially one read per job for locking), significantly reducing DynamoDB costs and simplifying the worker logic, as it no longer needs to manage a distributed lock. The trade-off is a lower maximum throughput for FIFO queues compared to Standard queues, but the 3,000 transactions per second (with batching) supported by FIFO is well above the system's NFRs.
 
 ## 3b. Architecture for 1M DAU
 
@@ -353,6 +352,13 @@ To improve throughput and further reduce costs across compute, database, and net
 *   **Grouped Execution:** The worker will group the jobs from the batch by the third-party provider (e.g., all Fitbit jobs together). This enables more efficient execution by, for example, reusing a single authenticated HTTP client for multiple requests to the same provider.
 *   **Batch and Conditional Database Writes:** When persisting metadata updates, the worker **must** use DynamoDB's `BatchWriteItem` operation to write multiple items in a single API call. Critically, to avoid costs from "empty" polls that find no new data, the worker **must not** perform a write operation for any sync job that results in zero new records being processed. This "write-avoidance" strategy significantly reduces the number of database writes at scale.
 *   **Cascading Benefits:** This strategy reduces the per-job overhead, leading to lower Fargate compute times, fewer total API calls to DynamoDB, and potentially reduced data transfer.
+
+#### Fargate "Warm Pool" for Improved Scale-Out Performance
+To enable more aggressive scale-to-zero settings for the Fargate fleet (especially during off-peak hours) without sacrificing performance during traffic spikes, the architecture will include a "warm pool" strategy.
+
+*   **Mechanism:** A low-priority SQS queue, named `WarmPoolQueue`, will be populated with a small, constant number of "dummy" or "no-op" jobs. The Fargate auto-scaling configuration will be set to target this queue in addition to the main `HotPathSyncQueue`.
+*   **Behavior:** When the main queue is empty, workers will pull from the `WarmPoolQueue`. This ensures that a minimum number of Fargate tasks (and their underlying ENIs and container images) are always warm and ready to handle a sudden burst of real jobs.
+*   **Benefit:** This trades a very small amount of "busy work" compute for significantly improved scale-out latency. It allows the main fleet to scale down to a lower baseline "desired count" and rely more heavily on cheaper Spot instances, knowing that replacements can be brought online and begin processing jobs much more quickly.
 
 #### DynamoDB Capacity Model
 We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased (e.g., via a Savings Plan) to handle the predictable average load, with an initial estimate of covering **70% of expected peak usage**. **On-Demand Capacity** will handle any traffic that exceeds this provisioned throughput. This ratio will be tuned based on production traffic patterns.
@@ -953,7 +959,9 @@ graph TD
         CloudFront[CloudFront CDN]
         S3Assets[S3 Bucket for Static Assets]
         WAF[AWS WAF]
-        APIGateway[API Gateway]
+        RestApi[REST API Gateway]
+        WebSocketApi[WebSocket API Gateway]
+        SyncOverSocketLambda[Sync-over-Socket Lambda]
         WebhookIngressLambda[Webhook Ingress Lambda]
         AuthorizerLambda[Authorizer Lambda]
         HotPathEventBus[EventBridge Event Bus]
@@ -980,14 +988,16 @@ graph TD
     CloudFront -- "Serves content from" --> S3Assets
     MobileApp -- "Fetches static assets from" --> CloudFront
     MobileApp -- "Signs up / signs in with" --> FirebaseAuth
+    MobileApp -- "Establishes connection with" --> WebSocketApi
+    WebSocketApi -- "Routes sync requests to" --> SyncOverSocketLambda
     MobileApp -- "HTTPS Request (with Firebase JWT)" --> WAF
-    WAF -- "Filters traffic to" --> APIGateway
+    WAF -- "Filters traffic to" --> RestApi
 
-    APIGateway -- "Validates JWT with" --> AuthorizerLambda
+    RestApi -- "Validates JWT with" --> AuthorizerLambda
     AuthorizerLambda -- "Fetches public keys from" --> FirebaseAuth
-    APIGateway -- "Publishes 'HotPathSyncRequested' event" --> HotPathEventBus
-    ThirdPartyAPIs -- "Sends Webhook -->" --> APIGateway
-    APIGateway -- "Routes to" --> WebhookIngressLambda
+    RestApi -- "Publishes 'HotPathSyncRequested' event" --> HotPathEventBus
+    ThirdPartyAPIs -- "Sends Webhook -->" --> RestApi
+    RestApi -- "Routes to" --> WebhookIngressLambda
     WebhookIngressLambda -- "Publishes 'HotPathSyncRequested' event" --> HotPathEventBus
 
 
@@ -1036,46 +1046,6 @@ graph TD
         SQS -- 4. Triggers --> D[Worker Fargate Task]
         D -- 5. Fetch/Write data --> E[Third-Party APIs]
         D -- 6. Publishes 'SyncSucceeded' event --> C
-    end
-```
-
-### Diagram 5: Idempotency Sequence Diagram
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client
-    participant APIGateway as "API Gateway"
-    participant WorkerFargateTask
-    participant IdempotencyStore as "DynamoDB"
-
-    Client->>APIGateway: POST /sync-jobs<br>Idempotency-Key: K1
-    APIGateway-->>Client: 202 Accepted
-
-    note over WorkerFargateTask: Receives job for key K1
-
-    WorkerFargateTask->>IdempotencyStore: PutItem({PK: "IDEM#K1", SK: "IDEM#K1", status: "INPROGRESS", ttl: ...})<br>Condition: attribute_not_exists(PK)
-    alt Lock Failed (ConditionalCheckFailedException)
-        IdempotencyStore-->>WorkerFargateTask: ConditionalCheckFailedException
-        WorkerFargateTask->>IdempotencyStore: GetItem({PK: "IDEM#K1"})
-        alt Key is "COMPLETED"
-            IdempotencyStore-->>WorkerFargateTask: {status: "COMPLETED"}
-            WorkerFargateTask->>WorkerFargateTask: Log "Duplicate suppressed" and exit
-        else Key is "INPROGRESS" or missing
-            IdempotencyStore-->>WorkerFargateTask: {status: "INPROGRESS"} / null
-            WorkerFargateTask->>WorkerFargateTask: Log "Race condition suppressed" and exit
-        end
-    else Lock Acquired
-        IdempotencyStore-->>WorkerFargateTask: OK
-        WorkerFargateTask->>WorkerFargateTask: Execute business logic...
-        alt Business logic is successful
-            WorkerFargateTask->>IdempotencyStore: UpdateItem({PK: "IDEM#K1", status: "COMPLETED", ttl: ...})
-            note right of IdempotencyStore: Update key, set 24hr TTL
-        else Business logic fails
-            WorkerFargateTask->>IdempotencyStore: DeleteItem({PK: "IDEM#K1"})
-            note right of IdempotencyStore: Delete lock to allow clean retry.<br>If this fails, the lock expires<br>in 5 mins anyway via TTL.
-            WorkerFargateTask->>WorkerFargateTask: Throw error to allow SQS retry
-        end
     end
 ```
 

@@ -21,31 +21,31 @@ This section provides a detailed, bottom-up cost estimation based on the full te
 
 | Category | Service | Component & Calculation | Estimated Cost (per Month) |
 | :--- | :--- | :--- | :--- |
-| **Core Compute** | AWS Fargate | 90% Spot + Batching Savings (10%) | $147.55 |
-| | AWS Lambda | Authorizer, Webhook, Scheduler funcs: ~115M invocations | $48.00 |
-| **Messaging & Events** | Amazon SQS | Queue for 396M jobs * $0.40/M | $158.40 |
+| **Core Compute** | AWS Fargate | 90% Spot + Batching (95% of load) | $140.17 |
+| | AWS Lambda | Authorizer, Webhook, WebSocket, etc. | $53.00 |
+| **API & Messaging** | Amazon SQS | FIFO Queue for ~376M jobs * $0.50/M | $188.10 |
 | | Amazon EventBridge| Bus (228M events) | $228.00 |
+| | API Gateway | WebSocket API for hot users | $10.00 |
 | | AWS Step Functions| Scheduling state machine: ~1.5M transitions | $37.50 |
-| **Database & Cache** | Amazon DynamoDB | Write-Avoidance & Batching Savings | $175.82 |
+| **Database & Cache** | Amazon DynamoDB | No Idempotency Writes | $114.29 |
 | | Amazon ElastiCache| 2x `cache.t4g.medium` nodes for Redis | $100.80 |
 | **Observability** | AWS CloudWatch | Sampled Logs & Traces, Metrics, Alarms | $119.50 |
 | **Networking & Security**| AWS NAT Gateway | Egress for Fargate Fleet (1.6TB processed) | $137.00 |
 | | AWS WAF | Web ACL, rules, and 250M requests | $160.00 |
 | **Data Governance** | AWS Glue Schema Registry| 100 versions + 218M requests | $31.80 |
 | | AWS Secrets Manager| App secrets + cached API calls | $11.00 |
-| | AWS AppConfig | Free tier covers usage | $0.00 |
 | **Data Storage** | Amazon S3 | Log & backup storage with lifecycle policies | $8.00 |
 | | Amazon CloudFront | CDN for static assets | $5.00 |
-| **Total** | | | **~$1,637.37** |
+| **Total** | | | **~$1,613.16** |
 
 ### 2.1. Analysis of Deep Cost Model
-This detailed, bottom-up analysis reveals that the true operational cost is approximately **$1,650 per month**. This model incorporates a full suite of advanced cost optimizations.
+This detailed, bottom-up analysis reveals that the true operational cost is approximately **$1,600 per month**. This model incorporates a full suite of advanced cost optimizations, including SQS FIFO-based deduplication and a WebSocket tier for active users.
 
 *   **Key Cost Drivers:** After extensive optimization, the remaining primary cost drivers are eventing (EventBridge/SQS), compute (Fargate), and core database/cache services.
 *   **Fixed vs. Variable Costs:**
     *   **Fixed:** The largest fixed costs are the hourly charges for the NAT Gateway (~$65) and the ElastiCache cluster (~$101). Total fixed costs are approximately **$200/month**.
     *   **Variable:** The remaining **~$1,450/month** are variable costs that scale directly with user activity.
-*   **Note on Optimization Savings:** The cost model applies a conservative 10% reduction to Fargate costs for batching efficiencies and a 50% reduction to DynamoDB write costs for the "write-avoidance" strategy. The true savings may be higher and should be validated with a proof-of-concept.
+*   **Note on Optimization Savings:** The cost model applies a conservative 10% reduction to Fargate costs for batching efficiencies and a 50% reduction to DynamoDB write costs for the "write-avoidance" strategy. The true savings may be higher and should be validated with a proof-of-concept. The "Fargate Warm Pool" strategy is not explicitly modeled as a cost reduction, but it enables more aggressive scale-to-zero configurations, which is implicitly included in the overall Spot instance savings.
 
 ### 2.2. Granular Analysis of Key Cost Drivers
 To better understand the cost structure, this section provides a deeper look into the key cost drivers.
