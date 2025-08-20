@@ -225,10 +225,34 @@ For the MVP, cloud-to-cloud syncs are handled by a single, reliable architectura
 The ability for users to backfill months or years of historical data is a key feature planned for a post-MVP release. The detailed architecture for this "Cold Path," which will use AWS Step Functions to orchestrate the complex workflow, is captured in `45-future-enhancements.md`.
 
 ### Model 2: Device-to-Cloud Sync
-*(Unchanged)*
+This model is required for integrations where the source of data is a device-native framework with no cloud API, such as Apple HealthKit or Google's Health Connect SDK. The sync process is initiated and driven by the mobile client.
+
+*   **Use Case:** Syncing data *from* Apple Health *to* a cloud provider like Strava.
+*   **Flow:**
+    1.  **Trigger:** The sync is triggered on the device, either by a background schedule (e.g., an iOS `BGAppRefreshTask`) or a user-initiated manual sync.
+    2.  **On-Device Fetch:** The KMP module running on the device calls the appropriate native API (e.g., HealthKit's `HKSampleQuery`) to fetch new data since the last successful sync timestamp, which is stored locally.
+    3.  **Canonical Transformation:** The fetched data is transformed into the `CanonicalData` format by the shared KMP logic.
+    4.  **Data Push to Backend:** The mobile app makes a secure API call to a dedicated backend endpoint (e.g., `POST /v1/device-upload`). The request body contains the batch of canonical data.
+    5.  **Backend Processing:** The backend receives this pre-fetched data. It then initiates a sync process that is very similar to the "Hot Path" model, with one key difference: it skips the "fetch from source" step.
+    6.  **Conflict Resolution & Destination Write:** The backend fetches overlapping data from the destination cloud provider (e.g., Strava) to perform conflict resolution. It then pushes the final, conflict-free data to the destination.
+    7.  **State Update:** The backend updates its state in DynamoDB. Upon receiving a successful response from the backend, the mobile app updates its local `lastSyncTime` to ensure it doesn't fetch the same data again.
+*   **Advantage:** This model allows SyncWell to integrate with device-only data sources, which is a key product differentiator.
+*   **Limitation:** Syncs can only occur when the user's device is on, has battery, and has a network connection. This is an unavoidable constraint of the underlying platforms.
 
 ### Model 3: Cloud-to-Device Sync
-*(Unchanged)*
+This model handles the reverse of Model 2, where the destination for the data is a device-native framework like Apple HealthKit. Because the backend cannot directly initiate a connection to write data onto a user's device, it must use a push notification to signal the mobile client to pull the data down.
+
+*   **Use Case:** Syncing data *from* a cloud provider like Garmin *to* Apple Health.
+*   **Flow:**
+    1.  **Standard Cloud Sync:** A regular "Hot Path" sync is initiated on the backend (e.g., triggered by a webhook from Garmin).
+    2.  **Difference in "Fetch from Destination":** To perform conflict resolution, the backend must get data from the destination (Apple Health). It does this by sending a "read request" via a silent push notification to the device. The mobile app wakes up, fetches the requested data from HealthKit, and sends it back to the waiting backend process.
+    3.  **Temporary Data Staging:** After the conflict resolution engine produces the final, conflict-free data, the backend stages this data in a temporary, secure location (e.g., a dedicated S3 bucket with a short, 24-hour lifecycle policy).
+    4.  **Silent Push Notification:** The backend sends another silent push notification (e.g., an APNs push with the `content-available` flag set to 1) to the user's device. The notification payload contains a `jobId` that points to the staged data.
+    5.  **Client-Side Pull & Write:** The mobile app, upon receiving the silent push, wakes up in the background. It makes a secure API call to the backend, providing the `jobId` to fetch the staged canonical data.
+    6.  **On-Device Write:** The KMP module receives the data and uses the appropriate native APIs (e.g., HealthKit's `save` method) to write the data into the local health store.
+    7.  **Confirmation:** After successfully writing the data, the mobile app makes a final API call to the backend to confirm the completion of the job. The backend then deletes the temporary staged data.
+*   **Advantage:** This architecture enables writing data to device-only platforms, completing the loop for a truly hybrid sync model.
+*   **Resilience:** If the user's device is offline or unreachable, the silent push notification will not be delivered immediately. The staged data will remain on the backend for a reasonable period (e.g., 24 hours), and the sync will be attempted the next time the device comes online and the app is launched.
 
 ### Model 4: Webhook-Driven Sync with Event Coalescing
 
