@@ -45,7 +45,7 @@ The MVP for SyncWell is guided by the "depth over breadth" principle. Instead of
 *   **M3: The Holistic View - Essential Data Types:** Synchronization of a broad range of data beyond just workouts, including Steps, Activities, Sleep, Weight, and Heart Rate, to provide a complete health picture.
 *   **M4: User Onboarding:** A simple, guided flow to connect at least two apps and configure the first sync.
 *   **M5: Sync Health Dashboard:** An intuitive interface to create, view, and delete sync connections, and which clearly displays the status and last sync time for each connection, building user trust.
-*   **M6: Transparent Monetization:** A clear, upfront pricing model with a 7-day free trial and a functional **Pro-Tier subscription** via native app store billing. No hidden fees or "bait-and-switch" tactics.
+*   **M6: Transparent Monetization:** A clear, upfront pricing model with a 7-day free trial and a functional **Pro-Tier subscription** via native app store billing. The sync frequency (daily for Free vs. near real-time for Pro) will be a key, clearly communicated differentiator. No hidden fees or "bait-and-switch" tactics.
 *   **M7: Basic Help Center:** An in-app FAQ covering at least the top 10 anticipated issues.
 
 ### Should-Have (If Time Permits, High-Priority Post-MVP)
@@ -64,7 +64,7 @@ The MVP for SyncWell is guided by the "depth over breadth" principle. Instead of
 *   **C1: Pre-Sync Data Preview:** A trust-building feature that shows the user exactly what data will be changed before they approve the sync. (US-30)
 *   **C2: Family Health Plan:** A subscription tier for families to share the benefits of the Pro-Tier under one bill. (US-18)
 *   **C3: Granular Activity Sync Filtering:** Allowing users to filter syncs by specific activity types (e.g., only sync "Running" and "Cycling"). (US-37)
-*   **C4: Custom Sync Frequency:** Allow power users to define the sync frequency for each connection to balance data freshness and battery life. (US-29)
+*   **C4: Custom Sync Frequency:** Allow power users to define the sync frequency for each connection *within their tier's limits* (e.g., a Pro user could choose to sync a specific connection every hour instead of every 15 minutes). (US-29)
 *   **C5: Home Screen Widgets:** Provide at-a-glance sync status directly on the user's home screen. (US-36)
 *   **C6: Milestone Notifications:** Gamification feature to send encouraging notifications for sync milestones (e.g., "1 million steps synced!"). (US-38)
 *   **C7: API Rate Limit Transparency:** Display the status of third-party API rate limits to users to explain potential sync pauses. (US-33)

@@ -97,14 +97,13 @@ The manual test plan will use a formal test case format.
 While the strategies above focus on testing the `DataProvider` modules, it is equally critical to test the integrations *between our own backend services*. This section outlines the strategy for testing the serverless backend itself.
 
 *   **Objective:** To verify that the different components of the serverless backend (API Gateway, Lambda, SQS, DynamoDB, Step Functions) interact correctly and that data flows through the system as expected.
-*   **Local Testing with LocalStack:**
-    *   **Framework:** The primary tool for local backend testing will be **LocalStack**. This allows the entire AWS cloud stack to be emulated on a local machine, enabling fast and efficient testing without incurring AWS costs.
-    *   **Process:** Developers will write integration tests (e.g., using JUnit for the JVM backend code) that run against the local LocalStack environment. These tests will be executed locally during development to provide rapid feedback.
+*   **Local Testing with LocalStack & Docker Compose:**
+    *   **Framework:** The primary tool for local backend testing will be a combination of **LocalStack** and **Docker Compose**. This allows the entire AWS cloud stack to be emulated locally, while the Fargate worker task runs as a standard Docker container.
+    *   **Process:** Developers will write integration tests (e.g., using JUnit for the JVM backend code) that run against this local environment. These tests will be executed locally during development to provide rapid feedback.
     *   **Example Test Case:**
-        1.  The test starts a local LocalStack instance.
-        2.  It programmatically creates the necessary resources (e.g., an SQS queue, a DynamoDB table).
-        3.  It invokes the `RequestLambda`'s handler function directly with a mock API Gateway event.
-        4.  The test then asserts that a message was correctly published to the SQS queue and that the appropriate item was written to the DynamoDB table.
+        1.  The test starts the local environment via `docker-compose up`.
+        2.  It programmatically sends a message to the local SQS queue.
+        3.  It then asserts that the worker container processes the message and writes the correct item to the local DynamoDB table.
 *   **Staging Environment Testing:**
     *   **Environment:** A dedicated staging environment, which is a 1:1 mirror of the production environment, will be used for running a full suite of backend integration tests.
     *   **Process:** As part of the CI/CD pipeline (on every merge to `develop`), a test runner will execute a suite of integration tests against the live staging environment.
@@ -113,6 +112,8 @@ While the strategies above focus on testing the `DataProvider` modules, it is eq
         2.  It then polls the Step Functions API until the execution is complete.
         3.  Finally, it asserts that the execution succeeded and that the expected data was written to the destination service (by calling the third-party service's API with test account credentials).
 *   **Scope:** This strategy covers testing the core backend flows, including:
-    *   The "hot path" real-time sync (API Gateway -> Lambda -> EventBridge -> SQS -> Lambda).
+    *   The "hot path" real-time sync (API Gateway -> EventBridge -> SQS -> Fargate).
     *   The "cold path" historical sync (Step Functions orchestration).
     *   The data import and export flows (Step Functions orchestration).
+    *   **Webhook Ingestion:** A dedicated test suite will verify the `WebhookIngressLambda`, including its signature validation logic and its integration with the EventBridge bus.
+    *   **Adaptive Polling:** Integration tests will be created to verify that the adaptive polling logic correctly creates and manages schedules in EventBridge Scheduler.

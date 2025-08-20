@@ -47,9 +47,13 @@ This dashboard will be built in AWS CloudWatch and provides a real-time view of 
 | :--- | :--- | :--- | :--- | :--- |
 | **API Gateway Latency (P95)**| Time Series | `Latency` on our API Gateway resource | AWS CloudWatch | < 500ms |
 | **API Gateway Errors (5xx)**| Time Series | `5xxError` count | AWS CloudWatch | < 0.1% |
-| **Lambda Worker Duration (P90)**| Time Series | `Duration` for the worker Lambda functions | AWS CloudWatch | < 15s (Hot Path) |
-| **Lambda Worker Errors**| Time Series | `Errors` count | AWS CloudWatch | < 0.5% |
-| **Lambda Worker Throttles**| Time Series | `Throttles` count | AWS CloudWatch | 0 |
+| **Fargate Worker CPU Utilization**| Time Series | `CPUUtilization` for the Fargate service | AWS CloudWatch | < 80% (sustained) |
+| **Fargate Worker Memory Utilization**| Time Series | `MemoryUtilization` for the Fargate service | AWS CloudWatch | < 80% (sustained) |
+| **Fargate Worker Task Count**| Time Series | `RunningTaskCount` for the Fargate service | AWS CloudWatch | N/A (Diagnostic) |
+| **Webhook Ingestion Rate**| Time Series | Custom Metric: `WebhookReceived` count, grouped by provider | Custom CloudWatch Metrics | N/A (Diagnostic) |
+| **Webhook Error Rate**| Time Series | Custom Metric: `WebhookFailed` count, grouped by provider | Custom CloudWatch Metrics | < 1% |
+| **Time Since Last Webhook**| Big Number | Custom Metric: `TimeSinceLastWebhook`, per provider | Custom CloudWatch Metrics | < 6 hours |
+| **Adaptive Polling Cadence**| Histogram | Custom Metric: The calculated polling delay for each user | Custom CloudWatch Metrics | N/A (Diagnostic) |
 | **SQS Hot Path Queue Depth**| Big Number / Time Series | `ApproximateNumberOfMessagesVisible` for the "Hot" queue | AWS CloudWatch | < 100 (sustained) |
 | **Step Functions (Cold Path) Failures**| Time Series | `ExecutionsFailed` for all historical sync state machines | AWS CloudWatch | 0 |
 | **Step Functions (Cold Path) Timeouts**| Time Series | `ExecutionsTimedOut` for all historical sync state machines | AWS CloudWatch | 0 |
