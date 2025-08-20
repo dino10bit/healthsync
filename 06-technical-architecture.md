@@ -51,6 +51,9 @@ A consolidated list of all key project assumptions is maintained in the root `RE
 
 This document specifies the complete technical architecture for the SyncWell application. The architecture is designed for **high availability (defined as >99.9% uptime)**, **massive scalability (to support 1 million Daily Active Users and a peak load of 3,000 requests per second)**, and robust security. It adheres to modern cloud-native principles and is engineered for developer velocity and operational excellence.
 
+> **[S-003] [RISK-CRITICAL-01] CRITICAL RISK ASSESSMENT**
+> The most significant finding in this document is the **potential project-threatening risk** associated with the projected **~45,000 concurrent Lambda executions** required to meet peak load (see Section 3b). The cost and technical feasibility of this model are unproven. Implementation of the proposed architecture **must be gated** by the mandatory completion and approval of the cost modeling and PoC load tests outlined in the risk mitigation plan.
+
 We will use the **C4 Model** as a framework to describe the architecture. The core architectural principles are **modularity**, **security by design**, and **privacy by default**. A key feature is its **hybrid sync model**, which is necessitated by platform constraints. It combines a serverless backend for cloud-to-cloud syncs with on-device processing for integrations that require native SDKs (e.g., Apple HealthKit), maximizing reliability and performance. Post-MVP, the architecture can be extended to include more advanced features like historical data backfills and an AI Insights Service. The design concepts for these are captured in `45-future-enhancements.md`. The initial focus for the MVP, however, will be on a **robust sync engine** for recent data, made reliable through a unified idempotency strategy and resilient error handling.
 
 ## 2. Architectural Model (C4)
@@ -59,37 +62,7 @@ We will use the **C4 Model** as a framework to describe the architecture. The co
 
 This diagram shows the system in its environment, illustrating its relationship with users and external systems.
 
-```mermaid
----
-title: "System Context Diagram for SyncWell (v1.1 as of 2025-08-19)"
----
-graph TD
-    subgraph SyncWell Ecosystem
-        A[Mobile App]
-        B[Backend]
-    end
-
-    subgraph Users
-        C[Health-Conscious User]
-    end
-
-    subgraph External Systems
-        D["Third-Party Health Platforms<br>(Cloud APIs)"]
-        D2["On-Device Health Platforms<br>(e.g., HealthKit)"]
-        E[Platform App Stores]
-        F[Platform Notification Services]
-        G[Firebase Authentication]
-    end
-
-    C -- "Views, configures, and<br>initiates syncs via" --> A
-    A -- "Authenticates user with" --> G
-    A -- "Initiates cloud sync jobs via API" --> B
-    A -- "Reads/writes local health data from/to" --> D2
-    A -- "Is distributed through" --> E
-    B -- "Fetches and pushes data to" --> D
-    B -- "Sends push notifications via" --> F
-    B -- "Validates user tokens using" --> G
-```
+*(See Diagram 1 in the "Visual Diagrams" section below.)*
 
 ### Level 2: Containers
 
@@ -99,68 +72,7 @@ Designs for post-MVP features like the "cold path" for historical syncs have bee
 
 **Note on Diagram Clarity:** The following diagram is a high-level overview for the MVP. It omits secondary components like the S3 bucket for archiving DLQ messages and post-MVP components like the AI Insights Service. The S3 bucket will be configured with a standard lifecycle policy to transition objects to Glacier after 90 days and delete them after 1 year.
 
-```mermaid
----
-title: "Container Diagram for SyncWell (MVP)"
----
-graph TD
-    subgraph "User's Device"
-        MobileApp[Mobile Application w/ KMP Module]
-    end
-
-    subgraph "Google Cloud"
-        FirebaseAuth["Firebase Authentication<br>(provides Google Public Keys)"]
-    end
-
-    subgraph "External Services"
-        ThirdPartyAPIs["Third-Party Health APIs"]
-    end
-
-    subgraph "AWS Cloud"
-        WAF[AWS WAF]
-        APIGateway[API Gateway]
-        AuthorizerLambda[Authorizer Lambda]
-        HotPathEventBus[EventBridge Event Bus]
-        DynamoDB[DynamoDB Table]
-        SecretsManager[Secrets Manager]
-        Observability["CloudWatch Suite"]
-        AppConfig[AWS AppConfig]
-
-        subgraph "VPC"
-            style VPC fill:#f5f5f5,stroke:#333
-            NetworkFirewall[AWS Network Firewall]
-            subgraph "Private Subnets"
-                WorkerLambda["Worker Lambda"]
-                ElastiCache[ElastiCache for Redis]
-            end
-        end
-
-        subgraph "SQS Queues"
-            HotPathSyncQueue[SQS: HotPathSyncQueue]
-            HotPathSyncDLQ[SQS: HotPathSyncDLQ]
-        end
-    end
-
-    MobileApp -- "Signs up / signs in with" --> FirebaseAuth
-    MobileApp -- "HTTPS Request (with Firebase JWT)" --> WAF
-    WAF -- "Filters traffic to" --> APIGateway
-
-    APIGateway -- "Validates JWT with" --> AuthorizerLambda
-    AuthorizerLambda -- "Fetches public keys from" --> FirebaseAuth
-    APIGateway -- "Publishes 'HotPathSyncRequested' event" --> HotPathEventBus
-
-    HotPathEventBus -- "Rule routes to" --> HotPathSyncQueue
-    HotPathSyncQueue -- "Target for" --> WorkerLambda
-    HotPathSyncQueue -- "On failure, redrives to" --> HotPathSyncDLQ
-
-    WorkerLambda -- "Reads/writes user state" --> DynamoDB
-    WorkerLambda -- "Gets credentials" --> SecretsManager
-    WorkerLambda -- "Reads/Writes cache" --> ElastiCache
-    WorkerLambda -- "Logs & Metrics" --> Observability
-    WorkerLambda -- "Fetches runtime config from" --> AppConfig
-    WorkerLambda -- "Makes outbound API calls via" --> NetworkFirewall
-    NetworkFirewall -- "Allow-listed traffic to" --> ThirdPartyAPIs
-```
+*(See Diagram 2 in the "Visual Diagrams" section below.)*
 
 1.  **Mobile Application (Kotlin Multiplatform & Native UI)**
     *   **Description:** The user-facing application that runs on iOS or Android. It handles all user interactions and is a key component of the hybrid sync model.
@@ -206,13 +118,18 @@ graph TD
         *   Stores and serves feature flags (e.g., enabling a feature for Pro users).
         *   Manages operational parameters such as API timeouts, logging levels, and rate-limiting thresholds.
         *   **Manages critical resource identifiers (e.g., the DynamoDB table name). This is a crucial element of the disaster recovery strategy, allowing the application to be repointed to a restored database table without a code deployment.**
-    *   **Risk:** Storing critical configuration like the database table name in AppConfig creates a dependency. A failure to access AppConfig at application startup could prevent the service from running. This risk is mitigated by AppConfig's own high availability and our use of aggressive client-side caching within the Lambda functions. However, a prolonged, widespread AppConfig outage remains a low-probability, high-impact risk.
+    *   **[R-001] Risk:** Storing critical configuration like the database table name in AppConfig creates a dependency. A failure to access AppConfig at application startup could prevent the service from running. This risk is mitigated by AppConfig's own high availability and our use of aggressive client-side caching within the Lambda functions. However, a prolonged, widespread AppConfig outage remains a **High** impact, low-probability risk.
+    *   **[T-004] [U-004] Graceful Degradation Strategy:** In the event of a prolonged AppConfig outage where the client-side cache also fails, the application **must** enter a safe, degraded mode.
+        *   **Behavior:** The system should operate with sensible, hard-coded default configurations that are bundled with the application. For example, it would use a default logging level and disable non-essential features that rely on feature flags.
+        *   **Critical Failure:** If a critical value like the DynamoDB table name cannot be retrieved, the service must fail fast and explicitly, logging a critical error.
 
 ### Level 3: Components (Inside the KMP Shared Module)
 
 The KMP module contains the core, shareable business logic. The architectural strategy is to use **KMP for portable business logic** and **platform-native runtimes for performance-critical infrastructure code**.
 
 For the backend, this means the general strategy is to compile the KMP module to a JAR and run it on a standard JVM-based AWS Lambda runtime. However, security-critical, latency-sensitive functions like the `AuthorizerLambda` **must** be implemented in a faster-starting runtime like TypeScript or Python. This is a deliberate, non-negotiable trade-off. The P99 latency SLO of <500ms for the entire API Gateway request cannot be reliably met if the authorizer suffers from a multi-second JVM cold start. This technology split is justified because the authorizer is a simple, self-contained function whose performance is critical to the entire user experience.
+
+*   **[T-001] Contradiction & Trade-off Acceptance:** This decision creates a deliberate contradiction with the project's goal of using a single cross-platform framework (KMP). The complexity of maintaining a hybrid runtime is a formally accepted technical trade-off, made to meet the non-functional requirement for API latency.
 
 *   **`SyncManager`:** Orchestrates the sync process.
     *   **Inputs:** `SyncConfig` object, `DataProvider` instances for source and destination.
@@ -227,6 +144,7 @@ For the backend, this means the general strategy is to compile the KMP module to
 *   **`ApiClient`:** Handles HTTP calls to backend and third-party services.
 *   **`SecureStorageWrapper`:** Abstraction for Keychain/Keystore (on-device) and AWS Secrets Manager (on-backend).
     *   **Error Handling:** If the underlying secret store (e.g., Secrets Manager) is unavailable, this component **must** throw a specific, catchable `SecureStorageUnavailableException` to allow the caller to implement appropriate retry logic.
+    *   **[T-002] System-Level Fallback:** If Secrets Manager is unavailable for an extended period, the system will enter a degraded mode. Syncs requiring new tokens will fail, but syncs for existing, cached connections may continue if the `WorkerLambda` has a warm container with the tokens already in memory. **[NEEDS_CLARIFICATION: Q-05]** The business must formally accept that a prolonged Secrets Manager outage will result in the failure of most data sync functionality.
 
 ### Level 3: Extensible Provider Integration Architecture
 
@@ -247,24 +165,7 @@ The `ProviderManager` component acts as a factory to dynamically instantiate and
     4.  **Instantiation:** The `ProviderManager` consults its registry, finds the `FitbitProvider` class, instantiates it, and returns the object to the worker.
     5.  **Execution:** The worker then uses this object to perform the data fetch.
 
-```mermaid
-graph TD
-    A[SyncWorker]
-    B[ProviderManager]
-    C((Registry))
-
-    subgraph Initialization
-        direction LR
-        C -- "Registers 'fitbit' -> FitbitProvider.class" --> B
-    end
-
-    subgraph "Runtime"
-        A -- "Requests provider for 'fitbit'" --> B
-        B -- "Looks up 'fitbit' in registry" --> C
-        C -- "Returns FitbitProvider class" --> B
-        B -- "Instantiates and returns instance" --> A
-    end
-```
+*(See Diagram 3 in the "Visual Diagrams" section below.)*
 
 This design means that to add a new provider, a developer only needs to implement the `DataProvider` interface and register the new class with the `ProviderManager`'s registry.
 
@@ -308,17 +209,7 @@ For the MVP, cloud-to-cloud syncs are handled by a single, reliable architectura
     6.  Upon successful completion, the `Worker Lambda` publishes a `SyncSucceeded` event back to the EventBridge bus. This event is consumed by other services, primarily to trigger a push notification to the user and for analytics.
 *   **Advantage:** This is a highly reliable and extensible model. Leveraging the native SQS DLQ feature simplifies the worker logic, increases reliability, and improves observability.
 
-```mermaid
-graph TD
-    subgraph "Hot Path Sync Flow"
-        A[Mobile App] -- 1. Initiate --> B[API Gateway]
-        B -- 2. Publishes 'HotPathSyncRequested' event --> C[EventBridge]
-        C -- 3. Forwards to --> SQS[HotPathSyncQueue]
-        SQS -- 4. Triggers --> D[Worker Lambda]
-        D -- 5. Fetch/Write data --> E[Third-Party APIs]
-        D -- 6. Publishes 'SyncSucceeded' event --> C
-    end
-```
+*(See Diagram 4 in the "Visual Diagrams" section below.)*
 
 #### **Post-MVP: Historical Sync (Cold Path)**
 The ability for users to backfill months or years of historical data is a key feature planned for a post-MVP release. The detailed architecture for this "Cold Path," which will use AWS Step Functions to orchestrate the complex workflow, is captured in `45-future-enhancements.md`.
@@ -331,7 +222,9 @@ The ability for users to backfill months or years of historical data is a key fe
 
 ## 3a. Unified End-to-End Idempotency Strategy
 
-In a distributed, event-driven system, operations can be retried, making a robust idempotency strategy critical for data integrity. We will implement a unified strategy based on a client-generated **`Idempotency-Key`**. This key is a required HTTP header for all `POST`, `PUT`, and `PATCH` operations. The API Gateway will reject any request missing this header with a `400 Bad Request`.
+In a distributed, event-driven system, operations can be retried, making a robust idempotency strategy critical for data integrity. We will implement a unified strategy based on a client-generated idempotency key.
+
+*   **[C-004] Header Specification:** The key **must** be passed in an `Idempotency-Key` HTTP header. The API Gateway will reject any request missing this header with a `400 Bad Request`.
 
 *   **Key Generation:** The mobile client is responsible for generating a unique `Idempotency-Key` (e.g., a UUID) for each new state-changing operation. This same key **must** be used for any client-side retries of that same operation.
 
@@ -353,43 +246,7 @@ To ensure a single, consistent, and highly-available locking mechanism, the idem
 
 The following sequence diagram illustrates the robust end-to-end flow using DynamoDB.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client
-    participant APIGateway as "API Gateway"
-    participant WorkerLambda
-    participant IdempotencyStore as "DynamoDB"
-
-    Client->>APIGateway: POST /sync-jobs<br>Idempotency-Key: K1
-    APIGateway-->>Client: 202 Accepted
-
-    note over WorkerLambda: Receives job for key K1
-
-    WorkerLambda->>IdempotencyStore: PutItem({PK: "IDEM#K1", SK: "IDEM#K1", status: "INPROGRESS", ttl: ...})<br>Condition: attribute_not_exists(PK)
-    alt Lock Failed (ConditionalCheckFailedException)
-        IdempotencyStore-->>WorkerLambda: ConditionalCheckFailedException
-        WorkerLambda->>IdempotencyStore: GetItem({PK: "IDEM#K1"})
-        alt Key is "COMPLETED"
-            IdempotencyStore-->>WorkerLambda: {status: "COMPLETED"}
-            WorkerLambda->>WorkerLambda: Log "Duplicate suppressed" and exit
-        else Key is "INPROGRESS" or missing
-            IdempotencyStore-->>WorkerLambda: {status: "INPROGRESS"} / null
-            WorkerLambda->>WorkerLambda: Log "Race condition suppressed" and exit
-        end
-    else Lock Acquired
-        IdempotencyStore-->>WorkerLambda: OK
-        WorkerLambda->>WorkerLambda: Execute business logic...
-        alt Business logic is successful
-            WorkerLambda->>IdempotencyStore: UpdateItem({PK: "IDEM#K1", status: "COMPLETED", ttl: ...})
-            note right of IdempotencyStore: Update key, set 24hr TTL
-        else Business logic fails
-            WorkerLambda->>IdempotencyStore: DeleteItem({PK: "IDEM#K1"})
-            note right of IdempotencyStore: Delete lock to allow clean retry.<br>If this fails, the lock expires<br>in 5 mins anyway via TTL.
-            WorkerLambda->>WorkerLambda: Throw error to allow SQS retry
-        end
-    end
-```
+*(See Diagram 5 in the "Visual Diagrams" section below.)*
 
 ## 3b. Architecture for 1M DAU
 
@@ -434,7 +291,7 @@ The following table details the specific items to be cached:
 | Item Type | Key Structure | Value | TTL | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
 | **API Gateway Authorizer (L1 Cache)** | User's Identity Token | The generated IAM policy document | 5 minutes | The primary, most critical cache. Caches the final authorization policy at the API Gateway level. |
-| **JWT Public Keys (L2 Cache)**| `jwks##{providerUrl}` | The JSON Web Key Set (JWKS) document | 1 hour | An in-memory cache inside the authorizer Lambda to reduce latency on the first request for a user. |
+| **JWT Public Keys (L2 Cache)**| `jwks##{providerUrl}` | The JSON Web Key Set (JWKS) document | 1 hour | An in-memory cache inside the authorizer Lambda to reduce latency on the first request for a user. **[R-002] Risk:** Caching keys creates a risk where a compromised and revoked key could be considered valid for up to 1 hour. **Mitigation:** The authorizer must include a mechanism to force-invalidate a specific cached key via an administrative action. |
 | **Idempotency Key** | `idem##{idempotencyKey}` | `INPROGRESS` or `COMPLETED` | 5m / 24h | Prevents duplicate processing of operations. |
 | **User Sync Config** | `config##{userId}` | Serialized user sync configurations | 15 minutes | Reduces DynamoDB reads for frequently accessed user settings. |
 | **Rate Limit Token Bucket** | `ratelimit##{...}` | A hash containing tokens and timestamp | 60 seconds | Powers the distributed rate limiter for third-party APIs. |
@@ -442,6 +299,8 @@ The following table details the specific items to be cached:
 
 #### Rate-Limiting Backoff Mechanism
 The following diagram shows how a worker interacts with the distributed rate limiter. If the rate limit is exceeded, the worker **must not** fail the job. Instead, it will use the SQS `ChangeMessageVisibility` API to return the job to the queue with a calculated delay, using an **exponential backoff with jitter** algorithm to avoid thundering-herd problems.
+
+*   **[R-003] Failure Handling:** The `ChangeMessageVisibility` API call can itself fail. The worker **must** implement a retry-with-backoff loop for this specific API call. If it repeatedly fails to return the message to the queue, it must exit with a critical error to force a redrive to the DLQ, preventing an infinite loop and ensuring the job is not lost.
 
 ```mermaid
 sequenceDiagram
@@ -503,7 +362,7 @@ Our primary data table will be named **`SyncWellMetadata`**. It will use a compo
 | Entity | PK (Partition Key) | SK (Sort Key) | Key Attributes & Defined Values |
 | :--- | :--- | :--- | :--- |
 | **User Profile** | `USER#{userId}` | `PROFILE` | `SubscriptionLevel`: `FREE`, `PRO`<br>`CreatedAt`, `version` |
-| **Connection** | `USER#{userId}` | `CONN#{connectionId}` | `Status`: `active`, `needs_reauth`, `revoked`<br>`CredentialArn`, `ReAuthStatus` |
+| **Connection** | `USER#{userId}` | `CONN#{connectionId}` | `Status`: `active`, `needs_reauth`, `revoked`<br>`CredentialArn`<br>**[C-007]** `ReAuthStatus`: `ok`, `pending_user_action`, `failed` |
 | **Sync Config** | `USER#{userId}` | `SYNCCONFIG#{sourceId}##{dataType}` | `ConflictStrategy`: `source_wins`, `dest_wins`, `newest_wins`<br>`IsEnabled`, `version` |
 | **Idempotency Lock** | `IDEM##{key}` | `IDEM##{key}` | `status`: `INPROGRESS`, `COMPLETED`<br>`ttl` |
 
@@ -514,6 +373,7 @@ Our primary data table will be named **`SyncWellMetadata`**. It will use a compo
 Finding all connections that need re-authentication is a key operational requirement. A full table scan is inefficient and costly at scale. A GSI on a low-cardinality attribute like `Status` is also an anti-pattern.
 *   **Optimized Strategy (Sparse GSI):** The best practice is to create a **sparse Global Secondary Index (GSI)**. We will add a `ReAuthStatus` attribute to `Connection` items only when `Status` becomes `needs_reauth`. The GSI will be keyed on this sparse `ReAuthStatus` attribute, making the query to find all affected users extremely fast and cost-effective.
 *   **Fallback Strategy (Throttled Scan):** A scheduled, weekly background process will perform a low-priority, throttled `Scan` as a fallback mechanism to ensure no records are missed.
+    *   **[T-003] Implementation:** The scan will be throttled by setting a small page size (e.g., 100 items) and introducing a fixed delay (e.g., 1 second) between each page request to consume minimal read capacity.
 
 ### Data Consistency and Conflict Resolution
 
@@ -578,6 +438,7 @@ Initiates a new synchronization job for a user.
       "status": "QUEUED"
     }
     ```
+    *   **[C-008] `jobId` Format:** The `jobId` **must** be a UUIDv4 prefixed with `job_`.
 
 ### GET /v1/sync-jobs/{jobId}
 
@@ -636,6 +497,12 @@ Checks the status of a data export job.
     }
     ```
 
+### DELETE /v1/connections/{connectionId}
+
+**[C-009]** De-authorizes a specific third-party connection. This action is irreversible. It will revoke the stored credentials and delete all sync configurations that depend on this connection.
+
+*   **Success Response (204 No Content):** Returns an empty body on successful de-authorization.
+
 ### DELETE /v1/users/me
 
 Permanently deletes a user's account and all associated data. This is an irreversible, asynchronous action. For the MVP, there is no callback mechanism to confirm completion; the client should treat the account as deleted upon receiving the `202 Accepted` response.
@@ -664,13 +531,13 @@ data class CanonicalWorkout(
 // CRITICAL SECURITY NOTE: This data class holds sensitive credentials.
 // It MUST NOT be annotated with @Serializable.
 // Its toString() method MUST be overridden to redact token values.
-// A custom static analysis rule (linter) MUST be implemented to enforce this.
+// [C-010] A custom static analysis rule (linter) using Detekt MUST be implemented to enforce this.
 data class ProviderTokens(
     val accessToken: String,
     val refreshToken: String? = null,
     val expiresInSeconds: Long,
     // The time the token was issued, in epoch seconds.
-    // MUST be generated using a cross-platform time library like kotlinx-datetime.
+    // [R-004] MUST be generated using a reliable, centralized time source (e.g., NTP) to mitigate the risk of clock skew/drift between distributed components.
     val issuedAtEpochSeconds: Long,
     val scope: String? = null
 )
@@ -688,6 +555,7 @@ A scalable fan-out pattern will be used to trigger automatic, periodic syncs for
 *   **Workflow:**
     1.  **Trigger & Fan-Out:** The Master Scheduler triggers the state machine. The first step calculates the number of shards to process. The number of shards is configured dynamically in **AWS AppConfig**.
     2.  **Process Shards in Parallel (`Map` State):** The state machine uses a `Map` state to invoke a `ShardProcessorLambda` for each shard in parallel. A shard is a logical segment of the user base, calculated as `shard = hash(userId) % total_shards`.
+        *   **[C-011] Hashing Algorithm:** The hashing algorithm **must** be a high-quality, deterministic, non-cryptographic algorithm. **Murmur3** is the recommended choice. Using a non-deterministic hash would result in catastrophic data inconsistency.
     3.  **Shard Processor Lambda:** Each invocation is responsible for a single shard.
         a. **Query for Eligible Users:** It queries a dedicated GSI on the `SyncWellMetadata` table to find all users in its shard eligible for a sync. The GSI must be defined as:
             *   **GSI Partition Key:** `ShardId`
@@ -699,31 +567,7 @@ A scalable fan-out pattern will be used to trigger automatic, periodic syncs for
 
 The following diagram illustrates this scalable fan-out architecture, including the query to DynamoDB.
 
-```mermaid
-graph TD
-    subgraph "Scheduling Infrastructure"
-        A["EventBridge Rule<br>cron(0/15 * * * ? *)"] --> B{"Scheduler State Machine"};
-        B --> C[Fan-Out Lambda<br>Calculates N shards];
-        C --> D{Map State<br>Processes N shards in parallel};
-    end
-
-    subgraph "Shard Processing (Parallel)"
-        style E1 fill:#f5f5f5,stroke:#333
-        D -- "Shard #1" --> E1[Shard Processor Lambda];
-    end
-
-    subgraph "Data & Execution"
-        DynamoDB[DynamoDB GSI]
-        F["Main Event Bus<br>(EventBridge)"];
-        G[SQS Queue];
-        H["Worker Fleet<br>(AWS Lambda)"];
-    end
-
-    E1 -- "1. Queries for users to sync" --> DynamoDB;
-    E1 -- "2. Publishes 'SyncRequested' events" --> F;
-    F -- "3. Routes events to" --> G;
-    G -- "4. Triggers" --> H;
-```
+*(See Diagram 6 in the "Visual Diagrams" section below.)*
 
 ### 3g. Client-Side Persistence and Offline Support Strategy
 
@@ -732,6 +576,16 @@ To provide a responsive user experience and basic functionality when the user's 
 *   **Purpose of the Local Database:**
     *   **Configuration Cache:** The local database will act as a cache for the user's connections and sync configurations. This allows the UI to load instantly without waiting for a network call to the backend. The backend remains the single source of truth.
     *   **Offline Action Queue (Write-Ahead Log):** When a user performs a state-changing action while offline (e.g., creating a new sync configuration, disabling an existing one), the action will be saved to a dedicated "actions" table in the local database. This table acts as a write-ahead log of commands to be sent to the backend.
+    *   **[C-012] Table Schema (`OfflineAction`):**
+        ```sql
+        CREATE TABLE OfflineAction (
+            id TEXT NOT NULL PRIMARY KEY, -- A client-generated UUID
+            endpoint TEXT NOT NULL,       -- e.g., "POST /v1/sync-configs"
+            payload TEXT NOT NULL,        -- JSON-serialized request body
+            idempotencyKey TEXT NOT NULL, -- The Idempotency-Key for the request
+            createdAt INTEGER NOT NULL    -- Unix timestamp
+        );
+        ```
 
 *   **Offline Support Workflow:**
     1.  The user opens the app while offline. The UI is populated from the local SQLDelight cache, showing the last known state.
@@ -753,7 +607,7 @@ This strategy ensures that the app remains responsive and that user actions are 
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
 | **Authentication Service** | **Firebase Authentication** | **Rationale vs. Amazon Cognito:** While Amazon Cognito is a native AWS service, Firebase Authentication has been chosen for the MVP due to its superior developer experience, higher-quality client-side SDKs (especially for social logins on iOS and Android), and more generous free tier. This choice prioritizes rapid development and a smooth user onboarding experience. The cross-cloud dependency is an acceptable trade-off for the MVP, but a migration to Cognito could be considered in the future if the benefits of a single-cloud solution outweigh the advantages of Firebase's SDKs. **Dependency Risk:** This introduces a hard dependency on Google Cloud. An outage in Firebase Authentication would prevent all users from logging in, even if the AWS backend is healthy. This risk is formally accepted by the product owner. |
-| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. However, to meet our strict latency SLOs, the KMP/JVM runtime should only be used for **asynchronous `WorkerLambda` functions** where cold starts are less critical. The latency-sensitive API entrypoint is handled by API Gateway's direct integrations, and the `AuthorizerLambda` **must be written in a faster-starting runtime like TypeScript or Python** to ensure the P99 API latency target can be met. **Alternative Considered:** A "backend-for-frontend" (BFF) approach, where the backend is written in a separate, more performant runtime (like Go or Rust) and only shares the canonical data models with the client, was considered. The current KMP-on-Lambda approach was chosen for the MVP to maximize code reuse and development speed. |
+| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. However, to meet our strict latency SLOs, the KMP/JVM runtime should only be used for **asynchronous `WorkerLambda` functions** where cold starts are less critical. The latency-sensitive API entrypoint is handled by API Gateway's direct integrations, and the `AuthorizerLambda` **must be written in a faster-starting runtime like TypeScript or Python** to ensure the P99 API latency target can be met. **[NEEDS_CLARIFICATION: Q-04]** The engineering team must formally confirm their acceptance of the added complexity of maintaining a separate runtime and toolchain for this single critical function. **Alternative Considered:** A "backend-for-frontend" (BFF) approach, where the backend is written in a separate, more performant runtime (like Go or Rust) and only shares the canonical data models with the client, was considered. The current KMP-on-Lambda approach was chosen for the MVP to maximize code reuse and development speed. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Primary Database** | **Amazon DynamoDB with Global Tables** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance required to support 1M DAU. The single-table design enables efficient, complex access patterns. We use On-Demand capacity mode, which is the most cost-effective choice for our unpredictable, spiky workload, as it automatically scales to meet traffic demands without the need for manual capacity planning. Global Tables provide the multi-region, active-active replication needed for high availability and low-latency access for our global user base.** |
 | **Backend Compute** | **AWS Lambda** | **Unified Compute Model for MVP.** All backend compute for the initial launch—including the API layer and all asynchronous workers—will run on **AWS Lambda**. This unified serverless model is chosen for its scalability, operational simplicity, and ability to handle the 3,000 RPS target. As detailed in the Technology Radar (see Appendix A), AWS Fargate is being assessed as a potential future optimization for cost-performance at extreme scale (Phase 2), but a pure Lambda approach is the definitive strategy for the MVP. |
@@ -816,12 +670,21 @@ A dual-pronged data anonymization strategy will be implemented.
 A dedicated **Anonymizer Proxy Lambda** will be used for real-time operational features.
 *   **Testability and Observability:** The Anonymizer Proxy is a critical component and **must** have its own suite of unit and integration tests. Its latency and error rate will be monitored with dedicated CloudWatch Alarms.
 *   **Latency SLO:** The P99 latency for the proxy itself is an SLO that **must be under 50ms** and will be tracked on a dashboard.
-*   **PII Stripping Strategy:** The following table defines the PII stripping strategy. This list is not exhaustive and **must be reviewed and expanded** for all canonical models before implementation.
-| Field | Action | Rationale |
+*   **PII Stripping Strategy:** The following table defines the PII stripping strategy. **[C-006]** This list is explicitly not exhaustive and represents a critical security gap. It **must be updated** with a comprehensive list of all fields across all canonical models before any user data is processed by an AI service. **[TODO: Complete this table for all canonical models.]**
+| Field (from any Canonical Model) | Action | Rationale |
 | :--- | :--- | :--- |
-| `sourceId` | **Hash** | Hashed to prevent reverse-engineering. |
-| `title` | **Remove** | High-risk PII (e.g., "Run with Jane Doe"). |
-| `notes` | **Remove** | High-risk PII. |
+| `userId` | **Remove** | The internal user ID is a direct identifier and must be removed. The AI service should operate on data from a single user at a time, without needing to know their ID. |
+| `sourceId` | **Hash** | Hashed with a per-user salt to prevent reverse-engineering while maintaining referential integrity for a given user's data. |
+| `title` | **Remove** | High-risk for free-text PII (e.g., "Run with Jane Doe"). |
+| `notes` | **Remove** | High-risk for free-text PII. |
+| `latitude`, `longitude` (and all other location data) | **Generalize** | Convert specific GPS coordinates to a general region (e.g., "San Francisco, CA") or remove entirely. Start and end points of a workout are especially sensitive. |
+| `heartRateSamples` | **Aggregate** | Replace detailed timeseries data with summary statistics (e.g., `avg`, `min`, `max`). The raw series could potentially be used to identify a user. |
+| `sleepStages` | **Aggregate** | Replace detailed sleep stage data (e.g., timestamps of REM, deep, light) with total durations for each stage. |
+| `calories` | **Keep** | Generally not considered PII in isolation. |
+| `steps` | **Keep** | Generally not considered PII in isolation. |
+| `distance` | **Keep** | Generally not considered PII in isolation. |
+| `deviceName` | **Remove** | Can contain user's name (e.g., "John's iPhone"). |
+| `weatherInfo` | **Generalize** | Keep general weather (e.g., "Cloudy"), but remove specific temperature or location details that could narrow down the user's location. |
 *   **Privacy Guarantee:** This proxy-based architecture provides a strong guarantee that no raw user PII is ever processed by the AI models.
 
 #### Batch Anonymization for Analytics
@@ -899,7 +762,11 @@ To ensure high development velocity and code quality, we will establish a stream
     *   **CI/CD for KMP Shared Module:** A dedicated pipeline will manage the shared KMP module. A breaking change in the shared module (i.e., a major version bump) **must** be communicated to consumer teams (mobile, backend) via a dedicated Slack channel and a formal announcement.
 *   **Deployment Strategy (Canary Releases):** Backend services will be deployed to production using a **canary release strategy**.
     *   **Process:** A new version is deployed, and **10%** of production traffic is routed to it.
-    *   **Monitoring & Rollout:** The canary is monitored for **30 minutes**. The key metrics for evaluating the canary are **API P99 latency, error rate, and sync success rate**. If these metrics remain stable relative to the baseline, traffic is gradually shifted until it serves 100% of requests. If any metric degrades significantly, traffic is immediately routed back to the stable version.
+    *   **Monitoring & Rollout:** The canary is monitored for **30 minutes**. The key metrics for evaluating the canary are **API P99 latency, error rate, and sync success rate**. If these metrics remain stable relative to the baseline, traffic is gradually shifted until it serves 100% of requests.
+    *   **[C-005] Automatic Rollback Triggers:** An automatic rollback **must** be triggered if any of the following deviations are observed in the canary group compared to the baseline group for a sustained period of 5 minutes:
+        *   A **>10% increase** in the P99 API Gateway latency.
+        *   A **>1% absolute increase** in the overall API error rate (4xx or 5xx).
+        *   A **>2% absolute decrease** in the `SyncSuccessRate` business metric.
 
 ## 10. Known Limitations & Architectural Trade-offs
 
@@ -909,11 +776,13 @@ This section documents known limitations of the architecture and explicit trade-
 *   **Account Merging:** The data model does not support account merging. **User-facing consequence:** Users who create multiple accounts will have siloed data and must contact support for a manual, best-effort resolution. This is a known product issue.
 *   **Firebase Authentication Dependency:** The use of Firebase Authentication creates a hard dependency on a non-AWS service for a critical function. This is a **High** strategic risk.
     *   **Risk:** An outage in Firebase Auth would render the application unusable for all users.
-    *   **Mitigation:** While accepted for the MVP to prioritize launch speed, a high-level exit strategy (e.g., a phased migration to Amazon Cognito) **must be drafted** and included in the project's risk register before launch.
+    *   **[RISK-HIGH-03] Mitigation:** While accepted for the MVP to prioritize launch speed, a high-level exit strategy has been drafted. See **[`33a-firebase-exit-strategy.md`](./33a-firebase-exit-strategy.md)** for the detailed technical plan. **[NEEDS_CLARIFICATION: Q-05]** The business must formally accept the risk that the entire application will be unavailable during a Firebase Authentication outage.
 
 ## Appendix A: Technology Radar
 
 To provide context on our technology choices and guide future evolution, we maintain a technology radar. This helps us track technologies we are adopting, exploring, or have decided to put on hold. It is a living document, expected to change as we learn and the technology landscape evolves.
+
+**[NEEDS_CLARIFICATION: Q-03]** The process for updating this radar (e.g., who has authority to move items between rings) needs to be formally defined.
 
 ### Adopt
 
@@ -970,3 +839,209 @@ This appendix details critical operational policies that must be implemented.
 ## 11. Glossary
 
 A project-wide glossary of all business and technical terms is maintained in the root `GLOSSARY.md` file to ensure a single source of truth for terminology.
+
+## 12. Visual Diagrams
+
+This section contains all the architectural diagrams referenced in this document.
+
+### Diagram 1: System Context
+
+```mermaid
+---
+title: "System Context Diagram for SyncWell (v1.1 as of 2025-08-19)"
+---
+graph TD
+    subgraph SyncWell Ecosystem
+        A[Mobile App]
+        B[Backend]
+    end
+
+    subgraph Users
+        C[Health-Conscious User]
+    end
+
+    subgraph External Systems
+        D["Third-Party Health Platforms<br>(Cloud APIs)"]
+        D2["On-Device Health Platforms<br>(e.g., HealthKit)"]
+        E[Platform App Stores]
+        F[Platform Notification Services]
+        G[Firebase Authentication]
+    end
+
+    C -- "Views, configures, and<br>initiates syncs via" --> A
+    A -- "Authenticates user with" --> G
+    A -- "Initiates cloud sync jobs via API" --> B
+    A -- "Reads/writes local health data from/to" --> D2
+    A -- "Is distributed through" --> E
+    B -- "Fetches and pushes data to" --> D
+    B -- "Sends push notifications via" --> F
+    B -- "Validates user tokens using" --> G
+```
+
+### Diagram 2: Container Diagram (MVP)
+
+```mermaid
+---
+title: "Container Diagram for SyncWell (MVP)"
+---
+graph TD
+    subgraph "User's Device"
+        MobileApp[Mobile Application w/ KMP Module]
+    end
+
+    subgraph "Google Cloud"
+        FirebaseAuth["Firebase Authentication<br>(provides Google Public Keys)"]
+    end
+
+    subgraph "External Services"
+        ThirdPartyAPIs["Third-Party Health APIs"]
+    end
+
+    subgraph "AWS Cloud"
+        WAF[AWS WAF]
+        APIGateway[API Gateway]
+        AuthorizerLambda[Authorizer Lambda]
+        HotPathEventBus[EventBridge Event Bus]
+        DynamoDB[DynamoDB Table]
+        SecretsManager[Secrets Manager]
+        Observability["CloudWatch Suite"]
+        AppConfig[AWS AppConfig]
+
+        subgraph "VPC"
+            style VPC fill:#f5f5f5,stroke:#333
+            NetworkFirewall[AWS Network Firewall]
+            subgraph "Private Subnets"
+                WorkerLambda["Worker Lambda"]
+                ElastiCache[ElastiCache for Redis]
+            end
+        end
+
+        subgraph "SQS Queues"
+            HotPathSyncQueue[SQS: HotPathSyncQueue]
+            HotPathSyncDLQ[SQS: HotPathSyncDLQ]
+        end
+    end
+
+    MobileApp -- "Signs up / signs in with" --> FirebaseAuth
+    MobileApp -- "HTTPS Request (with Firebase JWT)" --> WAF
+    WAF -- "Filters traffic to" --> APIGateway
+
+    APIGateway -- "Validates JWT with" --> AuthorizerLambda
+    AuthorizerLambda -- "Fetches public keys from" --> FirebaseAuth
+    APIGateway -- "Publishes 'HotPathSyncRequested' event" --> HotPathEventBus
+
+    HotPathEventBus -- "Rule routes to" --> HotPathSyncQueue
+    HotPathSyncQueue -- "Target for" --> WorkerLambda
+    HotPathSyncQueue -- "On failure, redrives to" --> HotPathSyncDLQ
+
+    WorkerLambda -- "Reads/writes user state" --> DynamoDB
+    WorkerLambda -- "Gets credentials" --> SecretsManager
+    WorkerLambda -- "Reads/Writes cache" --> ElastiCache
+    WorkerLambda -- "Logs & Metrics" --> Observability
+    WorkerLambda -- "Fetches runtime config from" --> AppConfig
+    WorkerLambda -- "Makes outbound API calls via" --> NetworkFirewall
+    NetworkFirewall -- "Allow-listed traffic to" --> ThirdPartyAPIs
+```
+
+### Diagram 3: ProviderManager Factory Pattern
+
+```mermaid
+graph TD
+    A[SyncWorker]
+    B[ProviderManager]
+    C((Registry))
+
+    subgraph Initialization
+        direction LR
+        C -- "Registers 'fitbit' -> FitbitProvider.class" --> B
+    end
+
+    subgraph "Runtime"
+        A -- "Requests provider for 'fitbit'" --> B
+        B -- "Looks up 'fitbit' in registry" --> C
+        C -- "Returns FitbitProvider class" --> B
+        B -- "Instantiates and returns instance" --> A
+    end
+```
+
+### Diagram 4: Hot Path Sync Flow
+
+```mermaid
+graph TD
+    subgraph "Hot Path Sync Flow"
+        A[Mobile App] -- 1. Initiate --> B[API Gateway]
+        B -- 2. Publishes 'HotPathSyncRequested' event --> C[EventBridge]
+        C -- 3. Forwards to --> SQS[HotPathSyncQueue]
+        SQS -- 4. Triggers --> D[Worker Lambda]
+        D -- 5. Fetch/Write data --> E[Third-Party APIs]
+        D -- 6. Publishes 'SyncSucceeded' event --> C
+    end
+```
+
+### Diagram 5: Idempotency Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant APIGateway as "API Gateway"
+    participant WorkerLambda
+    participant IdempotencyStore as "DynamoDB"
+
+    Client->>APIGateway: POST /sync-jobs<br>Idempotency-Key: K1
+    APIGateway-->>Client: 202 Accepted
+
+    note over WorkerLambda: Receives job for key K1
+
+    WorkerLambda->>IdempotencyStore: PutItem({PK: "IDEM#K1", SK: "IDEM#K1", status: "INPROGRESS", ttl: ...})<br>Condition: attribute_not_exists(PK)
+    alt Lock Failed (ConditionalCheckFailedException)
+        IdempotencyStore-->>WorkerLambda: ConditionalCheckFailedException
+        WorkerLambda->>IdempotencyStore: GetItem({PK: "IDEM#K1"})
+        alt Key is "COMPLETED"
+            IdempotencyStore-->>WorkerLambda: {status: "COMPLETED"}
+            WorkerLambda->>WorkerLambda: Log "Duplicate suppressed" and exit
+        else Key is "INPROGRESS" or missing
+            IdempotencyStore-->>WorkerLambda: {status: "INPROGRESS"} / null
+            WorkerLambda->>WorkerLambda: Log "Race condition suppressed" and exit
+        end
+    else Lock Acquired
+        IdempotencyStore-->>WorkerLambda: OK
+        WorkerLambda->>WorkerLambda: Execute business logic...
+        alt Business logic is successful
+            WorkerLambda->>IdempotencyStore: UpdateItem({PK: "IDEM#K1", status: "COMPLETED", ttl: ...})
+            note right of IdempotencyStore: Update key, set 24hr TTL
+        else Business logic fails
+            WorkerLambda->>IdempotencyStore: DeleteItem({PK: "IDEM#K1"})
+            note right of IdempotencyStore: Delete lock to allow clean retry.<br>If this fails, the lock expires<br>in 5 mins anyway via TTL.
+            WorkerLambda->>WorkerLambda: Throw error to allow SQS retry
+        end
+    end
+```
+
+### Diagram 6: Scheduling Infrastructure
+
+```mermaid
+graph TD
+    subgraph "Scheduling Infrastructure"
+        A["EventBridge Rule<br>cron(0/15 * * * ? *)"] --> B{"Scheduler State Machine"};
+        B --> C[Fan-Out Lambda<br>Calculates N shards];
+        C --> D{Map State<br>Processes N shards in parallel};
+    end
+
+    subgraph "Shard Processing (Parallel)"
+        style E1 fill:#f5f5f5,stroke:#333
+        D -- "Shard #1" --> E1[Shard Processor Lambda];
+    end
+
+    subgraph "Data & Execution"
+        DynamoDB[DynamoDB GSI]
+        F["Main Event Bus<br>(EventBridge)"];
+        G[SQS Queue];
+        H["Worker Fleet<br>(AWS Lambda)"];
+    end
+
+    E1 -- "1. Queries for users to sync" --> DynamoDB;
+    E1 -- "2. Publishes 'SyncRequested' events" --> F;
+    F -- "3. Routes events to" --> G;
+    G -- "4. Triggers" --> H;
+```

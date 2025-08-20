@@ -66,7 +66,7 @@ The app's configuration options will be organized into a clear hierarchy, access
     *   **UI:** A grid showing the logos of all connected apps that can be a source for the selected data type(s).
     *   **Action:** User taps one source app.
 *   **Step 3: Choose Destination App**
-    *   **UI:** A grid showing logos of all connected apps that can be a destination. Apps that cannot be a destination (e.g., Garmin, or the selected source app) will be grayed out and unselectable. Tapping a grayed-out icon will show a toast/tooltip explaining why (e.g., "Garmin cannot be a destination").
+    *   **UI:** A grid showing logos of all connected apps that can be a destination. Apps that cannot be a destination (e.g., a read-only provider, or the selected source app) will be grayed out and unselectable. Tapping a grayed-out icon will show a toast/tooltip explaining why (e.g., "This app cannot be used as a destination").
     *   **Action:** User taps one destination app.
 *   **Step 4: Review & Save**
     *   **UI:** A summary screen showing the user's choices (e.g., "Sync **Steps** from **Fitbit** to **Google Fit**").

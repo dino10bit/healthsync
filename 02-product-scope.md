@@ -41,7 +41,7 @@ The MVP for SyncWell is guided by the "depth over breadth" principle. Instead of
 ### Must-Have (Core MVP Requirements)
 
 *   **M1: Core Data Sync Engine:** The underlying system for reliably transferring data must be fully functional. This includes being built on a scalable, **Event-Driven Architecture** to ensure reliability from day one.
-*   **M2: The Bridge - Key Platform Integrations:** Full, bi-directional support for **Google Fit** and **Apple Health**. This is the primary market differentiator. Also includes support for other key platforms like Fitbit, Garmin (read-only), and Strava.
+*   **M2: The Bridge - Key Platform Integrations:** Full, bi-directional support for **Google Fit** and **Apple Health**. This is the primary market differentiator. Also includes support for other key platforms like Fitbit and Strava. Support for Garmin has been deferred post-MVP due to the unreliability of its unofficial API.
 *   **M3: The Holistic View - Essential Data Types:** Synchronization of a broad range of data beyond just workouts, including Steps, Activities, Sleep, Weight, and Heart Rate, to provide a complete health picture.
 *   **M4: User Onboarding:** A simple, guided flow to connect at least two apps and configure the first sync.
 *   **M5: Sync Health Dashboard:** An intuitive interface to create, view, and delete sync connections, and which clearly displays the status and last sync time for each connection, building user trust.
@@ -81,8 +81,8 @@ The MVP for SyncWell is guided by the "depth over breadth" principle. Instead of
 
 ### Persona 1: The "Data-Driven Athlete" (Alex, 32)
 
-*   **Bio:** Alex is a competitive amateur cyclist and runner. They own a Garmin Edge for cycling, a Polar watch for running, and use Strava as their primary social fitness platform. They are meticulous about tracking their training data, including heart rate zones, power output, and recovery metrics.
-*   **Frustrations:** "My Garmin and Polar data don't talk to each other easily. I want to see my running VO2 Max from Polar influence my cycling recovery recommendations in Garmin Connect, but I can't. I also want all my workouts to end up in Strava without manual uploads."
+*   **Bio:** Alex is a competitive amateur cyclist and runner. They own a Wahoo bike computer, a Coros watch for running, and use Strava as their primary social fitness platform. They are meticulous about tracking their training data, including heart rate zones, power output, and recovery metrics.
+*   **Frustrations:** "My Wahoo and Coros data don't talk to each other easily. I want to see my running VO2 Max from Coros influence my cycling recovery recommendations, but I can't. I also want all my workouts to end up in Strava without manual uploads."
 *   **Goals:**
     *   To automate the consolidation of all workout data into a single platform (Strava).
     *   To ensure that detailed, nuanced data (like heart rate variability, cadence) is transferred without loss.

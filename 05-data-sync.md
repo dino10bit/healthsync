@@ -50,7 +50,7 @@ The `Worker Lambda` will follow this algorithm for each job pulled from the SQS 
 4.  **Fetch Destination Data for Conflict Resolution:** To enable conflict resolution, the worker fetches potentially overlapping data from the destination `DataProvider`, again specifying the `dataType`. The time range for this query will be the exact time range of the new data fetched from the source.
 5.  **Conflict Resolution:** The `Conflict Resolution Engine` is invoked. It compares the source and destination data and applies the user's chosen strategy (e.g., "Prioritize Source").
 6.  **Write Data:** The worker calls the generic `pushData(data: conflictFreeData)` method on the destination provider.
-7.  **Handle Partial Failures:** The worker **must** inspect the `PushResult` returned from the `pushData` call. For the MVP, if the push is not completely successful, the entire job will be considered failed. The worker will throw an error, allowing SQS to retry the job. This is a safe-by-default strategy.
+7.  **Handle Partial Failures:** The worker **must** inspect the `PushResult` returned from the `pushData` call. For the MVP, if the push is not completely successful, the entire job will be considered failed. The worker will throw an error, allowing SQS to retry the job. This is a safe-by-default strategy. It is expected that on the subsequent retry, the entire batch of data will be re-processed. Destination systems are responsible for providing their own idempotency (e.g., based on activity timestamp and source ID) to prevent data duplication.
 8.  **Update State in DynamoDB:** Only upon full successful completion, the worker performs an `UpdateItem` call on the `SyncConfig` item in `SyncWellMetadata` to set the new `lastSyncTime`.
 9.  **Delete Job Message:** The worker deletes the job message from the SQS queue to mark it as complete.
 
@@ -60,7 +60,7 @@ For the MVP, the engine is designed to be simple, reliable, and deterministic. I
 
 ### 4.1. Conflict Detection Algorithm
 
-A conflict is detected if a `source` activity and a `destination` activity have time ranges that overlap by more than a configured threshold (defaulting to **60 seconds**).
+A conflict is detected if a `source` activity and a `destination` activity have time ranges that overlap by more than a configured threshold (defaulting to **60 seconds**). This threshold is a global setting managed in AWS AppConfig.
 
 ### 4.2. Resolution Strategies (MVP)
 
@@ -76,6 +76,34 @@ A conflict is detected if a `source` activity and a `destination` activity have 
 ## 5a. Historical Data Sync (Post-MVP)
 
 Handling a user's request to sync several years of historical data is a key feature planned for a post-MVP release. It requires a more complex "Cold Path" architecture using AWS Step Functions to ensure reliability over long-running jobs. The detailed specification for this feature is deferred and captured in `45-future-enhancements.md`.
+
+## 5b. User Support Flow for DLQ Messages
+
+When a sync job permanently fails and is moved to the Dead-Letter Queue (DLQ), it represents a failure that the system could not automatically resolve. These cases require manual intervention and clear user communication.
+
+*   **Monitoring & Alerting:** An AWS CloudWatch alarm MUST be configured to trigger when the `ApproximateNumberOfMessagesVisible` metric for the DLQ is greater than zero. This alarm will notify the on-call support engineer via PagerDuty.
+*   **Investigation Process:**
+    1.  The support engineer will manually inspect the message contents in the DLQ to identify the `userId`, `connectionId`, and the error message.
+    2.  The engineer will use this information to look up the error details in the centralized logging system (e.g., CloudWatch Logs).
+    3.  The goal is to determine if the failure is due to a bug in SyncWell, an issue with a third-party API, or a problem with the user's account (e.g., corrupted data at the source).
+*   **User Communication & SLA:**
+    *   **SLA:** The user MUST be contacted within **24 hours** of the initial failure.
+    *   **Communication:** The user will be contacted via email. The support ticket will be tracked in the primary CRM (e.g., Zendesk). The communication should be transparent, explaining that a sync failed and that the team is investigating.
+    *   **Resolution:** Once the root cause is identified, the support engineer will work to resolve the issue. This may involve asking the user to re-authenticate their connection or, in the case of a bug, creating a high-priority ticket for the engineering team.
+*   **[NEEDS_CLARIFICATION: Q-06] Legal & Compliance Review:** The process of manually inspecting user sync jobs, even if it only involves metadata, has privacy implications. This entire DLQ handling and user notification process MUST be reviewed by a legal and data privacy expert before the system is launched to ensure compliance with regulations like GDPR.
+*   **[REC-MED-04] Draft User Support Playbook for DLQ:**
+    *   **Objective:** To provide a clear, step-by-step process for support engineers to resolve failed sync jobs from the DLQ.
+    *   **Triage Steps:**
+        1.  **Identify Error Type:** From the PagerDuty alert, open the message in the SQS DLQ console. Examine the `errorMessage` attribute.
+        2.  **Check for Known Issues:** Search the internal knowledge base (e.g., Confluence) for the error message to see if this is a known, ongoing incident.
+        3.  **Categorize the Error:**
+            *   **Category 1: Third-Party API Failure (e.g., `5xx` error from a partner API):** Check the partner's public status page. If there is a known outage, link the support ticket to the master incident ticket. No immediate user action is needed beyond the initial notification.
+            *   **Category 2: Bad Data (e.g., `400 Bad Request`):** This indicates a likely bug in our `DataProvider` (we sent malformed data) or an unannounced breaking change in the partner's API. This is high priority. The message should be re-queued for processing later, and a P1 bug ticket must be filed with the full message payload for engineering to analyze.
+            *   **Category 3: Authentication Failure (e.g., `401 Unauthorized`):** This should be rare, as the main error handling flow should catch this. If it appears in the DLQ, it may indicate a bug in our auth error handling. The user may need to be prompted to reconnect, but engineering should investigate the root cause.
+    *   **Communication Templates:**
+        *   **Initial Contact (24hr SLA):** "Hi [User], we're writing to let you know that a recent data sync from [Source] to [Destination] failed due to an unexpected error. Our engineering team is investigating the issue. We will update you as soon as we have more information. We apologize for the inconvenience."
+        *   **Resolution (Bug Fix):** "Hi [User], we've resolved the issue that caused your sync to fail. We have re-processed the data, and everything should now be up to date. Please let us know if you see any other problems."
+        *   **Resolution (User Action Needed):** "Hi [User], to resolve the issue with your [Source] connection, please go to Settings > Connected Apps in the SyncWell app, disconnect [Source], and then reconnect it. This will refresh your credentials and should fix the problem."
 
 ## 6. Functional & Non-Functional Requirements
 *(Unchanged)*
@@ -169,5 +197,6 @@ As part of a research spike, we evaluated several tools to enhance the project's
 *   **Recommendation:**
     *   We recommend **LangGraph** for implementing the `Interactive AI Troubleshooter` feature, as specified in `06-technical-architecture.md` and `24-user-support.md`.
     *   **Rationale:** LangGraph's ability to model conversational flows as a graph is a perfect fit for a troubleshooting agent that needs to ask clarifying questions, remember context, and guide a user through a decision tree. This provides a more robust and powerful user experience than a simple, single-call LLM.
+    *   **[C-003] [TODO: A diagram illustrating the proposed state machine for the LangGraph-based AI Troubleshooter needs to be created and inserted here.]**
 
 *(Section 10 has been removed to align with the decision to standardize on the AWS-native serverless architecture and avoid the operational complexity of a self-hosted open-source stack.)*

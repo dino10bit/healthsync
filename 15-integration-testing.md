@@ -24,10 +24,10 @@ For the **solo developer**, this document is a technical blueprint for building 
 
 A disciplined TDM strategy is required for reliable integration testing.
 
-*   **Dedicated Test Accounts:** A separate, dedicated test account (e.g., `syncwell-test@gmail.com`) will be created for every supported third-party platform (Fitbit, Garmin, Strava, etc.). The credentials for these accounts will be securely stored in a password manager.
+*   **Dedicated Test Accounts:** A separate, dedicated test account (e.g., `syncwell-test@gmail.com`) will be created for every supported third-party platform for the MVP (e.g., Fitbit, Strava). The credentials for these accounts will be securely stored in a password manager.
 *   **Version-Controlled Mock Data:**
     *   A `__mocks__` directory will be created in the project repository.
-    *   For each provider, a set of static JSON files will be stored, representing standard API responses (e.g., `fitbit-steps-response.json`, `garmin-activity-response.json`).
+    *   For each provider, a set of static JSON files will be stored, representing standard API responses (e.g., `fitbit-steps-response.json`, `strava-activity-response.json`).
     *   These files will be used by the mocked integration tests, ensuring that the tests are deterministic and can run offline.
 *   **Test Data Seeding Scripts:**
     *   A collection of scripts (e.g., simple Node.js scripts using Axios) will be created to interact directly with the third-party APIs.

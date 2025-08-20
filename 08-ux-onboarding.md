@@ -43,7 +43,7 @@ This is the precise sequence of events for a new user, designed for the Freemium
     *   **Pre-Permission Dialog:** A friendly, in-app dialog appears. Headline: "Stay in the loop?" Body: "Allow SyncWell to send notifications so we can alert you if a sync fails or needs your attention." Buttons: "Not Now", "Yes, Notify Me".
     *   **OS Dialog:** If the user taps "Yes," the native iOS/Android permission dialog is triggered immediately.
 *   **Step 3: Source App Selection**
-    *   **Screen:** "First, choose where your data comes from." A grid of logos for the supported source apps (Fitbit, Garmin, etc.).
+    *   **Screen:** "First, choose where your data comes from." A grid of logos for the supported source apps (e.g., Fitbit, Strava).
     *   **Action:** User taps on a source app (e.g., Fitbit).
 *   **Step 4: Source App Authentication**
     *   **Screen:** The standard OAuth 2.0 login flow for the selected app is presented in a secure `WebView`.
