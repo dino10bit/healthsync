@@ -100,7 +100,8 @@ Our testing strategy follows the principles of the classic testing pyramid.
     *   **Stress Test:** A test that pushes the system beyond its expected limits (e.g., >3,000 RPS). The goal is to understand how the system fails and to ensure that it fails gracefully (e.g., by throttling requests) rather than crashing.
 *   **CI/CD Integration:** A smaller-scale load test will be integrated into the CI/CD pipeline to run on every merge to the `develop` branch. This will provide early feedback on performance regressions. Full-scale load tests will be run manually before each major release.
 *   **Success Criteria:**
-    *   The system must handle **3,000 RPS** with P95 latency below 500ms for API Gateway and a Fargate task error rate below 0.5%.
+    *   The system must handle **3,000 RPS** with **P99 latency below 500ms** for API Gateway, consistent with the NFR in `06-technical-architecture.md`.
+    *   The Fargate task error rate must remain below 0.5%.
     *   The SQS queue depth should not grow uncontrollably during the soak test.
     *   The system should not crash during the stress test.
 
@@ -131,7 +132,7 @@ Our testing strategy follows the principles of the classic testing pyramid.
 *   **Methodology:**
     *   **Automated E2E Tests:** An E2E test will be created to:
         1.  Create two test users, one "Free" and one "Pro".
-        2.  Monitor the scheduling system (e.g., by querying EventBridge Scheduler or observing sync logs).
+        2.  Monitor the scheduling system (e.g., by observing the execution history of the Scheduler State Machine in AWS Step Functions or by checking sync logs).
         3.  Assert that the "Pro" user is scheduled for frequent syncs (e.g., every 15 minutes) while the "Free" user is scheduled for daily syncs.
 
 ### Security Testing

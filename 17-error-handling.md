@@ -42,12 +42,38 @@ The backend's error handling strategy is designed for maximum resilience and mes
         *   **Centralized Dashboards:** To provide a single pane of glass for operators, key Step Functions execution metrics (e.g., success rate, failure rate, P95 duration) **must** be exported to CloudWatch and integrated into the primary Grafana dashboards alongside other system metrics.
 
 3.  **Isolating Persistent Failures with a Dead-Letter Queue (DLQ):** If a job fails all of its retry attempts, it is considered a persistent failure (e.g., due to a bug in the code, malformed data that causes a crash, or a permanent issue with a third-party API).
-    *   To prevent this single bad message from blocking the queue and being retried indefinitely, SQS automatically moves it to a pre-configured **Dead-Letter Queue (DLQ)**.
+    *   To prevent this single bad message from blocking the queue and being retried indefinitely, SQS automatically moves it to a pre-configured **Dead-Letter Queue (DLQ)** after the `maxReceiveCount` is exceeded.
+    *   **`maxReceiveCount` Configuration:** This value will be set to **5**. This is chosen as a balance between allowing recovery from intermittent transient errors and not waiting too long to detect a persistent failure that requires manual intervention.
     *   This action is critical as it isolates the problematic job, allowing healthy jobs to continue processing without interruption.
 
 4.  **Alerting and Analysis:** A CloudWatch Alarm continuously monitors the DLQ. If the number of messages rises above zero, it triggers a high-priority alert to the on-call engineering team. The failed job message, which is stored in the DLQ, contains the full context of the job, allowing engineers to diagnose and resolve the root cause.
 
 5.  **EventBridge Durability:** To provide an additional layer of durability, the EventBridge rule that targets the SQS queue will also be configured with its own DLQ. This ensures that if an event fails to be delivered to the SQS queue for any reason (e.g., a misconfiguration or temporary unavailability), the event is captured and can be reprocessed, preventing data loss.
+
+### 2.3. Advanced Error Handling Patterns
+
+To build a truly resilient system, the backend will employ several advanced, specific error handling patterns for common failure scenarios.
+
+#### 1. API Rate Limit Backoff
+When a worker task makes a call to a third-party API and receives a `429 Too Many Requests` error, it **must not** fail the job. Instead, it will use the SQS `ChangeMessageVisibility` API to return the job to the queue with a calculated delay.
+*   **Mechanism:** This API call makes the message temporarily invisible again, but with a new, longer visibility timeout. The worker will use an **exponential backoff with jitter** algorithm to calculate this delay.
+*   **Benefit:** This pattern allows the system to gracefully back off from a rate-limited API without losing the job or sending it to the DLQ unnecessarily. It prevents a "thundering herd" problem where many workers retry simultaneously.
+
+#### 2. Circuit Breaker for Unstable APIs
+For third-party integrations that are known to be unstable, the `DataProvider` SDK will implement a **Circuit Breaker pattern**.
+*   **Mechanism:** The circuit breaker monitors for failures. If the failure rate for a specific provider's API calls exceeds a configured threshold (e.g., 50% of calls fail within a 1-minute window), the circuit "opens."
+*   **Action:** Once the circuit is open, all subsequent calls to that provider's API will fail fast for a "cooldown" period, without making a network call. This prevents the system from wasting resources on an API that is clearly down. After the cooldown, the circuit moves to a "half-open" state to test if the service has recovered.
+*   **Configuration:** The thresholds for the circuit breaker **must be configurable per-provider** via AWS AppConfig to allow for fine-tuning.
+
+#### 3. Third-Party API Error Classification
+To handle the variety of errors from external APIs, the `DataProvider` SDK will classify HTTP errors and apply the appropriate strategy, as defined in `07-apis-integration.md`.
+
+| HTTP Status Code | Error Type | System Action | User Impact |
+| :--- | :--- | :--- | :--- |
+| `401 Unauthorized` / `403 Forbidden` | **Permanent Auth Error** | The sync job is immediately failed. The connection is marked as `needs_reauth`. A `ReAuthenticationNeeded` event is published, triggering an immediate push notification to the user. | User is notified **immediately** that they need to reconnect the service. |
+| `429 Too Many Requests` | **Rate Limit Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff) using the `ChangeMessageVisibility` API. | Syncs for this provider may be delayed. This is handled automatically. |
+| `500`, `502`, `503`, `504` | **Transient Server Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff). | Syncs may be delayed. The system will automatically retry. |
+| `400 Bad Request` | **Permanent Request Error** | The job is failed and moved to the Dead-Letter Queue (DLQ) for manual inspection. An alarm is triggered. | The specific sync fails. An engineer is alerted to a potential bug. |
 
 ### 2.3. DLQ Management Strategy (Semi-Automated)
 

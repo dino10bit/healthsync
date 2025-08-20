@@ -451,6 +451,8 @@ Our primary data table will be named **`SyncWellMetadata`**. It will use a compo
 | **Sync Config** | `USER#{userId}` | `SYNCCONFIG#{sourceId}##{dataType}` | `ConflictStrategy`: `source_wins`, `dest_wins`, `newest_wins`<br>`IsEnabled`, `version` |
 | **Idempotency Lock** | `IDEM##{key}` | `IDEM##{key}` | `status`: `INPROGRESS`, `COMPLETED`<br>`ttl` |
 
+**Note on Idempotency Lock:** For the primary "Hot Path" sync, idempotency is handled by the SQS FIFO queue's native content-based deduplication. The `Idempotency Lock` item defined here is reserved for other processes that may not use a FIFO queue, such as the post-MVP "Cold Path" historical sync workflow, which will require an explicit application-level locking mechanism.
+
 **Note on Historical Sync Job Items:** Storing a potentially large number of `HISTORICAL` items for a post-MVP feature can degrade performance of core user profile lookups. The design for this is deferred to `45-future-enhancements.md`.
 
 ### Supporting Operational Access Patterns
@@ -509,11 +511,13 @@ Initiates a new synchronization job for a user.
       "destinationConnectionId": "conn_67890_providerB",
       "dataType": "workout",
       "mode": "manual",
+      "priority": "high",
       "dateRange": { "startDate": "2023-01-01", "endDate": "2023-12-31" }
     }
     ```
     *   **`dataType` (enum):** `workout`, `sleep_session`, `steps`, `weight`. Must align with `CanonicalData` models.
     *   **`mode` (enum):** `manual` (hot path), `historical` (cold path).
+    *   **`priority` (enum):** `high`, `medium`, `low`. This field is used by the distributed rate-limiter to prioritize jobs when the API budget is low. Defaults to `medium` if not provided.
     *   **`dateRange` (object):** Required if and only if `mode` is `historical`.
 
 *   **Success Response (202 Accepted):** Returns the `jobId` for tracking.

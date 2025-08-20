@@ -45,7 +45,8 @@ This dashboard will be built in AWS CloudWatch and provides a real-time view of 
 
 | Widget Title | Chart Type | Metric(s) | Data Source | SLO Target |
 | :--- | :--- | :--- | :--- | :--- |
-| **API Gateway Latency (P95)**| Time Series | `Latency` on our API Gateway resource | AWS CloudWatch | < 500ms |
+| **API Gateway Request Rate (RPS)**| Time Series | `Count` on our API Gateway resource, with `Sum` statistic over 1 second. | AWS CloudWatch | < 3,000 (Peak) |
+| **API Gateway Latency (P99)**| Time Series | `Latency` on our API Gateway resource | AWS CloudWatch | < 500ms |
 | **API Gateway Errors (5xx)**| Time Series | `5xxError` count | AWS CloudWatch | < 0.1% |
 | **Fargate Worker CPU Utilization**| Time Series | `CPUUtilization` for the Fargate service | AWS CloudWatch | < 80% (sustained) |
 | **Fargate Worker Memory Utilization**| Time Series | `MemoryUtilization` for the Fargate service | AWS CloudWatch | < 80% (sustained) |
@@ -66,10 +67,10 @@ This dashboard provides a holistic view of the end-to-end sync process, combinin
 
 | Widget Title | Chart Type | Metric(s) | Data Source | SLO Target |
 | :--- | :--- | :--- | :--- | :--- |
-| **E2E Sync Success Rate (24h)**| Gauge | The number of successful sync jobs divided by the number of requested sync jobs. This is calculated as: `Count(SyncJobCompleted where status='SUCCESS') / Count(SyncJobRequested)`. | Custom CloudWatch Metrics, derived from structured logs or custom events. | > 99.9% |
+| **Sync Success Rate (24h)**| Gauge | The number of successful sync jobs divided by the number of requested sync jobs. This is calculated as: `Count(SyncJobCompleted where status='SUCCESS') / Count(SyncJobRequested)`. | Custom CloudWatch Metrics, derived from structured logs or custom events. | > 99.9% |
 | **Sync Failure Rate by Provider**| Bar Chart | Custom Metric: `SyncJobCompleted` events where `status='FAILURE'`, grouped by `provider` dimension. | Custom CloudWatch Metrics | N/A (Diagnostic) |
 | **Sync Failure Rate by Error Code**| Table | Custom Metric: `SyncJobCompleted` events where `status='FAILURE'`, grouped by `errorCode` dimension. | Custom CloudWatch Metrics | N/A (Diagnostic) |
-| **E2E Sync Job Latency (P90)**| Time Series | The time difference between the `SyncJobCompleted` and `SyncJobRequested` events for a given `correlationId`. | Custom CloudWatch Metric, calculated from event timestamps. | < 45s (for delta sync) |
+| **Manual Sync Latency (P95)**| Time Series | The time difference between the `SyncJobCompleted` and `SyncJobRequested` events for a given `correlationId`. | Custom CloudWatch Metric, calculated from event timestamps. | < 15s |
 | **Dead-Letter Queue Size** | Big Number | `ApproximateNumberOfMessagesVisible` for the DLQ | AWS CloudWatch | 0 |
 
 ## 6. Implementation & Tooling

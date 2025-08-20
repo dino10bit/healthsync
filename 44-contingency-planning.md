@@ -27,19 +27,19 @@ The purpose of this document is to enable a calm, rational, and rapid response u
 
 ### Plan A: Full AWS Regional Outage
 
-*   **Trigger:** Our monitoring systems (CloudWatch) detect a widespread failure of a core service (e.g., Lambda, SQS) in one of our active AWS regions. Amazon's own status page confirms a regional issue.
-*   **Expected System Behavior (Automated Response):**
-    1.  **Health Check Failure:** Amazon Route 53 health checks for the affected region's load balancer will begin to fail.
-    2.  **Automated Failover:** After a configured number of consecutive failures, **Route 53 will automatically stop routing traffic to the unhealthy region**. All user traffic will be directed to the healthy, active region(s).
-    3.  **Service Continuity:** The service will remain available to users, served entirely out of the healthy region. Due to the use of DynamoDB Global Tables and replicated secrets, the failover region has all the data it needs to function.
-*   **Action Plan (Manual Steps):**
-    1.  **Acknowledge & Monitor:** Acknowledge the incident and closely monitor Route 53 and CloudWatch metrics to confirm the failover was successful.
-    2.  **Public Communication:** Post a message to the public status page: "We are aware of a major outage affecting one of our hosting provider's data centers. Our system has automatically rerouted traffic to a healthy region, and the service is operational. Some users may experience slightly increased latency."
-    3.  **Await Recovery:** Monitor the status of the failed AWS region.
-    4.  **Restore & Rebalance:** Once the affected region is fully recovered and stable, update DNS settings (if necessary) to resume routing traffic to it, restoring the full active-active posture.
+*   **Trigger:** Our monitoring systems detect a widespread, prolonged failure of multiple core services in our primary AWS region. Amazon's own status page confirms a regional issue. This plan is for the single-region MVP architecture.
+*   **Expected System Behavior:** The service will be completely unavailable to all users.
+*   **Action Plan (Manual Steps):** This is a manual disaster recovery process that involves restoring the service in a new, healthy AWS region.
+    1.  **Declare Major Incident:** A major incident is declared. The on-call engineer is responsible for initiating this plan.
+    2.  **Public Communication:** Post a message to the public status page: "We are currently experiencing a major service outage due to a regional failure at our hosting provider. We are working to restore service in a different region. We will provide updates as they become available."
+    3.  **Deploy Infrastructure:** Use the project's Terraform scripts to deploy a complete copy of the backend infrastructure to a designated secondary region (e.g., `us-west-2`).
+    4.  **Restore Data:** Initiate a Point-in-Time Recovery (PITR) of the `SyncWellMetadata` DynamoDB table in the new region. This is the longest step and governs the RTO.
+    5.  **Redirect Traffic:** Once the infrastructure is up and the data is restored, update the application's DNS records to point to the new load balancer in the healthy region.
+    6.  **Verification:** Thoroughly test the newly deployed environment to ensure it is fully functional.
+    7.  **Communicate Restoration:** Update the status page to inform users that the service has been restored.
 *   **RTO / RPO:**
-    *   **RTO:** < 5 minutes (driven by Route 53 health check and failover time).
-    *   **RPO:** < 2 seconds (driven by typical DynamoDB Global Table replication lag).
+    *   **RTO:** < 4 hours (driven by the manual deployment and data restore process).
+    *   **RPO:** < 15 minutes (driven by the continuous backup window of DynamoDB PITR).
 
 ### Plan B: AI Insights Service Failure
 
@@ -91,20 +91,16 @@ The purpose of this document is to enable a calm, rational, and rapid response u
 
 *   **Trigger:** The canary release of a new backend version shows a critical issue (e.g., high error rate, increased latency), or a critical bug is discovered after the new version has been fully rolled out.
 *   **Objective:** To quickly and safely revert the backend services to the last known stable version, minimizing user impact.
-*   **Strategy:** The rollback strategy relies on the versioning capabilities of AWS Lambda and API Gateway, and is designed to be automated.
+*   **Strategy:** The rollback strategy for the **AWS Fargate** worker service relies on the capabilities of **AWS CodeDeploy** and its blue/green deployment configuration.
 *   **Automated Rollback (During Canary Deployment):**
-    1.  **Detection:** CloudWatch Alarms, configured to monitor the canary version, trigger due to an anomaly (e.g., error rate > 1%).
-    2.  **Automated Action:** The CI/CD pipeline (or a dedicated Lambda function triggered by the alarm) will automatically shift 100% of traffic back to the stable, previous version.
+    1.  **Detection:** CloudWatch Alarms, configured to monitor the "green" (new) environment, trigger due to an anomaly (e.g., error rate > 1%).
+    2.  **Automated Action:** The CodeDeploy deployment group is configured with an automatic rollback setting. On an alarm trigger, CodeDeploy will immediately shift 100% of traffic back to the "blue" (stable, previous) environment and halt the deployment.
     3.  **Notification:** The on-call engineer is notified that an automatic rollback has occurred.
 *   **Manual Rollback (Post-Full Deployment):**
     1.  **Decision:** The on-call engineer, after identifying a critical bug in the new version, makes the decision to roll back.
-    2.  **Lambda Rollback:**
-        *   The CI/CD pipeline will have a dedicated "rollback" job.
-        *   This job will take a version number as input.
-        *   It will use the AWS CLI or SDK to update the Lambda function aliases (e.g., the `live` alias) to point to the previous stable function version. AWS Lambda automatically keeps previous versions of the code, making this a fast and safe operation.
-    3.  **API Gateway Rollback:**
-        *   If the API Gateway stage was updated, the rollback job will redeploy the previous stable stage from its deployment history.
-    4.  **Verification:** After the rollback job is complete, the engineer will manually verify that the backend is functioning correctly and that the critical bug is no longer present.
+    2.  **Action:** The engineer will trigger a new deployment in the CI/CD pipeline, but will specify the Docker image tag of the *previous stable version*.
+    3.  **Process:** This will initiate a new blue/green deployment, where the "green" environment is simply the old, stable version of the code. The process of traffic shifting will safely re-deploy the stable version.
+    4.  **Verification:** After the rollback deployment is complete, the engineer will manually verify that the backend is functioning correctly.
     5.  **Communication:** The public status page will be updated to inform users of the issue and the successful rollback.
 *   **Testing:** The manual rollback procedure will be tested in the staging environment on a regular basis (e.g., quarterly) to ensure it works as expected and that the on-call team is familiar with the process.
 

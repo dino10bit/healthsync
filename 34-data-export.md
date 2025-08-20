@@ -26,13 +26,13 @@ To robustly handle a potentially long-running and multi-step process, the Data E
 1.  **Initiation (Mobile):** The user selects the source, date range, and format and taps "Start Export."
 2.  **Start Execution (Mobile -> Backend):** The app calls an API endpoint that triggers a new execution of the `DataExport` state machine, passing in the user's parameters.
 3.  **State Machine Execution (Backend):** The state machine manages the entire workflow:
-    *   **a. Fetch Data in Chunks:** The first step breaks the date range into manageable chunks. A `Map` state processes these chunks in parallel, invoking a Lambda function for each to fetch data from the source API and store it temporarily (e.g., in S3).
-    *   **b. Consolidate & Format:** Once all data is fetched, a single Lambda function consolidates the temporary data and uses the `Exporter` modules to format it into the requested file type(s).
+*   **a. Fetch Data in Chunks:** The first step breaks the date range into manageable chunks. A `Map` state processes these chunks in parallel, invoking a **Fargate task** for each to fetch data from the source API and store it temporarily (e.g., in S3). Using Fargate is critical for handling very large data chunks without hitting the 15-minute Lambda timeout.
+    *   **b. Consolidate & Format:** Once all data is fetched, a single **Fargate task** consolidates the temporary data and uses the `Exporter` modules to format it into the requested file type(s).
     *   **c. Compress & Store:** The formatted files are compressed into a single `.zip` archive and uploaded to a secure, temporary folder in S3.
-    *   **d. Finalize & Notify:** The final step updates a DynamoDB table with the job's `COMPLETED` status and the secure, time-limited S3 download URL. It then publishes an event to the `PushNotificationEvents` SNS topic to inform the user.
+    *   **d. Finalize & Notify:** A final, lightweight Lambda function updates a DynamoDB table with the job's `COMPLETED` status and the secure, time-limited S3 download URL. It then publishes an event to the `PushNotificationEvents` SNS topic to inform the user.
 4.  **Download (Mobile):** The user taps the notification (`N-07`), and the mobile app downloads the file from the S3 URL.
 
-This approach elegantly handles the risk of Lambda timeouts for large exports, as the state machine can reliably orchestrate many short-lived Lambda functions.
+This approach elegantly handles the risk of timeouts for large exports, as the state machine can reliably orchestrate Fargate tasks for the heavy lifting.
 
 ## 3. User Experience & Workflow
 

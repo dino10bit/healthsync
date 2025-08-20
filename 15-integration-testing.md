@@ -112,8 +112,8 @@ While the strategies above focus on testing the `DataProvider` modules, it is eq
         2.  It then polls the Step Functions API until the execution is complete.
         3.  Finally, it asserts that the execution succeeded and that the expected data was written to the destination service (by calling the third-party service's API with test account credentials).
 *   **Scope:** This strategy covers testing the core backend flows, including:
-    *   The "hot path" real-time sync (API Gateway -> EventBridge -> SQS -> Fargate).
+    *   The "hot path" real-time sync (API Gateway -> SQS -> Fargate).
     *   The "cold path" historical sync (Step Functions orchestration).
     *   The data import and export flows (Step Functions orchestration).
-    *   **Webhook Ingestion:** A dedicated test suite will verify the `WebhookIngressLambda`, including its signature validation logic and its integration with the EventBridge bus.
-    *   **Adaptive Polling:** Integration tests will be created to verify that the adaptive polling logic correctly creates and manages schedules in EventBridge Scheduler.
+    *   **Webhook Ingestion & Coalescing:** A dedicated test suite will verify the full webhook flow, including the `WebhookIngressLambda`, the `CoalescingBufferQueue`, and the `CoalescingTriggerLambda`.
+    *   **Adaptive Polling:** Integration tests will be created to verify that the adaptive polling logic correctly sends messages to the SQS queue with the appropriate `DelaySeconds` value.
