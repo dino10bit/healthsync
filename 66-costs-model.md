@@ -4,7 +4,7 @@
 
 This document provides an exhaustive, bottom-up financial analysis for the SyncWell backend architecture, grounded in the detailed specifications of `06-technical-architecture.md`.
 
-The new, fully-optimized model estimates a total monthly cost of **~$1,344** for supporting 1 million Daily Active Users ("Normal Load"). This figure incorporates a suite of architectural cost optimizations, including aggressive log sampling, SQS-based adaptive polling, and leveraging Fargate Spot for compute.
+The new, fully-optimized model estimates a total monthly cost of **~$1,191** for supporting 1 million Daily Active Users ("Normal Load"). This figure incorporates a suite of architectural cost optimizations, including aggressive log sampling, SQS-based adaptive polling, and leveraging Fargate Spot for compute.
 
 The analysis extends into a full financial forecast, covering:
 *   **Detailed Cost Breakdown:** A granular, service-by-service cost breakdown, reflecting the impact of the implemented optimizations.
@@ -161,9 +161,9 @@ The following scenarios model the impact of a significant percentage increase in
 
 | Scenario | Key Variable Change | Cost Impact (Monthly) | New Total Monthly Cost | % Increase |
 | :--- | :--- | :--- | :--- | :--- |
-| **1. Increased Data Complexity** | +50% log data per job<br>+25% network data per job | +$311 | **~$3,792** | ~8.9% |
-| **2. Decreased Compute Efficiency** | +50% Fargate compute time per job | +$178 | **~$3,659** | ~5.1% |
-| **3. Increased Event-Driven Chatter**| +1 additional EventBridge event per job | +$228 | **~$3,709** | ~6.5% |
+| **1. Increased Data Complexity** | +50% log data per job<br>+25% network data per job | +$311 | **~$1,502** | ~26.1% |
+| **2. Decreased Compute Efficiency** | +50% Fargate compute time per job | +$178 | **~$1,369** | ~14.9% |
+| **3. Increased Event-Driven Chatter**| +1 additional EventBridge event per job | +$228 | **~$1,419** | ~19.1% |
 
 ### Analysis of Findings
 
@@ -196,7 +196,7 @@ At first glance, the raw infrastructure cost of the EC2 model appears to be less
 
 | Metric | Fargate Compute Cost | EC2 Model Cost | Advantage |
 | :--- | :--- | :--- | :--- |
-| **Raw Monthly Cost** | ~$356 | ~$169 | **EC2** |
+| **Raw Monthly Cost** | ~$140 | ~$169 | **EC2** |
 
 However, this simple comparison is misleading as it ignores the **Total Cost of Ownership (TCO)**. The Fargate model abstracts away immense operational complexity, which has a real, albeit indirect, cost.
 
@@ -231,7 +231,7 @@ The direct cost comparison reveals a significant difference for this specific ty
 
 | Metric | Fargate Compute Cost | Lambda Model Cost | Advantage |
 | :--- | :--- | :--- | :--- |
-| **Raw Monthly Cost** | ~$356 | ~$3,846 | **Fargate** |
+| **Raw Monthly Cost** | ~$140 | ~$3,846 | **Fargate** |
 
 The Lambda-based model is projected to be **over 10 times more expensive** than the Fargate model for the worker fleet's compute costs.
 
