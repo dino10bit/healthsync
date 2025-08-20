@@ -9,7 +9,7 @@ The new, fully-optimized model estimates a total monthly cost of **~$1,344** for
 The analysis extends into a full financial forecast, covering:
 *   **Detailed Cost Breakdown:** A granular, service-by-service cost breakdown, reflecting the impact of the implemented optimizations.
 *   **Scalability & Projections:** Revised annual costs and scalability models based on the new, optimized cost structure.
-*   **Business Viability:** An updated Cost of Goods Sold (COGS) and a **Break-Even Analysis**, which now shows that ~895 Pro users are required to cover infrastructure costs.
+*   **Business Viability:** An updated Cost of Goods Sold (COGS) and a **Break-Even Analysis**, which now shows that ~398 Pro users are required to cover infrastructure costs.
 *   **Architectural & Networking Analysis:** A **comparative TCO analysis of Fargate vs. EC2** and a detailed breakdown of **networking costs and trade-offs** (Network Firewall vs. NAT Gateway).
 *   **Risk & Strategy:** A sensitivity analysis of key cost drivers and a forward-looking guide to future cost optimization.
 
