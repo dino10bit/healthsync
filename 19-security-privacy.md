@@ -32,11 +32,13 @@ This internal specification is a blueprint for the **engineering team** to imple
 
 | Threat Scenario | Description | Countermeasure(s) |
 | :--- | :--- | :--- |
-| **Backend Server Compromise** | An attacker gains access to the backend infrastructure. | - **Strict IAM Roles & Least Privilege:** All compute services (Lambda functions) have narrowly scoped roles that grant access only to the specific resources they need. <br>- **AWS Secrets Manager:** User OAuth tokens are stored encrypted in a dedicated, secure service. <br>- **VPC & Security Groups:** Backend services are isolated from the public internet where possible. <br>- **Regular Audits & Pen Testing:** Proactively identify and fix vulnerabilities. |
+| **Backend Server Compromise** | An attacker gains access to the backend infrastructure. | - **Strict IAM Roles & Least Privilege:** All compute services (Fargate tasks) have narrowly scoped IAM task roles that grant access only to the specific resources they need. <br>- **AWS Secrets Manager:** User OAuth tokens are stored encrypted in a dedicated, secure service. <br>- **VPC & Security Groups:** Backend services run in a private VPC and are isolated from the public internet. <br>- **Regular Audits & Pen Testing:** Proactively identify and fix vulnerabilities. |
 | **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** This is the primary countermeasure for protecting on-device secrets, as it utilizes hardware-backed secure storage. <br>- **Jailbreak/Root Detection (Defense-in-Depth):** The app will make a best effort to detect if it is running on a compromised OS. If a compromised OS is detected, the app **will display a persistent warning** to the user and **log the event** to the backend for monitoring. It will not block functionality, acknowledging the risk of false positives. |
 | **Man-in-the-Middle (MitM) Attack** | An attacker intercepts traffic between the app and the backend. | - **TLS 1.2+:** All network traffic is encrypted. This is the primary and sufficient countermeasure for the MVP. <br>- **(Future) Dynamic Certificate Pinning:** While providing an additional layer of security, dynamic certificate pinning adds significant operational complexity and risk (e.g., "bricking" older app versions). This feature is **deferred for the MVP** and will be re-assessed for a future release when the product's risk profile justifies the added complexity. |
 | **Insecure Data Storage** | Sensitive data is stored insecurely. | - **Backend:** All user tokens are stored encrypted in AWS Secrets Manager. <br>- **On-Device:** The local settings database is encrypted. |
+| **Vulnerable Container Image (Supply Chain Attack)** | The base container image for a Fargate task, or a dependency within it, has a known OS or library vulnerability (CVE). | - **Automated Image Scanning:** The CI/CD pipeline **must** be configured to scan every container image for known vulnerabilities using a tool like **Amazon ECR Scanning** or a third-party tool (e.g., Snyk, Trivy). The pipeline **must** fail the build if a new critical or high-severity vulnerability is detected. <br>- **Minimal Base Images:** Use minimal, vetted base images (e.g., "distroless" or Alpine) to reduce the attack surface. <br>- **Regular Rebuilds:** The CI/CD pipeline will be scheduled to automatically rebuild and redeploy application images weekly to ensure OS patches are incorporated. |
 | **Vulnerable Third-Party Dependency (Supply Chain Attack)** | A library used by the app or backend has a known security vulnerability, or a build tool/dependency is compromised. | - **Automated Dependency Scanning:** The CI/CD pipeline **must** be configured to use Snyk/Dependabot to scan for known CVEs. The pipeline **must** be configured to fail the build if a new critical or high-severity vulnerability is detected, preventing vulnerable code from being deployed. <br>- **Dependency Pinning:** All dependencies will be pinned to specific, audited versions. <br>- **Reproducible Builds:** Build environments will be scripted and version-controlled to detect unauthorized changes. |
+| **Webhook Endpoint Abuse** | The public-facing webhook ingestion endpoint is targeted by attackers. | - **Signature Validation:** All incoming webhooks **must** be validated using the provider's signature mechanism (e.g., checking an `X-Hub-Signature` header). This is the primary defense against spoofed or unauthorized payloads. <br>- **Strict Input Validation:** The body of every incoming webhook payload **must** be validated against a strict schema. Any data that does not conform to the expected format will be rejected immediately. <br>- **AWS WAF Protection:** The endpoint will be protected by **AWS WAF** with rules for rate limiting, IP blacklisting, and filtering common web exploits (e.g., SQL injection, XSS), providing defense-in-depth. |
 | **AI Service Data Poisoning or Leakage** | The future AI Insights Service is attacked, either by "poisoning" the training data to produce incorrect results, or by an attacker crafting inputs to extract information about the model or other users' data. | - **Ephemeral Processing:** The AI service will process data ephemerally, just like the core sync engine. <br>- **Input Sanitization:** All inputs to the AI service will be strictly sanitized and validated. <br>- **Model Monitoring:** The outputs of the AI models will be monitored for anomalous results or statistical drift. <br>- **Data Provenance:** The training data for any future ML models will come from trusted, audited sources. |
 
 ## 4. Data Flow & Classification
@@ -60,9 +62,10 @@ graph TD
     end
     subgraph AWS Backend
         C[API Gateway]
-        D[Worker Lambdas]
+        D[Worker Fargate Tasks]
         E[AWS Secrets Manager]
         F[DynamoDB]
+        H[Public Webhook Endpoint]
     end
     subgraph External
         G[3rd Party APIs]
@@ -77,16 +80,19 @@ graph TD
     D -- Stores Config in --> F
     D -- Gets Tokens from --> E
     D -- Syncs Data with --> G
+
+    G -- Pushes Webhook to --> H
+    H --> D
 ```
 
 The following workflow describes the secure process of acquiring and using credentials for a third-party service:
 1.  The user initiates the authentication flow from the **Mobile App**, which directs them to the third-party service's login page.
 2.  After successful authentication, the third-party service redirects back to the app with a short-lived authorization code.
 3.  The Mobile App sends this authorization code to the SyncWell backend via the secure **API Gateway**.
-4.  A **Worker Lambda** receives the code.
-5.  The Worker Lambda makes a backend call to the third-party service's API, exchanging the authorization code for a long-lived refresh token and a short-lived access token.
+4.  A **Worker Fargate Task** receives the code.
+5.  The Worker Fargate Task makes a backend call to the third-party service's API, exchanging the authorization code for a long-lived refresh token and a short-lived access token.
 6.  These tokens are immediately stored securely in **AWS Secrets Manager**, encrypted at rest. The `CredentialArn` is stored in DynamoDB.
-7.  For subsequent sync jobs, the Worker Lambda retrieves the required tokens from Secrets Manager using its IAM role to communicate with the **3rd Party APIs** on the user's behalf.
+7.  For subsequent sync jobs, the Worker Fargate Task retrieves the required tokens from Secrets Manager using its IAM role to communicate with the **3rd Party APIs** on the user's behalf.
 
 ## 5. Credential Lifecycle Management
 
@@ -94,7 +100,7 @@ The lifecycle of user credentials is managed by the backend to maximize security
 
 *   **Creation:** Tokens are acquired via the secure hybrid OAuth 2.0 flow detailed in `07-apis-integration.md`.
 *   **Storage:** Tokens are stored encrypted in **AWS Secrets Manager**.
-*   **Usage:** Worker Lambda functions are granted temporary, role-based access to retrieve the tokens they need for a specific job.
+*   **Usage:** Worker Fargate Tasks are granted temporary, role-based access via their IAM Task Role to retrieve the tokens they need for a specific job.
 *   **Re-authentication:** When a connection is marked as `needs_reauth` (e.g., after a 401 error), the mobile client will prompt the user to reconnect. To initiate this flow, the client will call a dedicated API endpoint to get a new provider authorization URL.
     *   **API Endpoint:** `POST /v1/connections/{connectionId}/reauth`
     *   **Response:** A `200 OK` with the new `authorizationUrl` in the response body.
@@ -108,12 +114,16 @@ The lifecycle of user credentials is managed by the backend to maximize security
 
 The backend is a core component and must be secured accordingly.
 
-*   **Authentication:** Communication between the mobile app and our backend API Gateway will be authenticated using short-lived JSON Web Tokens (JWTs) or a similar standard.
+*   **Authentication:** Communication between the mobile app and our backend API Gateway will be authenticated using short-lived JSON Web Tokens (JWTs) issued by the user's identity provider (Apple/Google).
+*   **Webhook Endpoint Security:** The public-facing webhook ingestion endpoint is a critical entry point that must be secured. As detailed in the Threat Model, all incoming webhooks **must** be authenticated by validating their signature, and the endpoint will be protected by AWS WAF for rate limiting and filtering of malicious traffic.
 *   **Secure JWT Validation:** The Lambda Authorizer is a security-critical component. To avoid common pitfalls in security implementation ("don't roll your own crypto"), the authorizer **must** use a well-vetted, open-source library for JWT validation. A library like **AWS Lambda Powertools** will be used to handle the complexities of fetching the JWKS, validating the signature, and checking standard claims (`iss`, `aud`, `exp`).
-*   **API Rate Limiting:** All public-facing API endpoints, especially authentication-related endpoints, **must** have robust rate limiting configured to prevent abuse (e.g., credential stuffing, denial-of-service attacks). This will be implemented using AWS WAF, providing a centralized point of control for defining and applying rate-based rules.
-*   **Authorization:** All backend compute services (API Gateway and Lambda functions) will use strict IAM roles, adhering to the principle of least privilege. A worker for Fitbit should not have access to Garmin tokens.
+*   **API Rate Limiting:** All public-facing API endpoints, including the API Gateway and the Webhook endpoint, **must** have robust rate limiting configured to prevent abuse (e.g., credential stuffing, denial-of-service attacks). This will be implemented using AWS WAF, providing a centralized point of control for defining and applying rate-based rules.
+*   **Authorization:** All backend compute services (including the API Gateway Authorizer and the Fargate tasks) will use strict IAM roles, adhering to the principle of least privilege. A Fargate task definition for a Fitbit worker should not have an IAM task role that grants access to Garmin tokens.
 *   **Authorizer Policy Caching:** The architecture uses API Gateway's built-in authorizer caching to improve performance. From a security perspective, the Time-to-Live (TTL) of this cache represents a window during which a user's permissions might be stale. For example, if a user's access is revoked, they may retain access until the cached policy expires. The TTL will be set to a short duration (e.g., 5 minutes) as a balance between performance and security responsiveness.
-*   **Network Security:** Services are isolated in a Virtual Private Cloud (VPC). To ensure traffic between our backend Lambda functions and other AWS services (like DynamoDB, SQS, and Secrets Manager) does not traverse the public internet, we use **VPC Endpoints**. This creates a private, secure connection to these services from within our VPC, reducing the attack surface and preventing potential data exposure. Access to databases and secret stores is restricted to services within the VPC via security groups and network ACLs. Furthermore, to control outbound traffic from the VPC to third-party APIs, an **AWS Network Firewall** will be implemented. This acts as an egress filter, configured with an allow-list of the specific domain names of our required partners (e.g., Fitbit, Strava). This enforces the principle of least privilege at the network layer and provides a critical defense-in-depth measure against potential data exfiltration or communication with malicious domains in the event of a compromised worker.
+*   **Network Security:** The entire backend compute layer runs within a private Virtual Private Cloud (VPC), providing strong network isolation.
+    *   **Ingress:** The only points of entry are the API Gateway (for user-initiated requests) and the Application Load Balancer (for provider webhooks), both of which are protected by AWS WAF. There is no direct public internet access to the Fargate tasks.
+    *   **Internal Traffic:** To ensure traffic between our Fargate tasks and other AWS services (like DynamoDB, SQS, and Secrets Manager) does not traverse the public internet, we use **VPC Gateway Endpoints**. This creates a private, secure connection to these services from within our VPC.
+    *   **Egress:** To control outbound traffic from the VPC to third-party APIs, an **AWS Network Firewall** will be implemented. This acts as an egress filter, configured with an allow-list of the specific FQDNs of our required partners (e.g., `api.fitbit.com`). This enforces the principle of least privilege at the network layer and provides a critical defense-in-depth measure against potential data exfiltration or communication with malicious domains in the event of a compromised worker.
 *   **Logging & Monitoring:** All API calls and backend activity will be logged and monitored for anomalous behavior using services like AWS CloudTrail and CloudWatch. All logs will be scrubbed of sensitive data before being persisted.
 
 *   **Security of Critical Operational Scripts:** Certain operational procedures, like the manual account recovery described in `18-backup-recovery.md`, require powerful, privileged scripts. These scripts represent a significant security risk if not properly controlled.
@@ -157,8 +167,8 @@ The "purpose-built lookup index" is a critical component of the break-glass proc
     *   `correlationId`: The correlation ID for a specific request.
     *   `ttl`: An epoch timestamp for automatic deletion.
 *   **Time-to-Live (TTL):** The `ttl` attribute will be enabled on this table. All items written to this table **must** have a TTL of **72 hours**. This duration is a pragmatic compromise between the principle of data minimization and the practical needs of a support team that may need to investigate issues over a weekend. It ensures that the mapping between a user's permanent ID and their temporary correlation IDs is automatically and permanently deleted after a reasonable period.
-*   **Population:** The `AuthorizerLambda` at the API Gateway entrypoint will be the only component responsible for writing to this table. Upon successfully validating a user's JWT, it will write a new item containing the `userId` and the newly generated `correlationId` for that request.
-*   **Security:** Access to this table will be the most stringently controlled in the entire system. Access is restricted via IAM policies: only the `AuthorizerLambda` has write permissions, and read permissions are granted only to a specific IAM role assumable by authorized engineers. As an additional defense-in-depth measure, the table **should be encrypted with a customer-managed KMS key**, which provides a separate layer of access control and a detailed audit trail of key usage.
+*   **Population:** The **Lambda Authorizer** at the API Gateway entrypoint will be the only component responsible for writing to this table. Upon successfully validating a user's JWT, it will write a new item containing the `userId` and the newly generated `correlationId` for that request. (Note: Using Lambda for the authorizer is still the recommended and most efficient pattern, even with a Fargate backend).
+*   **Security:** Access to this table will be the most stringently controlled in the entire system. Access is restricted via IAM policies: only the **Lambda Authorizer's** execution role has write permissions, and read permissions are granted only to a specific IAM role assumable by authorized engineers. As an additional defense-in-depth measure, the table **should be encrypted with a customer-managed KMS key**, which provides a separate layer of access control and a detailed audit trail of key usage.
 
 ## 7. Pre-Launch Security Audit Checklist
 
@@ -192,7 +202,7 @@ Users will be able to request an export of all their configuration data stored b
 *   **Workflow:**
     1.  A user initiates a data export from the app settings, which requires re-authentication.
     2.  The app sends a request to a dedicated backend API endpoint.
-    3.  An asynchronous `DataExportLambda` is triggered to prepare the export file and save it to a secure S3 bucket.
+    3.  An asynchronous job is sent to a dedicated SQS queue for data exports. A specialized **Fargate task** processes jobs from this queue to prepare the export file and save it to a secure S3 bucket.
     4.  Once the export is ready, the user is sent a push notification.
     5.  Crucially, the notification **does not contain the download link**. It instructs the user to return to the app.
     6.  Within the app, the user can now access the secure, pre-signed S3 URL to download their data. This additional step of requiring the user to be authenticated in the app to get the link prevents an attacker from gaining access to the data export via a compromised email or notification channel.
@@ -200,7 +210,7 @@ Users will be able to request an export of all their configuration data stored b
     *   **Block Public Access:** All "Block Public Access" settings must be enabled at the bucket level.
     *   **Default Encryption:** Server-side encryption with AWS-managed keys (SSE-S3) must be enabled by default.
     *   **Restrictive Lifecycle Policy:** A lifecycle policy must be configured to permanently delete objects after a short period (e.g., 3 days) to ensure exported data is not retained indefinitely.
-    *   **Least Privilege Bucket Policy:** The bucket policy must be configured to only allow `s3:PutObject` from the `DataExportLambda`'s IAM role and `s3:GetObject` from pre-signed URLs.
+    *   **Least Privilege Bucket Policy:** The bucket policy must be configured to only allow `s3:PutObject` from the **Data Export Fargate task's** IAM role and `s3:GetObject` from pre-signed URLs.
 
 ### 8.2. Account Deletion ("Right to be Forgotten")
 
@@ -209,7 +219,7 @@ Users will have a clear and irreversible option to delete their account. This pr
 *   **Workflow:**
     1.  A user confirms their intent to delete their account from the app settings. This is a high-friction action requiring re-authentication.
     2.  The app sends a request to a dedicated `DELETE /v1/users/me` endpoint. The backend immediately returns a `202 Accepted` response and queues an asynchronous deletion job.
-    3.  The `AccountDeletionLambda` is triggered with the user's validated `userId`.
+    3.  A specialized **Account Deletion Fargate task** is triggered with the user's validated `userId`.
     4.  **Mark for Deletion:** The first step is to update the user's `PROFILE` item in DynamoDB, setting a `status` attribute to `DELETING`. This makes the process idempotent and prevents other operations from occurring on the account during deletion.
     5.  **Revoke and Delete Credentials:** The function then proceeds with the "scorched earth" policy. It iterates through all `CONN#{connectionId}` items, revokes the tokens with the third-party providers, and deletes the secrets from Secrets Manager. This process should be idempotent, gracefully handling already-revoked tokens.
     6.  **Delete DynamoDB Data:** After all credentials have been successfully revoked, the function deletes all items from the `SyncWellMetadata` table with the partition key `USER#{userId}`.

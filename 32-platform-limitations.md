@@ -50,7 +50,7 @@ As our user base scales to 1M DAU, we will make millions of API calls per day. P
 | ID | Platform | Limit Type | Limit | Window | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **RL-01**| Fitbit | User-Specific | 150 calls | 1 hour | This is a well-documented, per-user limit. Our engine must track usage for each user individually. |
-| **RL-02**| Strava | Application-Wide| 600 calls | 15 minutes | This is a global limit for our entire application. The rate-limiting engine must enforce this across all worker Lambdas. |
+| **RL-02**| Strava | Application-Wide| 600 calls | 15 minutes | This is a global limit for our entire application. The rate-limiting engine must enforce this across all worker Fargate tasks. |
 | **RL-03**| Strava | Application-Wide| 30,000 calls | 1 day | A secondary, daily limit that also needs to be managed globally. |
 
 ## 4. User Communication Matrix
@@ -76,7 +76,31 @@ This section documents workarounds that can be communicated to users in FAQ arti
     *   **Problem:** Users want to sync their Zwift data, but it doesn't show up if they sync it through a provider like Garmin that doesn't expose third-party activities.
     *   **Workaround:** The user should connect their Zwift account to a free Strava account, and then connect both their primary device (e.g., Garmin) and Strava accounts to SyncWell as sources. SyncWell will automatically de-duplicate the activities.
 
-## 6. Optional Visuals / Diagram Placeholders
+## 6. SyncWell Internal Platform Limitations
+
+In addition to the limitations imposed by third-party APIs, our own architectural choices involve trade-offs. This section documents the known limitations of the SyncWell backend platform itself.
+
+### 6.1. Fargate Compute Platform
+The use of AWS Fargate for our backend worker fleet provides significant cost savings and scalability for our high-throughput workload, but it has different performance characteristics than a purely serverless function model (like AWS Lambda).
+
+*   **Limitation: Slower Scale-Out Time.** While Fargate eliminates the "cold start" issue for a single task, the time required to provision a new Fargate task is longer (typically 30-90 seconds) than the time to invoke a new Lambda function concurrently.
+*   **Impact:** In the event of a sudden, massive, and unexpected spike in traffic, the system's ability to scale out its worker fleet will be slower than a Lambda-based architecture. The SQS queue is designed to absorb this load, but it means that during extreme spikes, the time to process a job may temporarily increase until the Fargate service has scaled out enough new tasks.
+
+### 6.2. Webhook Ingestion Model
+For providers that support it, our webhook-first ingestion model provides near real-time data updates. However, this introduces a direct dependency on the reliability of the third-party provider's notification system.
+
+*   **Limitation: Dependency on External Reliability.** We can only process data that providers send to our webhook endpoint. If a provider's webhook delivery system experiences an outage or significant delays, we will not receive user data in real-time.
+*   **Impact:** Users may notice a delay in their data syncing, which is outside of SyncWell's direct control.
+*   **Mitigation:** A periodic reconciliation job will run to scan for and retrieve any data that may have been missed due to a webhook delivery failure. This ensures eventual consistency, but does not solve the real-time delay.
+
+### 6.3. Adaptive Polling Model
+For providers like Garmin that do not support webhooks, the adaptive polling system intelligently schedules syncs based on user activity. This model has inherent trade-offs between efficiency and immediacy.
+
+*   **Limitation: Reactive, Not Pre-cognitive.** The polling algorithm is reactive; it adjusts a user's polling frequency based on their *past* activity. It cannot predict a sudden change in behavior.
+*   **Impact:** If a user who is typically inactive suddenly performs a new activity, there will be a lag before the system polls for that new data. For example, if a user's polling interval has been relaxed to once every 12 hours due to inactivity, a new workout will not appear in SyncWell for up to 12 hours. The system will then detect this new activity and tighten the polling interval automatically, but the initial delay is unavoidable.
+*   **Mitigation:** Users can always trigger a manual sync from the app to fetch their latest data immediately.
+
+## 7. Optional Visuals / Diagram Placeholders
 *   **[Flowchart] Limitation Discovery Process:** A flowchart showing the process from "New API Error Pattern Detected" to "Limitation ID Created" and "User Communication Matrix Updated."
 *   **[Mockup] Dynamic UI for Limitations:** A mockup of the Sync Configuration screen with Garmin grayed out as a destination, with a clear tooltip explaining why.
 *   **[Table] User Communication Matrix:** A full, detailed version of the table in Section 4.

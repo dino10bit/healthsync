@@ -31,9 +31,10 @@ The backend's error handling strategy is designed for maximum resilience and mes
 
 1.  **Guaranteed Delivery & Message Durability:** When a sync job is accepted, it is first published as an event to EventBridge, which then forwards it to a durable **Amazon SQS queue**. SQS guarantees that the message is stored redundantly across multiple availability zones until a worker successfully processes it. This ensures that even if the entire worker fleet is down, no sync jobs are lost.
 
-2.  **Handling Transient Failures with Retries:** A worker Lambda may fail for transient reasons, such as a temporary network issue, a brief third-party API outage, or being throttled. The system handles this gracefully depending on the invocation source:
-    *   **Hot Path (SQS-triggered Lambdas):** If a worker Lambda triggered from the main SQS queue fails, it throws an exception. This makes the message visible on the SQS queue again after the "visibility timeout" expires. SQS will then automatically attempt to deliver the message to another Lambda worker, effectively retrying the job.
-    *   **Cold Path (Step Functions-triggered Lambdas):** For historical syncs, the Step Functions state machine provides its own declarative, automated retry logic. This is configured directly in the state machine definition (e.g., 3-5 attempts with exponential backoff) for transient failures. This is supplemented by the rich observability features of Step Functions:
+2.  **Handling Transient Failures with Retries:** A worker Fargate task may fail for transient reasons, such as a temporary network issue, a brief third-party API outage, or being throttled. The system handles this gracefully:
+    *   **Application-Level Retries:** The worker application code running inside the Fargate task is responsible for implementing its own retry logic for transient errors when communicating with third-party APIs.
+    *   **SQS-based Retries:** If a job fails due to an unhandled exception within the task, the message will be returned to the SQS queue after its visibility timeout expires, allowing another task to pick it up. This provides a robust, infrastructure-level retry mechanism.
+    *   **Cold Path (Step Functions):** For historical syncs, the Step Functions state machine provides its own declarative, automated retry logic. This is configured directly in the state machine definition (e.g., 3-5 attempts with exponential backoff) for transient failures. This is supplemented by the rich observability features of Step Functions:
         *   **Automated Retries:** The state machine itself is configured with a declarative retry policy (e.g., 3-5 attempts with exponential backoff) for transient failures.
         *   **Visual Monitoring:** The visual workflow in the AWS Console provides a real-time graph of each execution, allowing operators to instantly identify which step in a long-running job has failed.
         *   **Detailed Execution History:** Every state transition, including the full input and output payload for each step, is logged. This provides an invaluable audit trail for debugging, eliminating the need to manually add extensive logging inside the business logic.
@@ -120,7 +121,7 @@ All backend Lambda functions will output structured JSON logs to **AWS CloudWatc
   "timestamp": "2023-10-27T14:30:00.123Z",
   "level": "ERROR",
   "message": "Sync job failed: Unhandled exception from provider.",
-  "service": "WorkerLambda",
+  "service": "WorkerFargateTask",
   "correlationId": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
   "idempotencyKey": "client-generated-uuid-123",
   "source": "fitbit",
@@ -164,7 +165,7 @@ The comprehensive observability strategy, including the full tooling stack (Clou
 ### Backend Error Handling Flow (DLQ)
 ```mermaid
 graph TD
-    A[SQS Job Queue] --> B{Worker Lambda};
+    A[SQS Job Queue] --> B{Worker Fargate Task};
     B -- Success --> C[Delete Job];
     B -- Failure --> D{Retry?};
     D -- Yes --> B;

@@ -67,6 +67,11 @@ This strategy yields different recovery objectives depending on the nature of th
     *   We will configure **cross-region replication** for our secrets. When a secret is updated in the primary region (e.g., a refreshed token), Secrets Manager automatically replicates that change to the replica secret in the secondary region.
     *   This ensures that if the primary region fails, the workers in the failover region have access to the up-to-date credentials needed to continue processing sync jobs.
 
+*   **Stateless Compute (AWS Fargate):**
+    *   The backend worker fleet is implemented as a set of stateless services running on **AWS Fargate**.
+    *   These tasks do not store any persistent data locally. All state is externalized to DynamoDB and Secrets Manager.
+    *   This stateless design is what enables a seamless, rapid failover. In a regional outage, traffic is simply redirected to the Fargate fleet in a healthy region, which can immediately resume processing using the replicated data stores. No instance-level recovery is required.
+
 *   **Distributed Locking (DynamoDB Conditional Writes):**
     *   To prevent race conditions (e.g., two workers processing the same sync job concurrently), a distributed locking mechanism is required.
     *   **Anti-Pattern Avoidance:** Using a replicated cache (like ElastiCache Global Datastore) for distributed locking in an active-active, multi-region setup is a known anti-pattern. The inherent replication lag can break the mutual exclusion guarantee of a lock, leading to data corruption.

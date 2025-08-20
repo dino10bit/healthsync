@@ -54,11 +54,45 @@ Even with one developer, a formal process for handling critical incidents is nec
     4.  **Mitigate:** Focus on restoring service as quickly as possible. This may involve a hotfix, disabling a specific feature, or rolling back a release.
     5.  **Postmortem:** After the incident is resolved, conduct a blameless postmortem to understand the root cause and define preventative actions.
 
-## 5. Maintenance & Toil Reduction
+## 5. Deployment and Patch Management
+
+The move to a container-based architecture with AWS Fargate introduces new operational processes for deployments and security patching. These processes are designed to be highly automated to ensure reliability and reduce manual toil.
+
+### 5.1. Backend Deployment & Rollback Process
+
+All backend deployments will be managed through a CI/CD pipeline (e.g., GitHub Actions) that automates a **blue/green deployment** strategy, ensuring zero downtime for users.
+
+*   **Deployment Trigger:** A new deployment is automatically triggered by a merge to the `main` branch.
+*   **CI/CD Pipeline Steps:**
+    1.  **Build & Test:** The pipeline builds the new Docker image and runs a comprehensive suite of unit and integration tests.
+    2.  **Scan Image:** The newly built image is scanned for known vulnerabilities using **Amazon ECR's built-in scanner**. The pipeline will fail if any `CRITICAL` or `HIGH` severity vulnerabilities are found.
+    3.  **Push to ECR:** If tests and scans pass, the image is tagged with the git commit hash and pushed to the Amazon Elastic Container Registry (ECR).
+    4.  **Deploy with CodeDeploy:** The pipeline then initiates a blue/green deployment using AWS CodeDeploy.
+        *   CodeDeploy provisions a new "green" fleet of Fargate tasks with the new container image.
+        *   It runs smoke tests against the green fleet to ensure it's healthy.
+        *   Once validated, it shifts 100% of production traffic from the "blue" (old) fleet to the "green" (new) fleet.
+        *   The old blue fleet is kept running for a configurable period (e.g., 1 hour) to allow for a near-instantaneous rollback if needed.
+*   **Rollback Procedure:**
+    *   **Automatic Rollback:** If the smoke tests on the green fleet fail, or if key CloudWatch alarms (e.g., high error rate) are triggered during the deployment, CodeDeploy will automatically roll back the deployment, and the blue fleet will continue to serve traffic.
+    *   **Manual Rollback:** An engineer can trigger a manual rollback from the AWS console if a problem is discovered after the deployment is complete.
+
+### 5.2. Container Patch Management
+
+Unlike with AWS Lambda where the runtime is managed by AWS, with Fargate we are responsible for the security of our container images. This requires a proactive and automated patching strategy.
+
+*   **Responsibility:** The engineering team is responsible for ensuring the operating system and libraries within the container images are kept up-to-date with the latest security patches.
+*   **Automated Patching Process:** A scheduled CI/CD job will run **weekly** to perform the following:
+    1.  **Pull Latest Base Image:** The pipeline pulls the latest version of our official base image (e.g., `python:3.11-slim-bullseye`).
+    2.  **Rebuild Application Image:** It rebuilds our application on top of this freshly pulled base layer.
+    3.  **Test and Scan:** The newly rebuilt image goes through the same rigorous testing and vulnerability scanning process as a regular feature deployment.
+    4.  **Deploy:** If all checks pass, the newly patched image is deployed to production using the same blue/green deployment process described above.
+*   **Rationale:** This automated weekly process ensures that we are continuously incorporating the latest OS and security patches into our production environment without requiring manual effort or intervention. It transforms security patching from a periodic, manual chore into a routine, automated part of our operations.
+
+## 6. Maintenance & Toil Reduction
 
 ### Routine Maintenance Cadence
-*   **Weekly (1-2 hours):** Review dashboards (Firebase, RevenueCat), triage support tickets and user feedback.
-*   **Monthly (2-4 hours):** Perform dependency updates (including security scans), review and groom the technical debt registry, and review the public product roadmap.
+*   **Weekly (1-2 hours):** Review dashboards (Firebase, RevenueCat), triage support tickets and user feedback. In addition to application dependency updates, monitor the automated weekly container patching job.
+*   **Monthly (2-4 hours):** Perform application-level dependency updates (e.g., Python libraries in `requirements.txt`), review and groom the technical debt registry, and review the public product roadmap.
 
 ### Technical Debt Registry
 *   A formal registry of technical debt will be maintained using a specific label (e.g., `tech-debt`) in GitHub Issues.

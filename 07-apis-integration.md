@@ -55,8 +55,18 @@ To enforce this separation of concerns, every provider must implement the `DataP
 enum class Capability {
     READ_STEPS, WRITE_STEPS,
     READ_WORKOUTS, WRITE_WORKOUTS,
-    READ_SLEEP, WRITE_SLEEP
+    READ_SLEEP, WRITE_SLEEP,
+    SUPPORTS_WEBHOOKS
 }
+
+/**
+ * Represents the parsed and validated payload from a provider's webhook.
+ */
+data class WebhookPayload(
+    val userId: String,
+    val dataType: String, // e.g., "steps", "workouts"
+    val eventTimestamp: Long
+)
 
 interface DataProvider {
     /**
@@ -102,6 +112,15 @@ interface DataProvider {
      * based on the `dataType` of the sync job.
      */
     suspend fun pushData(tokens: ProviderTokens, data: List<CanonicalData>): PushResult
+
+    /**
+     * Handles an incoming webhook event. The implementation is responsible for
+     * verifying the webhook's authenticity and parsing its payload.
+     * @param requestHeaders The HTTP headers from the incoming request.
+     * @param requestBody The raw HTTP body from the incoming request.
+     * @return A `WebhookPayload` object if the webhook is valid, otherwise null.
+     */
+    suspend fun handleWebhook(requestHeaders: Map<String, String>, requestBody: String): WebhookPayload?
 }
 
 /**
@@ -156,7 +175,7 @@ A robust sync engine must intelligently handle the wide variety of errors that c
 
 | HTTP Status Code | Error Type | System Action | User Impact |
 | :--- | :--- | :--- | :--- |
-| `401 Unauthorized` / `403 Forbidden` | **Permanent Auth Error** | The sync job is immediately failed. The connection is marked as `needs_reauth`. Crucially, the worker **must** also publish a `ReAuthenticationNeeded` event, which triggers an immediate push notification to the user. Waiting for a DLQ to process is too slow. | User is notified **immediately** that they need to reconnect the service. **[U-003]** When the user taps this notification, the app must deep-link directly to the "Connected Apps" screen, where the affected connection is highlighted in an error state with a "Reconnect" button. |
+| `401 Unauthorized` / `403 Forbidden` | **Permanent Auth Error** | The sync job is immediately failed. The connection is marked as `needs_reauth`. Crucially, the Fargate task **must** also publish a `ReAuthenticationNeeded` event, which triggers an immediate push notification to the user. Waiting for a DLQ to process is too slow. | User is notified **immediately** that they need to reconnect the service. **[U-003]** When the user taps this notification, the app must deep-link directly to the "Connected Apps" screen, where the affected connection is highlighted in an error state with a "Reconnect" button. |
 | `429 Too Many Requests` | **Rate Limit Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff). The global rate limiter is notified to slow down requests for this provider. | Syncs for this provider may be delayed. This is handled automatically. **[U-002]** If a user's syncs are delayed by more than a configurable threshold (e.g., 1 hour) due to persistent rate limiting, a low-priority notification should be sent to the user to inform them of the delay. |
 | `500`, `502`, `503`, `504` | **Transient Server Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff). | Syncs may be delayed. The system will automatically retry. |
 | `400 Bad Request` | **Permanent Request Error** | The job is failed and moved to the Dead-Letter Queue (DLQ) for manual inspection. An alarm is triggered. | The specific sync fails. An engineer is alerted to a potential bug in our `DataProvider` or an unexpected API change. |
@@ -179,11 +198,11 @@ With 1M DAU, we will make millions of API calls per day. Proactively managing th
 
 | Platform | Data Type | Read Endpoint | Write Endpoint | Integration Model | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Google Fit** | Steps | `users/me/dataset:aggregate` | `users/me/dataSources/.../datasets:patch` | Hybrid | Requires Health Connect SDK on device. |
-| **Apple Health** | Steps | `HKSampleQuery` | `HKHealthStore.save()` | Device-to-Cloud / Cloud-to-Device | Uses the native HealthKit SDK on device. |
-| **Fitbit** | Steps | `1/user/-/activities/steps/date/[date]/1d.json` | `N/A` | Cloud-to-Cloud | Read-only for activity data. The granular `capabilities` enum clarifies this. |
-| **Strava** | Activities | `athlete/activities` | `activities` | Cloud-to-Cloud | Does not provide daily step data. |
-| **Garmin** | Steps | `daily-summary-service/daily-summary/...` | `N/A` | Cloud-to-Cloud | **Deferred Post-MVP.** Per recommendation `[REC-HIGH-02]`, this integration has been removed from the MVP scope due to the extreme reliability risk of its unofficial API. It will be re-evaluated when an official, stable API is available. |
+| **Google Fit** | Steps | `users/me/dataset:aggregate` | `users/me/dataSources/.../datasets:patch` | Hybrid (Polling) | Requires Health Connect SDK on device. Does not have a webhook API. |
+| **Apple Health** | Steps | `HKSampleQuery` | `HKHealthStore.save()` | Device-to-Cloud / Cloud-to-Device | N/A (On-device) |
+| **Fitbit** | Steps | `1/user/-/activities/steps/date/[date]/1d.json` | `N/A` | Cloud-to-Cloud (Webhook-First) | Read-only for activity data. Supports webhooks for near real-time updates. |
+| **Strava** | Activities | `athlete/activities` | `activities` | Cloud-to-Cloud (Webhook-First) | Does not provide daily step data. Supports webhooks for activity updates. |
+| **Garmin** | Steps | `daily-summary-service/daily-summary/...` | `N/A` | Cloud-to-Cloud (Polling) | **Deferred Post-MVP.** Unofficial API. No webhook support. |
 
 ## 6. Risk Analysis & Mitigation
 
@@ -219,7 +238,7 @@ sequenceDiagram
 ### Sequence Diagram for Token Refresh (Backend)
 ```mermaid
 sequenceDiagram
-    participant Worker as Worker Task (Lambda)
+    participant Worker as Worker Fargate Task
     participant SecretsManager as AWS Secrets Manager
     participant ExtProvider as External Provider
 

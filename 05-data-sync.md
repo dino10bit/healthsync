@@ -25,7 +25,11 @@ This document serves as a blueprint for the **product and engineering teams**, d
 
 ## 2. Sync Engine Architecture (MVP)
 
-The data synchronization engine for the MVP is a server-side, event-driven system built on AWS, as defined in `06-technical-architecture.md`. The architecture is designed for reliability and is focused exclusively on the **"Hot Path"** for handling syncs of recent data.
+The data synchronization engine for the MVP is a server-side, event-driven system built on AWS, as defined in `06-technical-architecture.md`. The architecture is designed for reliability and is focused exclusively on the **"Hot Path"** for handling syncs of recent data. It incorporates a multi-faceted sync strategy to optimize for cost and performance:
+*   **Webhook-First Model:** For providers that support it, a push-based webhook model provides the most efficient, real-time syncs.
+*   **Tiered Sync Frequency:** For polling-based providers, sync frequency is aligned with the user's subscription tier.
+*   **Adaptive Polling:** To further optimize polling, an intelligent adaptive polling mechanism is used to adjust sync frequency based on user activity.
+These strategies are detailed in the main technical architecture document.
 
 *   **Hot Path (for Real-time Syncs):** This path is optimized for low-latency, high-volume, short-lived sync jobs. It uses an SQS queue to reliably buffer requests and decouple the API from the workers.
 *   **Post-MVP (Cold Path):** The architecture for long-running historical data backfills (the "Cold Path") is a post-MVP feature. The detailed design, which uses AWS Step Functions, is captured in `45-future-enhancements.md`.
@@ -34,17 +38,17 @@ The core components for the MVP are:
 *   **`API Gateway`:** The public-facing entry point. It uses **direct service integrations** to validate requests and publish events, enhancing performance and reducing cost.
 *   **`EventBridge Event Bus`:** The central nervous system. It receives `RealtimeSyncRequested` events directly from API Gateway and routes them to the SQS queue.
 *   **`SQS Queue`:** A primary, durable SQS queue that acts as a critical buffer for real-time sync jobs, absorbing traffic spikes and ensuring no jobs are lost.
-*   **`SQS Dead-Letter Queue (DLQ)`:** A secondary SQS queue configured as the DLQ for the primary queue. If a `WorkerLambda` fails to process a message after multiple retries, SQS automatically moves the message here for analysis.
-*   **`Worker Service (AWS Lambda)`:** The heart of the engine. A serverless function running on AWS Lambda that contains the core sync logic, invoked by SQS messages.
+*   **`SQS Dead-Letter Queue (DLQ)`:** A secondary SQS queue configured as the DLQ for the primary queue. If a `WorkerFargateTask` fails to process a message after multiple retries, SQS automatically moves the message here for analysis.
+*   **`Worker Service (AWS Fargate)`:** The heart of the engine. A containerized service running on AWS Fargate that contains the core sync logic, invoked by SQS messages.
 *   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration must implement.
 *   **`Conflict Resolution Engine`:** A component within the worker that resolves data conflicts using simple, deterministic rules.
 *   **`DynamoDB`:** The `SyncWellMetadata` table stores all essential state for the sync process.
 
 ## 3. The Synchronization Algorithm (Server-Side Delta Sync for MVP)
 
-The `Worker Lambda` will follow this algorithm for each job pulled from the SQS queue:
+The `Worker Fargate Task` will follow this algorithm for each job pulled from the SQS queue:
 
-1.  **Job Dequeue:** The Lambda function receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
+1.  **Job Dequeue:** The Fargate task receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
 2.  **Get State from DynamoDB:** The worker task performs a `GetItem` call on the `SyncWellMetadata` table to retrieve the `SyncConfig` item. This read provides the `lastSyncTime` and the user's chosen `conflictResolutionStrategy`.
 3.  **Fetch New Data:** It calls the `fetchData(since: lastSyncTime, dataType: job.dataType)` method on the source `DataProvider`. The `dataType` (e.g., "steps", "workouts") is retrieved from the job payload.
 4.  **Fetch Destination Data for Conflict Resolution:** To enable conflict resolution, the worker fetches potentially overlapping data from the destination `DataProvider`, again specifying the `dataType`. The time range for this query will be the exact time range of the new data fetched from the source.
@@ -69,7 +73,7 @@ A conflict is detected if a `source` activity and a `destination` activity have 
 
 ## 5. Data Integrity
 
-*   **Durable Queueing & Idempotency:** The combination of SQS and Lambda guarantees that a real-time sync job will be processed "at-least-once". To prevent duplicate processing, the system uses a robust, end-to-end idempotency strategy based on a client-generated `Idempotency-Key`, as defined in `06-technical-architecture.md`.
+*   **Durable Queueing & Idempotency:** The combination of SQS and Fargate guarantees that a real-time sync job will be processed "at-least-once". To prevent duplicate processing, the system uses a robust, end-to-end idempotency strategy based on a client-generated `Idempotency-Key`, as defined in `06-technical-architecture.md`.
 *   **Transactional State:** State updates in DynamoDB are atomic. The `lastSyncTime` is only updated if the entire write operation to the destination platform succeeds.
 *   **Dead Letter Queue (DLQ):** If a job fails repeatedly (e.g., due to a persistent third-party API error), SQS will automatically move it to a DLQ. This allows for manual inspection and debugging without blocking the main queue.
 
@@ -119,9 +123,9 @@ This diagram illustrates the flow of a real-time sync request through the event-
 1.  **Request Initiation (`MobileApp`)**: The user initiates a sync from the mobile application. The app sends a secure HTTPS request to the API Gateway endpoint.
 2.  **Ingestion & Decoupling (`API Gateway` -> `EventBridge`)**: The API Gateway validates the request and, using a direct service integration, publishes a `RealtimeSyncRequested` event to the EventBridge bus. This decouples the client-facing API from the backend processing.
 3.  **Buffering (`EventBridge` -> `HotQueue`)**: An EventBridge rule filters for these events and routes them to the primary SQS queue (`HotQueue`). This queue acts as a durable buffer, absorbing traffic spikes and ensuring no sync jobs are lost.
-4.  **Processing (`HotQueue` -> `WorkerLambda`)**: The SQS queue triggers the `WorkerLambda`. This Lambda contains the core business logic to perform the synchronization as detailed in "The Synchronization Algorithm".
-5.  **State Management & Data Sync (`WorkerLambda` -> `DynamoDB` & `ThirdPartyAPIs`)**: The worker reads and writes state information (like `lastSyncTime`) from DynamoDB and communicates with the external third-party APIs to fetch and push health data.
-6.  **Fault Tolerance (`HotQueue` -> `DLQ_SQS`)**: If the `WorkerLambda` fails to process a message after multiple retries (due to a persistent error), the message is automatically moved from the `HotQueue` to the Dead-Letter Queue (`DLQ_SQS`) for manual inspection by support engineers. This prevents a single "poison pill" message from blocking the entire sync pipeline.
+4.  **Processing (`HotQueue` -> `WorkerFargateTask`)**: The SQS queue is polled by the `WorkerFargateTask`. This containerized service contains the core business logic to perform the synchronization as detailed in "The Synchronization Algorithm".
+5.  **State Management & Data Sync (`WorkerFargateTask` -> `DynamoDB` & `ThirdPartyAPIs`)**: The worker reads and writes state information (like `lastSyncTime`) from DynamoDB and communicates with the external third-party APIs to fetch and push health data.
+6.  **Fault Tolerance (`HotQueue` -> `DLQ_SQS`)**: If the `WorkerFargateTask` fails to process a message after multiple retries (due to a persistent error), the message is automatically moved from the `HotQueue` to the Dead-Letter Queue (`DLQ_SQS`) for manual inspection by support engineers. This prevents a single "poison pill" message from blocking the entire sync pipeline.
 
 ```mermaid
 graph TD
@@ -137,7 +141,7 @@ graph TD
             DLQ_SQS[SQS DLQ]
         end
 
-        WorkerLambda["Worker Service (Lambda)"]
+        WorkerFargateTask["Worker Service (Fargate)"]
         DynamoDB[DynamoDB]
     end
     subgraph External
@@ -148,11 +152,11 @@ graph TD
 
     APIGateway -- "Publishes 'RealtimeSyncRequested' event" --> EventBridge
     EventBridge -- "Routes to" --> HotQueue
-    HotQueue -- Triggers --> WorkerLambda
+    HotQueue -- Drives --> WorkerFargateTask
     HotQueue -- "On Failure, redrives to" --> DLQ_SQS
 
-    WorkerLambda -- Read/Write --> DynamoDB
-    WorkerLambda -- Syncs Data --> ThirdPartyAPIs
+    WorkerFargateTask -- Read/Write --> DynamoDB
+    WorkerFargateTask -- Syncs Data --> ThirdPartyAPIs
 ```
 
 ### Sequence Diagram for Delta Sync (MVP)
@@ -171,7 +175,7 @@ algorithm defined in Section 3 of 05-data-sync.md.
 
 ```mermaid
 sequenceDiagram
-    participant Worker as Worker Lambda
+    participant Worker as Worker Fargate Task
     participant DynamoDB as DynamoDB
     participant SourceAPI as Source API
     participant DestAPI as Destination API
@@ -201,8 +205,8 @@ sequenceDiagram
 The following steps detail the journey of a single sync job message, ensuring reliability and fault tolerance through the native features of Amazon SQS.
 
 1.  **Queued:** A `RealtimeSyncRequested` event is routed to the primary SQS queue. The message is now durably stored and waiting to be processed by a worker.
-2.  **In Progress:** A `WorkerLambda` instance polls the queue and receives the message. Upon receipt, SQS makes the message temporarily invisible to other consumers for a configured `VisibilityTimeout` period. This prevents other workers from processing the same job simultaneously.
-3.  **Succeeded:** If the `WorkerLambda` successfully completes all steps of the synchronization algorithm (fetching, resolving conflicts, writing data, and updating state), it makes an explicit call to SQS to delete the message from the queue. This marks the job as complete.
+2.  **In Progress:** A `WorkerFargateTask` instance polls the queue and receives the message. Upon receipt, SQS makes the message temporarily invisible to other consumers for a configured `VisibilityTimeout` period. This prevents other workers from processing the same job simultaneously.
+3.  **Succeeded:** If the `WorkerFargateTask` successfully completes all steps of the synchronization algorithm (fetching, resolving conflicts, writing data, and updating state), it makes an explicit call to SQS to delete the message from the queue. This marks the job as complete.
 4.  **Retrying:** If the worker encounters a transient error (e.g., a temporary network issue, a brief third-party API outage) or a bug, it will throw an exception. It does **not** delete the message. When the `VisibilityTimeout` expires, the message reappears in the queue and can be picked up by another worker for a new attempt. SQS automatically increments the message's internal `ReceiveCount`.
 5.  **Moved to DLQ:** The SQS queue is configured with a `maxReceiveCount` threshold (e.g., 5 attempts). If a message fails to be processed successfully after this many attempts, SQS automatically gives up and moves the message to the configured Dead-Letter Queue (DLQ). This "poison pill" handling prevents a single, consistently failing job from blocking the entire sync pipeline. The DLQ can then be inspected by support engineers to diagnose the root cause of the failure.
 

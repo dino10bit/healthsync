@@ -100,9 +100,39 @@ Our testing strategy follows the principles of the classic testing pyramid.
     *   **Stress Test:** A test that pushes the system beyond its expected limits (e.g., >3,000 RPS). The goal is to understand how the system fails and to ensure that it fails gracefully (e.g., by throttling requests) rather than crashing.
 *   **CI/CD Integration:** A smaller-scale load test will be integrated into the CI/CD pipeline to run on every merge to the `develop` branch. This will provide early feedback on performance regressions. Full-scale load tests will be run manually before each major release.
 *   **Success Criteria:**
-    *   The system must handle **3,000 RPS** with P95 latency below 500ms for API Gateway and a Lambda error rate below 0.5%.
+    *   The system must handle **3,000 RPS** with P95 latency below 500ms for API Gateway and a Fargate task error rate below 0.5%.
     *   The SQS queue depth should not grow uncontrollably during the soak test.
     *   The system should not crash during the stress test.
+
+### Fargate Worker Testing
+*   **Objective:** To ensure the containerized worker application is reliable, scalable, and performs correctly.
+*   **Methodology:**
+    *   **Docker Build Verification:** The CI/CD pipeline will include a step to build the worker's Docker image and scan it for vulnerabilities.
+    *   **Local E2E Testing:** Developers will run the Fargate task locally using Docker Compose (alongside LocalStack) to test the entire sync flow before committing code.
+    *   **Staging Environment Testing:** In the staging environment, chaos engineering principles will be applied (as defined in `06-technical-architecture.md`) to test the auto-scaling and self-healing capabilities of the Fargate service. This includes terminating tasks to ensure they are automatically replaced and scaling the SQS queue to verify that the service scales out as expected.
+
+### Webhook Integration Testing
+*   **Objective:** To verify the end-to-end flow of webhook-driven syncs.
+*   **Methodology:**
+    *   **Automated E2E Tests:** A dedicated E2E test suite will be created to simulate webhook events. This will involve:
+        1.  Using a tool like `ngrok` to expose a local endpoint for receiving webhooks during the test run.
+        2.  Programmatically triggering an action in a test account of a third-party service (e.g., creating a new activity in a Strava test account).
+        3.  Asserting that the webhook is received by the local endpoint, processed by the `WebhookIngressLambda`, and results in a successful sync job.
+    *   **Manual Testing:** Manually testing the webhook flow with real provider accounts in the staging environment.
+
+### Adaptive Polling Algorithm Testing
+*   **Objective:** To verify that the adaptive polling algorithm correctly adjusts polling frequency based on user activity.
+*   **Methodology:**
+    *   **Unit Tests:** The core algorithm will be unit tested with various simulated user histories to ensure it calculates the correct polling intervals.
+    *   **Staging Environment Simulation:** A test script will be created to generate a variety of user sync patterns in the staging environment (e.g., highly active users, inactive users, users with bursty activity). The test will then verify that the polling schedules created in EventBridge Scheduler match the expected frequencies for each user type.
+
+### Tiered Sync Frequency Testing
+*   **Objective:** To ensure that users on different subscription tiers receive the correct sync frequency.
+*   **Methodology:**
+    *   **Automated E2E Tests:** An E2E test will be created to:
+        1.  Create two test users, one "Free" and one "Pro".
+        2.  Monitor the scheduling system (e.g., by querying EventBridge Scheduler or observing sync logs).
+        3.  Assert that the "Pro" user is scheduled for frequent syncs (e.g., every 15 minutes) while the "Free" user is scheduled for daily syncs.
 
 ### Security Testing
 *   **Objective:** To proactively identify and remediate security vulnerabilities in the mobile application and backend services, ensuring the confidentiality and integrity of user data.

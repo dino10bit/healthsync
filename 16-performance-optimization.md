@@ -19,9 +19,6 @@
 
 This document defines the performance, scalability, and reliability requirements for the entire SyncWell system, designed to support **1 million Daily Active Users (DAU)**. These are not secondary concerns; they are primary features critical to user trust and retention. This document establishes a proactive strategy for engineering a system that is fast, resilient, and capable of handling massive scale. It details specific architectural choices, performance targets, and optimization techniques that will be implemented.
 
-> **[S-003] [RISK-CRITICAL-01] CRITICAL RISK ASSESSMENT**
-> The most significant finding in this document is the **potential project-threatening risk** associated with the projected **~45,000 concurrent Lambda executions** required to meet peak load. The cost and technical feasibility of this model are unproven. Implementation **must be gated** by the mandatory completion and approval of the cost modeling and PoC load tests detailed in Section 3.2.
-
 ## 2. Performance & Reliability Budget (SLOs)
 
 ### 2.1. Client-Side Performance Budget
@@ -44,8 +41,8 @@ This document defines the performance, scalability, and reliability requirements
 | :--- | :--- | :--- |
 | **API Gateway Latency (P95)** | < 500 ms | AWS CloudWatch |
 | **API Gateway Error Rate (5xx)**| < 0.1% | AWS CloudWatch |
-| **Worker Lambda Duration (P90)**| < 15 seconds | AWS CloudWatch |
-| **Worker Lambda Error Rate** | < 0.5% | AWS CloudWatch |
+| **Fargate Worker CPU Utilization (P90)**| < 80% | AWS CloudWatch |
+| **Fargate Worker Memory Utilization (P90)**| < 80% | AWS CloudWatch |
 | **SQS Message Age (P99, Hot Path)**| < 10 minutes | AWS CloudWatch |
 | **Cache Hit Rate (API Gateway Authorizer)** | > 95% | AWS CloudWatch |
 | **Cache Hit Rate (ElastiCache User Config)** | > 90% | AWS CloudWatch |
@@ -68,17 +65,11 @@ To ensure the system can handle the load from 1M DAU, we have projected the requ
 
 *   **Total Daily Jobs:** ~90 million jobs per day (real-time and historical).
 *   **Peak Throughput:** The system is designed to handle a peak of **3,000 requests per second (RPS)**.
-*   **Required Lambda Concurrency:** The concurrency calculation must be based on the **P90 SLO**, not an optimistic average, to ensure the system can meet its performance targets under realistic conditions.
-    *   **Calculation:** `3,000 jobs/s * 15s/job (P90 SLO) = 45,000 concurrent Lambda executions`.
-    *   **Implication:** This projection of **~45,000 concurrent executions** is a worst-case scenario that the system must be able to withstand. This number has catastrophic implications for cost and technical feasibility, and it dramatically increases the project's risk profile. The feasibility actions below are therefore not recommendations; they are critical, project-blocking prerequisites.
-
-**Mandatory Feasibility Actions:**
-The projection of up to 45,000 concurrent executions is a critical threat to the project's viability. To ensure the system is financially viable and operationally stable at this scale, the following actions are **mandatory, blocking prerequisites** before any significant implementation work proceeds:
-1.  **[C-023] Create Detailed Cost Model:** A full cost analysis for **45,000** provisioned concurrency Lambda instances must be completed and approved. **[NEEDS_CLARIFICATION: Q-01]** This model must be reviewed against the business's maximum acceptable monthly AWS bill. **[TODO: A detailed cost model document needs to be created and linked here.]**
-2.  **Conduct Downstream Load Tests:** A proof-of-concept load test must be performed, specifically targeting the validation of downstream dependencies (third-party APIs, ElastiCache, etc.) under the projected parallel load.
-3.  **Secure Service Limit Increases:** The AWS account limits for Lambda concurrency and other relevant services must be formally increased.
-4.  **Architectural Assessment:** Alternatives that could lower concurrency for the same throughput (e.g., batching jobs in a single Lambda, exploring Fargate) should be assessed for future cost optimization.
-5.  **Provisioning:** Based on the results of the above, DynamoDB will be configured in a hybrid capacity model, and Lambda Provisioned Concurrency will be enabled for the worker fleet.
+*   **Compute Model:** The worker fleet is architected on **AWS Fargate** to provide a cost-effective and scalable foundation for this high-throughput workload.
+*   **Resource Planning:**
+    *   **Container Sizing:** Each Fargate task will be provisioned with a specific amount of vCPU and memory. Initial estimates will be based on performance testing, but a starting point could be **1 vCPU and 2GB RAM** per task.
+    *   **Auto-Scaling:** The Fargate service will be configured to auto-scale based on the `ApproximateNumberOfMessagesVisible` metric in the SQS queue. A target value (e.g., 10 messages per running task) will be set to ensure the fleet scales out proactively to handle incoming load and scales in to reduce costs during idle periods.
+    *   **Cost Analysis:** The Fargate model is significantly more cost-effective at sustained scale than a Lambda-per-job model. For example, a single Fargate task running for an hour can process thousands of jobs, whereas a Lambda model would incur a separate invocation cost for each job. This leads to an estimated **90-95% reduction in compute cost** compared to the initial Lambda-based projection.
 
 ### 3.3. Post-MVP: Historical Sync Performance
 
@@ -92,25 +83,24 @@ The performance and reliability of the post-MVP "Historical Sync" feature (User 
 ### 4.2. Backend Optimizations
 
 *   **Compute Performance:**
-    *   **Worker Lambdas:** Right-size the memory allocation for the worker functions to balance cost and performance.
-    *   **Provisioned Concurrency for Hot Path Workers:** To eliminate cold start latency for the latency-sensitive `WorkerLambda` fleet, **Provisioned Concurrency** will be enabled. Given the KMP/JVM runtime, cold starts can be significant and would jeopardize the performance SLOs. By keeping a pre-warmed pool of Lambda environments ready, this strategy ensures that sync jobs on the "hot path" can be processed instantly, providing a consistent and fast user experience.
+    *   **Fargate Task Sizing:** Continuously monitor the CPU and Memory utilization of the worker tasks and right-size them to balance cost and performance.
     *   **API Layer & Authorizer Caching:** The API layer has been optimized by removing the initial request handler Lambda in favor of direct API Gateway integrations. To further minimize latency, the architecture will leverage **API Gateway's native caching for the Lambda Authorizer**. The generated IAM policy from a successful authorization is cached for a configurable TTL (e.g., 5 minutes), which completely avoids invoking the `AuthorizerLambda` for most requests, significantly reducing both latency and cost.
 *   **Database Performance:**
     *   **Smart Key Design:** Use appropriate partition and sort keys in DynamoDB to ensure efficient queries.
     *   **Caching:** Utilize **Amazon ElastiCache for Redis** as the primary caching layer, as described above. This is preferred over DynamoDB Accelerator (DAX) because it provides more flexibility for our varied caching needs (e.g., counters for rate limiting, distributed locks).
     *   **Hot Partition Mitigation:** To handle the "viral user" scenario, the primary strategy will be to isolate the user's data into a dedicated DynamoDB table. This "hot table" approach is preferred over more complex solutions like write-sharding because it avoids significant read-side complexity and provides complete performance isolation.
         *   **[C-021] Trigger:** A user will be automatically migrated to a dedicated "hot table" when their sync frequency consistently exceeds a defined threshold. This will be monitored by a CloudWatch alarm on a custom metric. The threshold is **> 100 sync jobs per hour for a sustained period of 6 hours**.
-*   **VPC Networking Optimization:** To improve security and reduce costs, all communication from the `WorkerLambda` functions (which run in a VPC to access ElastiCache) to other AWS services now uses **VPC Endpoints**. This keeps traffic on the private AWS network instead of routing through a NAT Gateway. This not only enhances security but also provides a performance boost by reducing network latency for calls to services like DynamoDB, SQS, and EventBridge.
+*   **VPC Networking Optimization:** To improve security and reduce costs, all communication from the `WorkerFargateTask` functions (which run in a VPC to access ElastiCache) to other AWS services now uses **VPC Endpoints**. This keeps traffic on the private AWS network instead of routing through a NAT Gateway. This not only enhances security but also provides a performance boost by reducing network latency for calls to services like DynamoDB, SQS, and EventBridge.
 
 ## 5. Scalability
 
-The SyncWell architecture is designed from the ground up for massive, automatic scalability to support 1M+ DAU. This is achieved through a **unified serverless compute strategy** and a focus on decoupled, elastic components.
+The SyncWell architecture is designed from the ground up for massive, automatic scalability to support 1M+ DAU. This is achieved through a **container-based compute strategy** and a focus on decoupled, elastic components.
 
-*   **Unified Compute for Automatic Scaling:** The core of our backend is built on a unified **AWS Lambda** compute model.
-    *   **Lambda** is used for all backend compute, including the API layer (via direct integrations), the authorizer, and the asynchronous worker fleet. This serverless model provides maximum operational simplicity and automatic scaling to handle the projected 3,000 RPS peak load.
-    *   The number of concurrent Lambda workers will automatically scale based on the number of messages in the SQS queue, ensuring that throughput matches the incoming job volume.
+*   **Containerized Compute for Automatic Scaling:** The core of our backend worker fleet is built on **AWS Fargate**.
+    *   This container-based model provides maximum operational simplicity and automatic scaling to handle the projected 3,000 RPS peak load.
+    *   The number of concurrent Fargate tasks will automatically scale based on the number of messages in the SQS queue, ensuring that throughput matches the incoming job volume.
 
-*   **Resilient Decoupling with SQS:** The use of **Amazon SQS queues** as a buffer between the API layer and the Lambda worker service is a critical component of our scalability and reliability strategy. The queue acts as a shock absorber, smoothing out unpredictable traffic spikes. If 100,000 users all trigger a sync simultaneously, the jobs are safely persisted in the queue. The Lambda service can then scale out its concurrent executions to process this backlog at a sustainable pace without being overwhelmed.
+*   **Resilient Decoupling with SQS:** The use of **Amazon SQS queues** as a buffer between the API layer and the Fargate worker service is a critical component of our scalability and reliability strategy. The queue acts as a shock absorber, smoothing out unpredictable traffic spikes. If 100,000 users all trigger a sync simultaneously, the jobs are safely persisted in the queue. The Fargate service can then scale out its concurrent tasks to process this backlog at a sustainable pace without being overwhelmed.
 
 *   **Elastic Database with DynamoDB:** Our primary database is **Amazon DynamoDB**, chosen for its ability to deliver consistent, single-digit millisecond performance at any scale. We will use a **hybrid capacity model** (Provisioned + On-Demand) to balance cost and performance, preventing throttling during peak traffic while remaining cost-efficient.
 
@@ -122,7 +112,7 @@ The SyncWell architecture is designed from the ground up for massive, automatic 
 
     ```mermaid
     sequenceDiagram
-        participant Worker as Worker Lambda
+        participant Worker as Worker Fargate Task
         participant Cache as ElastiCache for Redis
         participant DB as DynamoDB
     
@@ -160,7 +150,7 @@ The SyncWell architecture is designed from the ground up for massive, automatic 
         end
 
         subgraph "Async Worker Fleet (Existing Infrastructure)"
-            G -->|Jobs processed in parallel| J(Worker Lambdas);
+            G -->|Jobs processed in parallel| J(Worker Fargate Tasks);
             J -->|Store historical data| K[(DynamoDB)];
         end
 
