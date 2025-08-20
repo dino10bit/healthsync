@@ -239,6 +239,8 @@ This model is required for integrations where the source of data is a device-nat
 *   **Advantage:** This model allows SyncWell to integrate with device-only data sources, which is a key product differentiator.
 *   **Limitation:** Syncs can only occur when the user's device is on, has battery, and has a network connection. This is an unavoidable constraint of the underlying platforms.
 
+*(See Diagram 7 in the "Visual Diagrams" section below.)*
+
 ### Model 3: Cloud-to-Device Sync
 This model handles the reverse of Model 2, where the destination for the data is a device-native framework like Apple HealthKit. Because the backend cannot directly initiate a connection to write data onto a user's device, it must use a push notification to signal the mobile client to pull the data down.
 
@@ -253,6 +255,8 @@ This model handles the reverse of Model 2, where the destination for the data is
     7.  **Confirmation:** After successfully writing the data, the mobile app makes a final API call to the backend to confirm the completion of the job. The backend then deletes the temporary staged data.
 *   **Advantage:** This architecture enables writing data to device-only platforms, completing the loop for a truly hybrid sync model.
 *   **Resilience:** If the user's device is offline or unreachable, the silent push notification will not be delivered immediately. The staged data will remain on the backend for a reasonable period (e.g., 24 hours), and the sync will be attempted the next time the device comes online and the app is launched.
+
+*(See Diagram 8 in the "Visual Diagrams" section below.)*
 
 ### Model 4: Webhook-Driven Sync with Event Coalescing
 
@@ -1131,4 +1135,86 @@ graph TD
     E1 -- "2. Publishes 'SyncRequested' events" --> F;
     F -- "3. Routes events to" --> G;
     G -- "4. Drives" --> H;
+```
+
+### Diagram 7: Device-to-Cloud Sync Flow
+
+```mermaid
+sequenceDiagram
+    participant MobileApp as "Mobile App"
+    participant Backend as "SyncWell Backend"
+    participant DestinationAPI as "Destination Cloud API"
+    participant DeviceDB as "On-Device DB"
+
+    activate MobileApp
+    MobileApp->>DeviceDB: Get lastSyncTime
+    DeviceDB-->>MobileApp: Return timestamp
+    MobileApp->>MobileApp: Fetch new data from HealthKit/Health Connect
+    MobileApp->>MobileApp: Transform data to CanonicalWorkout
+    deactivate MobileApp
+
+    MobileApp->>+Backend: POST /v1/device-upload (sends canonical data)
+    activate Backend
+    Backend->>+DestinationAPI: Fetch overlapping data for conflict resolution
+    DestinationAPI-->>-Backend: Return destination data
+    Backend->>Backend: Run conflict resolution engine
+    Backend->>+DestinationAPI: POST /v1/data (write final data)
+    DestinationAPI-->>-Backend: Success
+    Backend-->>-MobileApp: 200 OK
+    deactivate Backend
+
+    activate MobileApp
+    MobileApp->>DeviceDB: Update lastSyncTime
+    deactivate MobileApp
+```
+
+### Diagram 8: Cloud-to-Device Sync Flow
+
+```mermaid
+sequenceDiagram
+    participant SourceAPI as "Source Cloud API"
+    participant Backend as "SyncWell Backend"
+    participant PushService as "APNs/FCM"
+    participant MobileApp as "Mobile App (Background)"
+    participant DeviceHealth as "HealthKit/Health Connect"
+
+    %% --- Part 1: Backend fetches data and requests destination data ---
+    activate Backend
+    Backend->>+SourceAPI: Fetch new data
+    SourceAPI-->>-Backend: Return source data
+    Backend->>+PushService: Send 'read request' silent push
+    PushService-->>MobileApp: Silent Push Notification
+    deactivate Backend
+
+    %% --- Part 2: Mobile app provides destination data ---
+    activate MobileApp
+    MobileApp->>+DeviceHealth: Fetch overlapping data
+    DeviceHealth-->>-MobileApp: Return local health data
+    MobileApp->>+Backend: POST /v1/device-read-response (sends data)
+    deactivate MobileApp
+
+    %% --- Part 3: Backend processes and stages data for write ---
+    activate Backend
+    Backend->>Backend: Run conflict resolution
+    Backend->>Backend: Stage final data in S3/DynamoDB
+    Backend-->>-MobileApp: 200 OK (ack for read response)
+
+    %% --- Part 4: Backend signals mobile app to write data ---
+    Backend->>+PushService: Send 'write request' silent push with jobId
+    PushService-->>MobileApp: Silent Push Notification
+    deactivate Backend
+
+    %% --- Part 5: Mobile app writes data to device ---
+    activate MobileApp
+    MobileApp->>+Backend: GET /v1/staged-data/{jobId}
+    Backend-->>-MobileApp: Return staged data
+    MobileApp->>+DeviceHealth: Save final data
+    DeviceHealth-->>-MobileApp: Success
+    MobileApp->>+Backend: POST /v1/confirm-write/{jobId}
+    Backend-->>-MobileApp: 200 OK
+    deactivate MobileApp
+
+    activate Backend
+    Backend->>Backend: Delete staged data
+    deactivate Backend
 ```
