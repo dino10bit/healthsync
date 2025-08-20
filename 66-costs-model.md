@@ -112,7 +112,22 @@ A key strength of the serverless and managed-service architecture is its ability
 
 *   **Linear Cost Growth:** As illustrated, the majority of the costs (Fargate, SQS, DynamoDB) scale in a predictable, linear fashion with the number of active users and their jobs.
 *   **Step Scaling for Cache:** The primary fixed cost, the ElastiCache cluster, will require periodic "step scaling." For instance, the cluster size might be doubled to handle the load of 5M DAU, and doubled again for 10M DAU. While this is a fixed cost, it scales predictably at major growth milestones.
-*   **Economy of Scale:** The cost per user remains relatively constant, demonstrating that the architecture does not introduce significant overhead as it grows. This predictability is crucial for long-term financial planning and for maintaining healthy profit margins as the user base expands.
+*   **Economy of Scale:** The cost per user remains relatively constant at large scales, demonstrating that the architecture does not introduce significant overhead as it grows. This predictability is crucial for long-term financial planning and for maintaining healthy profit margins as the user base expands.
+
+### 4.2.1. Early-Stage Scaling Scenarios
+
+The model above shows how costs scale for a large user base. It is also useful to project costs for the early stages of the product's lifecycle, when the user base is much smaller.
+
+| Metric | 1,000 DAU | 10,000 DAU | 100,000 DAU |
+| :--- | :--- | :--- | :--- |
+| **Variable Costs/Month** | ~$1 | ~$8 | ~$80 |
+| **Fixed Costs/Month (Cache)**| ~$100 | ~$100 | ~$100 |
+| **Total Monthly Cost** | **~$101** | **~$108** | **~$180** |
+| **Total Annual Cost** | **~$1,212** | **~$1,296** | **~$2,160** |
+
+**Analysis of Early-Stage Scaling:**
+
+At lower user volumes, the dynamic is different. The **fixed cost** of the baseline ElastiCache cluster (assumed to be the minimum required for the service) becomes the dominant component of the total cost. As a result, the average cost per user is significantly higher during this phase than at the 1M DAU scale. This is a typical financial characteristic for services with foundational infrastructure requirements and underscores the importance of achieving a critical mass of users to improve cost efficiency.
 
 ## 5. Cost of Goods Sold (COGS) Analysis
 
