@@ -68,7 +68,36 @@ The event bus is the second largest cost category, driven by the sheer volume of
 | **Total** | | **~$624.00** |
 
 ## 3. Cost Analysis: Peak Load
-*(This section remains valuable for understanding maximum hourly burn rate and is unchanged.)*
+
+This section analyzes the maximum cost "burn rate" under the peak load non-functional requirement (NFR) of **3,000 requests per second (RPS)**, as specified in `06-technical-architecture.md`. This analysis is crucial for understanding the financial implications of a major traffic spike and ensuring the system's cost structure can handle such events without causing a financial incident.
+
+The following costs are calculated on an **hourly basis**, representing the cost incurred for one hour of sustained peak load.
+
+**Peak Load Assumptions:**
+*   **Ingress:** 3,000 requests per second.
+*   **Total Hourly Jobs:** 3,000 RPS * 3,600 seconds/hour = 10.8 million jobs/hour.
+*   **Fargate Scaling:** The worker fleet scales up from 9 tasks to ~310 tasks to handle the load.
+
+**Peak Load Hourly Cost Breakdown:**
+
+| Category | Service | Component & Calculation | Estimated Cost (per Hour) |
+| :--- | :--- | :--- | :--- |
+| **Core Compute** | AWS Fargate | Worker Fleet scales to ~310 tasks * $0.055/hr | $17.05 |
+| **Messaging & Events** | Amazon SQS | 10.8M messages * $0.40/M | $4.32 |
+| | Amazon EventBridge| Bus: ~21.6M events * $1.00/M | $21.60 |
+| **Database & Cache** | Amazon DynamoDB | 10.8M writes * $1.25/M | $13.50 |
+| **Observability** | AWS CloudWatch | Logs: ~53 GB ingested * $0.50/GB | $26.50 |
+| **Networking & Security**| AWS Network Firewall| Data: ~77 GB processed * $0.065/GB | $5.01 |
+| | AWS WAF | 10.8M requests * $0.60/M | $6.48 |
+| **Fixed Costs** | ElastiCache, Firewall Endpoints, etc. | Prorated hourly cost | $0.93 |
+| **Total** | | | **~$95.39 per hour** |
+
+### Analysis
+
+Under a sustained peak load of 3,000 RPS, the estimated cost for the infrastructure is approximately **$95 per hour**. This is a significant increase from the normal operating cost of ~$4.83/hour ($3,481 / 720 hours).
+
+*   **Primary Drivers:** During a peak event, the primary cost drivers shift to services that scale directly with request volume. **CloudWatch Log Ingestion** becomes the single largest expense, followed closely by **EventBridge** events and **Fargate** compute.
+*   **Financial Implications:** While a cost of nearly $100/hour is high, it's important to frame it within the context of a temporary spike. If such a peak were sustained for a full 24 hours, it would cost ~$2,280. This analysis confirms that the on-demand, serverless nature of the architecture allows it to handle extreme peaks in load, but highlights the importance of cost monitoring and anomaly detection to alert the team if such a peak is sustained for an unusual length of time.
 
 ## 4. Financial Projections & Scalability (Revised)
 
@@ -79,13 +108,13 @@ This section is revised based on the new, more accurate cost model of ~$3,500/mo
 *   **Projected Annual Cost:** Approximately **$42,000 per year**.
 
 ### 4.2. Revised Scalability Analysis
-Based on the new cost structure (Fixed: ~$700/month, Variable: ~$2,800/month).
+Based on the new cost structure (Fixed: ~$700/month, Variable: ~$2,800/month per 1M DAU). This table projects the costs for different user load scenarios.
 
-| Metric | 1M DAU (Baseline) | 5M DAU (Projected) | 10M DAU (Projected) |
-| :--- | :--- | :--- | :--- |
-| **Variable Costs/Month**| ~$2,800 | ~$14,000 | ~$28,000 |
-| **Fixed Costs/Month** | ~$700 | ~$1,000 | ~$1,600 |
-| **Total Monthly Cost**| **~$3,500** | **~$15,000** | **~$29,600** |
+| Metric | 250k DAU (Projected) | 1M DAU (Baseline) | 5M DAU (Projected) | 10M DAU (Projected) | 20M DAU (Projected) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Variable Costs/Month**| ~$700 | ~$2,800 | ~$14,000 | ~$28,000 | ~$56,000 |
+| **Fixed Costs/Month** | ~$700 | ~$700 | ~$1,000 | ~$1,600 | ~$2,600 |
+| **Total Monthly Cost**| **~$1,400** | **~$3,500** | **~$15,000** | **~$29,600** | **~$58,600** |
 
 *Note: Fixed costs are assumed to step-scale for cache and firewall endpoints as load increases.*
 
@@ -109,7 +138,26 @@ With a higher, more realistic cost base, the break-even point is also revised.
 *(This analysis is still valid and integrated into the main table, but is kept for its detailed breakdown.)*
 
 ## 8. Sensitivity Analysis
-*(This analysis remains conceptually valid, though the absolute impact of the variables would be on a larger base cost.)*
+
+This section explores how the total monthly cost of the platform reacts to changes in key operational variables. The "Normal Load" model of ~$3,481/month is used as the baseline. This analysis helps identify which parts of the architecture are most sensitive to changes in workload characteristics, providing insight into potential future cost risks and optimization opportunities.
+
+The following scenarios model the impact of a significant percentage increase in a specific cost driver.
+
+| Scenario | Key Variable Change | Cost Impact (Monthly) | New Total Monthly Cost | % Increase |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Increased Data Complexity** | +50% log data per job<br>+25% network data per job | +$311 | **~$3,792** | ~8.9% |
+| **2. Decreased Compute Efficiency** | +50% Fargate compute time per job | +$178 | **~$3,659** | ~5.1% |
+| **3. Increased Event-Driven Chatter**| +1 additional EventBridge event per job | +$228 | **~$3,709** | ~6.5% |
+
+### Analysis of Findings
+
+*   **Most Sensitive Variable:** The model is most sensitive to **Scenario 1: Increased Data Complexity**. A 50% increase in log volume per job leads to a nearly 9% increase in total platform cost. This is because **CloudWatch Log Ingestion** is the single largest variable cost component in the architecture. Any changes that increase the verbosity of the application's logging could have a significant and direct financial impact.
+
+*   **Event-Driven Costs:** The cost of the event-driven backbone (Scenario 3) is also highly significant. Adding just one extra event to the workflow of each job would increase the monthly bill by over $200, highlighting the need for efficient event design.
+
+*   **Compute Efficiency:** While still important, the cost model is less sensitive to a decrease in Fargate compute efficiency (Scenario 2). A 50% increase in compute time results in a more modest 5.1% increase in total cost. This suggests that while optimizing the worker code for speed is beneficial, optimizing for **log and event generation** is a higher-leverage activity for cost management.
+
+This analysis concludes that managing the "data footprint" of each job—specifically the volume of logs it generates—is the most critical factor for controlling variable costs at scale.
 
 ## 9. Architectural Alternative: EC2-Based Compute Analysis
 
@@ -142,7 +190,38 @@ However, this simple comparison is misleading as it ignores the **Total Cost of 
 
 **Conclusion:** For a team focused on rapid product development, the higher direct cost of AWS Fargate is easily justified by the drastically lower operational overhead and higher developer velocity. The choice of Fargate aligns with the "serverless-first" architectural principle and represents a lower Total Cost of Ownership.
 
-## 10. Detailed Networking Cost Analysis
+## 10. Architectural Alternative: Lambda-Based Compute Analysis
+
+While the architecture specifies AWS Fargate for the worker fleet, an alternative model using AWS Lambda for each sync job was considered during the initial design phase. This section provides a comparative cost analysis to validate the final architectural choice. A Lambda-based model would remove the need for container orchestration but would execute each of the ~228 million monthly jobs as a separate Lambda invocation.
+
+### 10.1. Lambda Cost Model
+
+This model assumes an average job duration and memory allocation, as the exact numbers can vary.
+
+*   **Assumptions:**
+    *   **Invocations:** 228,000,000 per month.
+    *   **Average Duration:** 2,000 ms (2 seconds).
+    *   **Memory Allocated:** 512 MB.
+
+| Lambda Model Component | Calculation | Estimated Cost (per Month) |
+| :--- | :--- | :--- |
+| **Compute Cost (GB-Seconds)** | 228M invocations * 2s * 0.5 GB * $0.0000166667/GB-s | ~$3,800 |
+| **Request Cost** | 228M requests * $0.20/M | ~$46 |
+| **Total** | | **~$3,846** |
+
+### 10.2. Comparative Analysis (Fargate vs. Lambda)
+
+The direct cost comparison reveals a significant difference for this specific type of high-throughput, consistently running workload.
+
+| Metric | Fargate Compute Cost | Lambda Model Cost | Advantage |
+| :--- | :--- | :--- | :--- |
+| **Raw Monthly Cost** | ~$356 | ~$3,846 | **Fargate** |
+
+The Lambda-based model is projected to be **over 10 times more expensive** than the Fargate model for the worker fleet's compute costs.
+
+**Conclusion:** The primary reason for this cost difference is the workload pattern. The SyncWell worker fleet is designed to be constantly active, processing a steady stream of jobs from the SQS queue. For such high-throughput, sustained workloads, Fargate is significantly more cost-effective. Fargate's pricing model, based on provisioned vCPU and memory per hour for a long-running task, is better suited to this pattern than Lambda's per-invocation, per-millisecond pricing. While Lambda offers superior scaling for spiky, unpredictable, or low-volume workloads, the selection of **Fargate for this core worker fleet is a critical cost optimization** that saves over $3,400 per month on compute alone.
+
+## 11. Detailed Networking Cost Analysis
 
 The cost breakdown in Section 2 includes a significant line item for "AWS Network Firewall" at ~$673/month. This section provides a deeper analysis of that cost and compares it to alternatives, justifying the architectural choice.
 
@@ -166,5 +245,44 @@ As the analysis shows, the Network Firewall is nearly **5 times more expensive**
 
 The use of Multi-AZ deployments for DynamoDB and ElastiCache incurs data transfer charges for replication. At the current scale, these costs are minimal and are generally included in the service's primary cost. However, at extreme scales (e.g., >10M DAU), this could become a more significant line item to monitor.
 
-## 11. Future Cost Optimization
+## 12. Cost Projections for Non-Production Environments
+
+This section outlines the cost projections for the non-production environments required to support the development and testing lifecycle of the SyncWell platform.
+
+### 12.1. Staging Environment
+
+The staging environment is a critical component for ensuring the quality and reliability of our production releases. It is designed as a scaled-down but functionally identical replica of the production environment. This allows for realistic end-to-end testing, load testing, and validation of new features before they are deployed to customers.
+
+The primary cost driver for staging is that it must run 24/7 to be available for pre-release testing and chaos engineering experiments as outlined in the technical architecture. However, the load is expected to be minimal and sporadic, consisting only of automated tests and manual QA activities.
+
+**Assumptions:**
+*   Load is <1% of production.
+*   Compute resources are scaled down to the minimum required for functionality.
+*   Data volumes are minimal.
+
+**Estimated Staging Costs:**
+
+| Service | Component & Calculation | Estimated Cost (per Month) | Rationale |
+| :--- | :--- | :--- | :--- |
+| **AWS Fargate** | 1x minimum size task | ~$20 | A single, non-scaled task to run the worker. |
+| **Amazon SQS / EventBridge** | Low volume of events | ~$5 | Minimal event traffic from testing. |
+| **Amazon DynamoDB** | On-demand, minimal RCU/WCU | ~$10 | Low, sporadic usage from tests. |
+| **Amazon ElastiCache**| 1x `cache.t4g.small` node | ~$25 | Smallest possible node for caching functionality. |
+| **AWS Network Firewall**| 1x endpoint (single AZ) | ~$285 | The largest fixed cost, but necessary for functional parity. |
+| **Other Services** | CloudWatch, WAF, etc. | ~$55 | Scaled down usage of ancillary services. |
+| **Total** | | **~$400** | |
+
+The total estimated monthly cost for the staging environment is approximately **$400**. While significant, this is a necessary investment in platform stability.
+
+### 12.2. Development Environment
+
+The development environment is optimized for developer velocity and minimal cost. The primary strategy, as defined in `06-technical-architecture.md`, is the use of **LocalStack** for local development. This allows engineers to run a high-fidelity emulation of the AWS backend on their local machines, eliminating the need for a shared, cloud-based development environment.
+
+*   **Cloud Costs:** Direct cloud costs for development are expected to be **near zero**.
+*   **LocalStack Pro Licenses:** The primary cost is the licensing for LocalStack Pro, which is required for advanced features and team collaboration. This is considered an engineering operational expense (OpEx) rather than a direct infrastructure cost.
+*   **CI/CD Environment:** A small, ephemeral environment is provisioned within the CI/CD pipeline to run integration tests against LocalStack, incurring minimal, transient costs.
+
+By heavily leveraging local emulation, we can provide a powerful development experience while keeping cloud spending for development to an absolute minimum.
+
+## 13. Future Cost Optimization
 *(This section was previously section 9 and remains valid.)*
