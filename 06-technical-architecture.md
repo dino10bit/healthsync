@@ -9,13 +9,10 @@
 | 1.1 | 2025-08-19 | J. Doe | Incorporated feedback from `f-20.md` review. Addressed over 150 points of ambiguity, inconsistency, and risk. |
 
 ### Consolidated Assumptions
-This document relies on the following key assumptions:
-1.  **User Base Growth:** The user base is expected to grow to 1M DAU within 24 months of launch.
-2.  **Third-Party API Stability:** The APIs of our third-party partners (Fitbit, Garmin, etc.) will remain reasonably stable and will not introduce breaking changes without a standard deprecation notice period.
-3.  **MVP Scope:** The feature set defined in `02-product-scope.md` is stable for the MVP launch.
+A consolidated list of all key project assumptions is maintained in the root `README.md` file.
 
 ### Cross-Cutting Concerns
-*   **Traceability to User Stories:** While this document is technically focused, key architectural decisions should trace back to user stories in `04-user-stories.md`. For example, the AI Insights service is justified by US-15. A full traceability matrix is outside the scope of this document but should be maintained by the product team.
+*   **Traceability to User Stories:** While this document is technically focused, key architectural decisions should trace back to user stories in `04-user-stories.md`. A formal Requirements Traceability Matrix is maintained in **`TRACEABILITY_MATRIX.md`** to ensure all requirements are met and tested.
 *   **Accessibility (A11y):** All user-facing components, including API error messages and push notifications, must adhere to WCAG 2.1 AA standards.
 *   **Internationalization (i18n) & Localization (L10n):** All user-facing strings (error messages, notifications) must be stored in resource files and not hard-coded, to support future localization efforts.
 
@@ -100,7 +97,7 @@ This level zooms into the system boundary to show the high-level technical conta
 
 Designs for post-MVP features like the "cold path" for historical syncs have been deferred and are captured in `45-future-enhancements.md`.
 
-**Note on Diagram Clarity:** The following diagram is a high-level overview for the MVP. It omits secondary components like the S3 bucket for archiving and post-MVP components like the AI Insights Service.
+**Note on Diagram Clarity:** The following diagram is a high-level overview for the MVP. It omits secondary components like the S3 bucket for archiving DLQ messages and post-MVP components like the AI Insights Service. The S3 bucket will be configured with a standard lifecycle policy to transition objects to Glacier after 90 days and delete them after 1 year.
 
 ```mermaid
 ---
@@ -209,13 +206,13 @@ graph TD
         *   Stores and serves feature flags (e.g., enabling a feature for Pro users).
         *   Manages operational parameters such as API timeouts, logging levels, and rate-limiting thresholds.
         *   **Manages critical resource identifiers (e.g., the DynamoDB table name). This is a crucial element of the disaster recovery strategy, allowing the application to be repointed to a restored database table without a code deployment.**
-    *   **Risk:** Storing critical configuration like the database table name in AppConfig creates a dependency. A failure to access AppConfig at application startup could prevent the service from running. This risk is mitigated by AppConfig's own high availability and our use of client-side caching within the Lambda functions.
+    *   **Risk:** Storing critical configuration like the database table name in AppConfig creates a dependency. A failure to access AppConfig at application startup could prevent the service from running. This risk is mitigated by AppConfig's own high availability and our use of aggressive client-side caching within the Lambda functions. However, a prolonged, widespread AppConfig outage remains a low-probability, high-impact risk.
 
 ### Level 3: Components (Inside the KMP Shared Module)
 
 The KMP module contains the core, shareable business logic. The architectural strategy is to use **KMP for portable business logic** and **platform-native runtimes for performance-critical infrastructure code**.
 
-For the backend, this means the general strategy is to compile the KMP module to a JAR and run it on a standard JVM-based AWS Lambda runtime. However, security-critical, latency-sensitive functions like the `AuthorizerLambda` **must** be implemented in a faster-starting runtime like TypeScript or Python to ensure they meet strict performance SLOs. This is a deliberate trade-off, optimizing for performance where it matters most, while maximizing code reuse for the complex sync logic.
+For the backend, this means the general strategy is to compile the KMP module to a JAR and run it on a standard JVM-based AWS Lambda runtime. However, security-critical, latency-sensitive functions like the `AuthorizerLambda` **must** be implemented in a faster-starting runtime like TypeScript or Python. This is a deliberate, non-negotiable trade-off. The P99 latency SLO of <500ms for the entire API Gateway request cannot be reliably met if the authorizer suffers from a multi-second JVM cold start. This technology split is justified because the authorizer is a simple, self-contained function whose performance is critical to the entire user experience.
 
 *   **`SyncManager`:** Orchestrates the sync process.
     *   **Inputs:** `SyncConfig` object, `DataProvider` instances for source and destination.
@@ -307,7 +304,7 @@ For the MVP, cloud-to-cloud syncs are handled by a single, reliable architectura
     3.  An EventBridge rule filters for these events and sends them to the `HotPathSyncQueue` **Amazon SQS queue**. This queue acts as a buffer, protecting the system from load spikes.
     4.  The SQS queue triggers the `Worker Lambda`, which processes the job.
     5.  **Failure Handling:** The primary SQS queue is configured with a **Dead-Letter Queue (DLQ)**. On a **non-transient processing error** (e.g., an invalid credentials error `401`, a permanent API change `404`, or an internal code bug), the worker throws an exception. After a configured number of retries (`maxReceiveCount`), SQS automatically moves the failed message to the DLQ for out-of-band analysis.
-        *   **`maxReceiveCount` Rationale:** This will be set to **5**. This value is chosen to balance allowing recovery from intermittent, transient network or third-party API errors against not waiting too long to detect a persistent failure that requires manual intervention.
+        *   **`maxReceiveCount` Rationale:** This will be set to **5**. This value is chosen to balance allowing recovery from intermittent, transient network or third-party API errors against not waiting too long to detect a persistent failure. A message that fails 5 times over approximately 1-2 minutes indicates a persistent issue that requires manual intervention and aligns with our goal of identifying and fixing broken integrations quickly.
     6.  Upon successful completion, the `Worker Lambda` publishes a `SyncSucceeded` event back to the EventBridge bus. This event is consumed by other services, primarily to trigger a push notification to the user and for analytics.
 *   **Advantage:** This is a highly reliable and extensible model. Leveraging the native SQS DLQ feature simplifies the worker logic, increases reliability, and improves observability.
 
@@ -345,14 +342,14 @@ For long-running historical syncs, an additional layer of idempotency will be re
 
 #### Idempotency Store Implementation
 
-To ensure a single, consistent, and highly-available locking mechanism suitable for a multi-region architecture, the idempotency check **must** be implemented using **DynamoDB's conditional write functionality**. This approach avoids potential race conditions from cache replication lag and consolidates our locking strategy.
+To ensure a single, consistent, and highly-available locking mechanism, the idempotency check **must** be implemented using **DynamoDB's conditional write functionality**. While Redis is used for caching, DynamoDB is superior for this critical locking mechanism as it provides stronger consistency guarantees and durability, which is essential for preventing duplicate processing. This avoids potential race conditions from cache replication lag and consolidates our locking strategy on a durable database.
 
 *   **Item Schema (in `SyncWellMetadata` table):**
     *   **PK:** `IDEM##{idempotencyKey}`
     *   **SK:** `IDEM##{idempotencyKey}`
     *   **status:** A string indicating the status: `INPROGRESS` or `COMPLETED`.
     *   **ttl:** A standard DynamoDB TTL attribute to ensure automatic cleanup of old records.
-*   **TTL Rationale:** A **24-hour TTL** is used on `COMPLETED` keys. This is a conservative product decision to serve as a safe upper bound for offline clients. The `INPROGRESS` lock will have a much shorter TTL (5 minutes) to prevent deadlocks if a worker crashes.
+*   **TTL Rationale:** A **24-hour TTL** is used on `COMPLETED` keys. This is a specific requirement to support clients that may be offline for up to a day. If an offline client retries an operation after coming back online, this TTL ensures the operation is not duplicated. The `INPROGRESS` lock will have a much shorter TTL (5 minutes) to prevent deadlocks if a worker crashes.
 
 The following sequence diagram illustrates the robust end-to-end flow using DynamoDB.
 
@@ -416,6 +413,7 @@ The architecture is designed with a future multi-region deployment in mind. Key 
 ### Resilience Testing (Chaos Engineering)
 
 The practice of chaos engineering is critical. We will use the **AWS Fault Injection Simulator (FIS)** to validate our high availability.
+
 *   **Ownership and Frequency:** Experiments will be owned by the Core Backend team and executed on a **bi-weekly basis** in the `staging` environment as part of the standard release cycle.
 *   **MVP Experiment Catalog:**
     *   **Worker Failure:** Terminate a random percentage (10-50%) of Lambda instances to ensure SQS retries and the remaining fleet can handle the load.
@@ -424,6 +422,7 @@ The practice of chaos engineering is critical. We will use the **AWS Fault Injec
     *   **Secrets Manager Unavailability:** Block access to AWS Secrets Manager to verify graceful failure and retry.
     *   **Availability Zone Failure:** Simulate the failure of a single AZ to validate Multi-AZ configurations.
     *   **Cache Cluster Failure:** Simulate a full failure of the ElastiCache cluster to verify that the system enters a safe, degraded mode.
+*   **Results & Action:** The results of each experiment (e.g., observed impact on latency, error rates) **must** be documented in a central location (e.g., a Confluence page). Any discovered regressions or unexpected failures must be logged as high-priority bugs in the issue tracker and addressed before the next release.
 
 ### Performance & Scalability
 
@@ -651,7 +650,7 @@ To handle data from various third-party sources, we must first transform it into
 @Serializable
 data class CanonicalWorkout(
     // ...
-    // The IANA timezone identifier (e.g., "America/New_York"). If null, the system will process the event assuming UTC but will flag it for monitoring, as a null timezone can indicate a data quality issue from the source.
+// The IANA timezone identifier (e.g., "America/New_York"). If null, the system will process the event assuming UTC. It will also publish a custom CloudWatch metric (`InvalidTimezoneData_Omitted`) with the provider's name as a dimension. This allows for automated monitoring and alerting on data quality issues from specific sources.
     val timezone: String? = null,
     // ...
     // Optional free-text notes. High-risk for PII. This field MUST be scrubbed by the AnonymizerProxy before being sent to any AI service.
@@ -881,6 +880,7 @@ This section defines the key non-functional requirements for the SyncWell platfo
 | | API Gateway Latency | P99 Latency | < 500ms | For all synchronous API endpoints, measured at the gateway. |
 | | Concurrent Users | Peak RPS | 3,000 RPS | The system must handle a peak load of 3,000 requests per second. The worst-case projection of ~45,000 concurrent workers is a risk to be mitigated per Section 3b. |
 | **Security** | Vulnerability Patching | Time to Patch Critical CVE | < 72 hours | This policy applies 24/7, including weekends and holidays, and is managed by the on-call security team. |
+| | Secure Data Handling | `ProviderTokens` must not be serializable | Pass/Fail | The `ProviderTokens` data class must not be serializable and must redact secrets in its `toString()` method. A custom linter rule must enforce this at build time. |
 | **Scalability** | User Capacity | Daily Active Users (DAU) | 1,000,000 | The architecture must be able to support 1 million daily active users. |
 | **Usability** | App Onboarding | Time to First Sync | < 3 minutes | This is a key product KPI, tracked via our analytics pipeline by measuring the median time from the `UserSignedUp` event to the first `SyncSucceeded` event for that user. |
 
@@ -905,7 +905,7 @@ To ensure high development velocity and code quality, we will establish a stream
 
 This section documents known limitations of the architecture and explicit trade-offs that have been made.
 
-*   **Feature Tiering:** The current architecture does not explicitly support feature tiering (e.g., higher rate limits for Pro users). This is a known gap that will need to be addressed in a future iteration by integrating subscription status into the rate-limiting and configuration services.
+*   **Feature Tiering:** The current architecture does not explicitly support feature tiering (e.g., higher rate limits for Pro users). This is a known gap that will be addressed in a future iteration. The high-level strategy will be to have the `AuthorizerLambda` attach the user's subscription tier (`FREE` or `PRO`) to the request context. Downstream services, like the rate-limiting engine, can then inspect this context and apply the appropriate limits.
 *   **Account Merging:** The data model does not support account merging. **User-facing consequence:** Users who create multiple accounts will have siloed data and must contact support for a manual, best-effort resolution. This is a known product issue.
 *   **Firebase Authentication Dependency:** The use of Firebase Authentication creates a hard dependency on a non-AWS service for a critical function. This is a **High** strategic risk.
     *   **Risk:** An outage in Firebase Auth would render the application unusable for all users.

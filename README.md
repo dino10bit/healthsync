@@ -28,3 +28,11 @@ All changes to PRD documents must be accompanied by an entry in the document's "
 ### 2.3. Glossary of Terms
 
 A central `GLOSSARY.md` file is maintained at the root of this repository to ensure a single, consistent definition for all business and technical terms. All other documents should defer to this glossary.
+
+## 3. Consolidated Project Assumptions
+
+This section lists the key business and technical assumptions that underpin the entire PRD suite.
+
+1.  **User Base Growth:** The user base is expected to grow to 1M DAU within 24 months of launch, but the MVP is architected and provisioned for a peak load of 3,000 RPS.
+2.  **Third-Party API Stability:** The APIs of our third-party partners (Fitbit, Garmin, etc.) will remain reasonably stable and will not introduce breaking changes without a standard deprecation notice period. Unofficial APIs (like Garmin's) are a known high risk tracked in `21-risks.md`.
+3.  **MVP Scope:** The feature set defined in `02-product-scope.md` is considered stable for the MVP launch.

@@ -68,20 +68,133 @@ This theme builds on the introduction of the **Family Plan** in Q4, exploring ne
     *   **Description:** A portal for certified health and fitness coaches to (with explicit user consent) view their clients' incoming data from various platforms in one unified dashboard.
     *   **Strategic Goal:** Create a high-value B2B subscription tier and become an essential tool for the coaching industry.
 
-### Theme 4: Quality of Life & Power User Features (Post-Year 1)
+### Theme 4: Consolidated Post-MVP User Story Backlog
 
-This theme focuses on enhancing the core user experience with features that provide more control, transparency, and delight.
+This section contains a backlog of proposed user stories for future consideration, organized by epic.
 
-*   **US-29:** Set custom sync frequency per connection.
-*   **US-30:** Preview data before a sync is executed.
-*   **US-31:** Smart, automatic backfill of recent data for new users.
-*   **US-32:** Sync advanced biometric data (HRV, SpO2).
-*   **US-33:** Display API rate limit status to the user.
-*   **US-34:** Set a "Source of Truth" for automatic conflict resolution.
-*   **US-35:** Use an interactive guide for troubleshooting sync errors.
-*   **US-36:** Add a home screen widget for at-a-glance sync status.
-*   **US-37:** Filter syncs by specific activity types.
-*   **US-38:** Get notifications for "streaks" or "milestones."
+#### Epic 6: Advanced Sync Control & Automation
+
+---
+
+##### **US-19:** Prioritize the execution order of syncs.
+*   **User Story:** As a power user (Alex), I want to set a priority order for my sync configurations so that more important syncs (like my daily run) are executed before less important ones.
+*   **Persona:** Alex
+*   **Priority:** Could-Have (C-1)
+
+##### **US-20:** Pause and resume all syncing globally.
+*   **User Story:** As a user (Sarah), I want to be able to pause all syncing temporarily with a single tap so I can conserve battery or data when traveling.
+*   **Persona:** Sarah, Alex
+*   **Priority:** Should-Have (S-3)
+
+##### **US-21:** Back up health data to personal cloud storage.
+*   **User Story:** As a user (Alex), I want to create a "backup" sync that only runs once a week to archive my data to a cloud storage provider (e.g., Google Drive, Dropbox) so I have a personal, long-term record.
+*   **Persona:** Alex
+*   **Priority:** Could-Have (C-1)
+
+#### Epic 7: Data Insights & Visualization
+
+---
+
+##### **US-22:** Compare data from two sources in a chart.
+*   **User Story:** As a user (Sarah), I want to see a simple chart comparing my step count from two different sources over the last week so I can see how well they correlate.
+*   **Persona:** Sarah
+*   **Priority:** Could-Have (C-2)
+
+##### **US-23:** See a data completeness score.
+*   **User Story:** As a user (Alex), I want to see a "data completeness" score for each day so I can easily identify if key data points (like sleep or workouts) are missing from my records.
+*   **Persona:** Alex
+*   **Priority:** Could-Have (C-1)
+
+##### **US-24:** Receive a weekly summary notification.
+*   **User Story:** As a user (Sarah), I want to receive a weekly summary notification with my key stats (e.g., total steps, average sleep) so I can see my progress at a glance.
+*   **Persona:** Sarah
+*   **Priority:** Should-Have (S-3)
+
+#### Epic 8: Expanded Platform & Data Support
+
+---
+
+##### **US-25:** Connect to smart scales.
+*   **User Story:** As a user (Alex), I want to connect my smart scale (e.g., Withings) as a data source so that my weight is automatically synced.
+*   **Persona:** Alex
+*   **Priority:** Should-Have (S-1)
+
+##### **US-26:** Connect to mindfulness apps.
+*   **User Story:** As a user (Sarah), I want to connect my mindfulness app (e.g., Calm, Headspace) so that my meditation sessions are synced to Apple Health / Google Fit.
+*   **Persona:** Sarah
+*   **Priority:** Could-Have (C-2)
+
+##### **US-27:** Connect to nutrition apps.
+*   **User Story:** As a user (Alex), I want the app to sync nutrition data (calories, macros) from MyFitnessPal so I have a complete picture of my health inputs.
+*   **Persona:** Alex
+*   **Priority:** Should-Have (S-1)
+
+##### **US-28:** Export sync history to a CSV file.
+*   **User Story:** As a user (Alex), I want to be able to export a specific sync's history as a CSV file so I can do my own analysis in a spreadsheet.
+*   **Persona:** Alex
+*   **Priority:** Should-Have (S-2)
+
+##### **US-29:** Set custom sync frequency per connection.
+*   **User Story:** As a power user (Alex), I want to control the sync frequency (e.g., hourly, every 6 hours, daily) for each of my sync connections, so that I can balance data freshness with battery life according to my priorities.
+*   **Persona:** Alex
+*   **Priority:** Could-Have (C-1)
+
+##### **US-30:** Preview data before a sync is executed.
+*   **User Story:** As a cautious user (Sarah), I want to see a preview of the data that will be synced before it's written to the destination app, so I can review and approve the changes.
+*   **Persona:** Sarah
+*   **Priority:** Could-Have (C-1)
+
+##### **US-31:** Smart, automatic backfill of recent data for new users.
+*   **User Story:** As a new user (Sarah), I want the app to automatically sync the last 7 days of my data upon setting up a new connection, so I can see immediate value and confirm it's working without manually running a full historical sync.
+*   **Persona:** Sarah
+*   **Priority:** Should-Have (S-2)
+
+##### **US-32:** Sync advanced biometric data (e.g., HRV, SpO2).
+*   **User Story:** As a data-driven athlete (Alex), I want to sync advanced biometric data like Heart Rate Variability (HRV) and Blood Oxygen (SpO2) between my compatible devices, so I can analyze my recovery and performance in my preferred app.
+*   **Persona:** Alex
+*   **Priority:** Should-Have (S-1)
+
+##### **US-33:** Display API rate limit status to the user.
+*   **User Story:** As a user (Alex) performing a large historical sync, I want to see the current status of my API rate limits for each service (e.g., "Garmin: 75% of hourly limit remaining"), so I can understand why a sync might be paused or running slowly.
+*   **Persona:** Alex
+*   **Priority:** Could-Have (C-3)
+*   **Note:** The UX for this feature needs careful consideration to avoid confusing non-technical users. It should be an optional, advanced setting.
+
+##### **US-34:** Set a "Source of Truth" for automatic conflict resolution.
+*   **User Story:** As a user (Alex) who trusts my Garmin for runs, I want to declare it as the "Source of Truth" for running activities, so that if a conflict with another source is detected, the Garmin data is kept automatically without prompting me every time.
+*   **Persona:** Alex
+*   **Priority:** Should-Have (S-2)
+
+##### **US-35:** Use an interactive guide for troubleshooting sync errors.
+*   **User Story:** As a user (Sarah) who sees a "Sync Failed" error, I want the app to provide an interactive guide that asks me questions to diagnose the problem and provide a specific solution, instead of me having to read a long FAQ.
+*   **Persona:** Sarah
+*   **Priority:** Should-Have (S-3)
+
+##### **US-36:** Add a home screen widget for at-a-glance sync status.
+*   **User Story:** As a user (Sarah), I want a home screen widget that shows the status of my most important syncs at a glance, so I don't even have to open the app to know things are working.
+*   **Persona:** Sarah
+*   **Priority:** Could-Have (C-2)
+
+##### **US-37:** Filter syncs by specific activity types.
+*   **User Story:** As a user (Alex) who uses my Garmin for many activities but only wants to post my runs and bike rides to Strava, I want to configure my "Garmin to Strava" sync to only include those specific activity types.
+*   **Persona:** Alex
+*   **Priority:** Could-Have (C-3)
+
+##### **US-38:** Get notifications for "streaks" or "milestones."
+*   **User Story:** As a user (Sarah), I want to get a fun, encouraging notification when I hit a milestone, like "You've synced 1 million steps!" or "You've synced your workout every day for 7 days straight!", so I feel motivated.
+*   **Persona:** Sarah
+*   **Priority:** Could-Have (C-3)
+
+##### **US-39:** Understand and retry failed historical syncs.
+*   **User Story:** As a user (Alex), if my large historical sync finishes with some errors, I want to clearly see which parts failed and be able to retry them easily, so I don't have to re-run the entire sync.
+*   **Persona:** Alex
+*   **Priority:** Should-Have (S-1, dependency for Historical Sync)
+
+##### **US-40:** Receive proactive health trend notifications.
+*   **User Story:** As a user (Sarah), I want the app to optionally analyze my long-term data and notify me of significant trends, like "Your average resting heart rate has been consistently lower for the past month," so I can be more aware of my health patterns.
+*   **Persona:** Sarah, Alex
+*   **Priority:** Could-Have (C-2)
+*   **Note:** This feature depends on the AI Insights Service and requires a very strong emphasis on user privacy and consent.
 
 ## 4. Evaluation Framework
 When it comes time to consider one of these ideas for the official roadmap, it will be evaluated against a more formal framework:
@@ -101,50 +214,57 @@ This section archives detailed architectural designs that were originally specif
 
 ### Historical Sync ("Cold Path")
 
-The ability for users to backfill months or years of historical data is a key feature planned for a post-MVP release.
+The ability for users to backfill months or years of historical data is a key feature planned for a post-MVP release. This "Cold Path" is designed for large-scale, non-urgent data processing and is architecturally distinct from the "Hot Path" used for real-time syncs.
 
-*   **Terminology Note:** A "Historical Sync" is a long-running *workflow*. The individual tasks processed by this workflow are assigned a **low priority**. This priority is enforced by the distributed rate-limiter, which uses a separate, more restrictive token bucket for jobs flagged as `historical`.
-*   **Use Case:** Handling user-initiated requests to backfill months or years of historical data.
-*   **Flow:**
-    1.  The Mobile App sends a request to a dedicated API Gateway endpoint to start a historical sync.
-    2.  **API Gateway** uses a direct service integration to start an execution of the **AWS Step Functions** state machine.
-    3.  The state machine orchestrates the entire workflow, breaking the job into chunks, processing them in parallel with `WorkerLambda` invocations, and handling errors.
-*   **Advantages & Trade-offs:** Step Functions is the ideal choice for this workflow due to its rich, native observability and state management features. However, there are trade-offs:
-    *   **Advantages:** Visual workflow monitoring, detailed execution history for auditing, and native X-Ray integration make operating and debugging these complex jobs highly transparent.
-    *   **Potential Downsides:** At extreme scale, Step Functions can become costly. Additionally, the state payload passed between steps has a size limit (256KB), which requires careful management to ensure large job definitions do not exceed this limit.
+*   **User Experience Goals:**
+    *   The user should be able to start a historical sync with a clear understanding of how long it might take.
+    *   The process must be resilient to app closures, network changes, and other interruptions.
+    *   The user must be clearly notified of progress, success, and any failures that require their attention.
+*   **Architectural Principles:**
+    *   **Asynchronous & Server-Driven:** The entire workflow is orchestrated on the backend to ensure reliability.
+    *   **Resilient & Idempotent:** The system must be able to recover from transient failures and prevent duplicate data processing.
+    *   **Observable:** Every step of the long-running process must be logged and monitored.
+    *   **Cost-Effective:** The solution must be designed to minimize cloud spend for potentially very long-running jobs.
 
-#### Level 4: Historical Sync Workflow
+#### Level 4: Historical Sync Workflow (AWS Step Functions)
 
-To handle long-running historical data syncs, we will use **AWS Step Functions**.
-
-The following diagram illustrates the state machine, reflecting the parallel processing of data chunks.
+To handle long-running historical data syncs, we will use an **AWS Step Functions Standard Workflow**. This provides the required durability, observability, and error handling for a process that could last for hours.
 
 ```mermaid
 graph TD
-    A[Start] --> B(Calculate Chunks);
-    B --> C{Map State: Process Chunks in Parallel};
-    C -- For Each Chunk --> D(Process Chunk Worker);
-    D --> E{Did Chunk Succeed?};
-    E -- Yes --> C;
-    E -- No --> F(Log Chunk Failure);
-    F --> C;
-    C -- All Chunks Done --> G(Finalize Sync);
-    G --> H[End];
+    A[Start] --> B(Validate & Initiate);
+    B --> C(Calculate Chunks);
+    C --> D{Map State: Process Chunks};
+    D -- For Each Chunk --> E(Process Chunk Worker);
+    E --> F{Did Chunk Succeed?};
+    F -- Yes --> D;
+    F -- No --> G(Log Chunk Failure);
+    G --> D;
+    D -- All Chunks Done --> H(Aggregate Results);
+    H --> I(Notify User);
+    I --> J[End];
 
     subgraph Error Handling
-        D -- On Error --> I{Catch & Retry};
-        I -- Retryable Error --> D;
-        I -- Terminal Error --> F;
+        E -- On Error --> K{Catch & Retry};
+        K -- Retryable Error --> E;
+        K -- Terminal Error --> G;
     end
 ```
 
 *   **State Machine Logic:**
-    1.  **Initiate & Calculate Chunks:** The workflow is triggered by an API call. A Lambda function calculates the total date range and breaks it into an array of smaller, logical chunks (e.g., 7-day periods).
-    2.  **Process in Parallel (`Map` State):** The state machine uses a `Map` state to iterate over the array of chunks, invoking a `WorkerLambda` for each chunk in parallel. The `Map` state has a configurable concurrency limit (which will be monitored and can be increased) to avoid overwhelming downstream APIs.
-    3.  **Error Handling:**
-        *   **`Retry` Policy:** Each worker invocation will have a declarative `Retry` policy for transient errors, with a configuration of **3 max attempts** and an **exponential backoff rate of 2.0**.
-        *   **`Catch` Logic:** If retries fail, a `Catch` block will route the failure to a logging step. This step records the failed chunk's details for later analysis, and the `Map` state continues processing the remaining chunks.
-    4.  **Finalize Sync & Notify User:** After the `Map` state completes, a final Lambda function aggregates the results. It then publishes a `HistoricalSyncCompleted` event, which triggers a push notification to the user. The notification sent will be `N-05` ("Your historical sync is complete.") or `N-06` ("Your historical sync finished with some errors.") depending on whether any chunk failures were logged.
+    1.  **Initiate & Validate:** Triggered by an API call from the app. A Lambda function validates the request, confirms the user's subscription status, and creates a job record in DynamoDB. It then sends a push notification (`N-04`: "Your historical sync has started...") to the user.
+    2.  **Calculate Chunks:** A Lambda function calculates the total date range and breaks it into an array of smaller, logical chunks (e.g., 7-day periods). This array is passed as the input to the next state.
+        *   *Payload Management:* To avoid the 256KB state payload limit, if the chunk array is very large, it will be written to an S3 object, and only the S3 object key will be passed in the state.
+    3.  **Process in Parallel (`Map` State):** The state machine uses a `Map` state to iterate over the array of chunks. For each chunk, it invokes a `WorkerLambda` in parallel.
+        *   *Concurrency Control:* The `Map` state has a configurable concurrency limit (e.g., `MaxConcurrency: 10`) to avoid overwhelming downstream provider APIs. This is a critical cost and performance control.
+    4.  **Error Handling (`Retry` and `Catch`):**
+        *   **`Retry` Policy:** Each `WorkerLambda` invocation will have a declarative `Retry` policy for transient errors (e.g., API rate limiting), with **3 max attempts** and an **exponential backoff rate of 2.0**.
+        *   **`Catch` Logic:** If retries fail, a `Catch` block routes the failure to a `Log Chunk Failure` Lambda. This function records the failed chunk's details in DynamoDB for later analysis or retry (see US-39). The `Map` state continues processing the remaining chunks.
+    5.  **Aggregate Results & Notify User:** After the `Map` state completes, a final Lambda function aggregates the results (total successes, total failures). It updates the main job status in DynamoDB and publishes a `HistoricalSyncCompleted` event. This event triggers a final push notification: `N-05` ("Your historical sync is complete.") or `N-06` ("Your historical sync finished with some errors.").
+
+*   **Scalability and Cost Management:**
+    *   **Lambda vs. Fargate:** While Lambda is suitable for chunk processing, if chunks are consistently long-running (>15 mins), the architecture can be adapted to use AWS Fargate tasks within the Step Function workflow for better cost-efficiency on long jobs.
+    *   **Intelligent Tiering:** All artifacts generated by the workflow (e.g., chunk definitions, logs) will be stored in Amazon S3 with an "Intelligent Tiering" lifecycle policy to automatically manage storage costs.
 
 #### Idempotency for Historical Syncs (Step Functions)
 For long-running historical syncs, an additional layer of idempotency is applied at the orchestration level:
@@ -160,17 +280,36 @@ For long-running historical syncs, an additional layer of idempotency is applied
 
 ### AI Insights Service
 
-This service is planned for a future release to provide intelligence to the platform. It will encapsulate machine learning models and LLM integrations, allowing the core sync engine to remain deterministic and focused.
+This service is a long-term strategic pillar, planned for a future release cycle, designed to add a layer of intelligence on top of the user's synchronized data. It will encapsulate all machine learning (ML) models and Large Language Model (LLM) integrations, ensuring the core sync engine remains deterministic and focused.
 
-*   **Technology:** Amazon SageMaker, Amazon Bedrock, AWS Lambda.
-*   **Responsibilities:** The initial design considers providing "intelligent conflict resolution" to address user story US-15 ("As a Pro user, I want the system to intelligently merge conflicting entries to avoid data loss"). Other potential features include an LLM-based troubleshooter and personalized summaries.
+*   **Core Principle: Privacy by Design.** All features in this service will be **opt-in only**. No user data will be processed by any AI model without explicit, granular consent. Where feasible, models will be designed to run on-device to maximize privacy. For cloud-based models, all data will be anonymized before processing. A comprehensive Data Protection Impact Assessment (DPIA) will be required before development begins.
 
-#### Level 3: Components (Future AI Insights Service)
+*   **Technology Stack:** The proposed stack includes Amazon SageMaker for custom model training, Amazon Bedrock for accessing foundational LLMs, and AWS Lambda for serverless inference.
 
-When implemented, the AI Insights Service will be composed of several components. The exact implementation details will be defined closer to the feature's development phase and will undergo a rigorous security and privacy review. The initial high-level concepts include:
+#### Potential AI-Powered Features
 
-*   **`Conflict Resolution Model`:** A potential machine learning model that could take two conflicting data entries and return a suggested merged version.
-*   **`LLM-based Services`:** Lambda functions that could leverage foundational models (e.g., via Amazon Bedrock) to power features like an interactive troubleshooter or human-readable data summaries.
+1.  **Intelligent Conflict Resolution (US-15):**
+    *   **User Problem:** When two sources provide conflicting data for the same time period (e.g., different calorie counts for the same workout), the user is forced to manually choose.
+    *   **Proposed Solution:** A cloud-based ML model that analyzes the two conflicting data points along with historical user preferences. It would not just pick one, but generate a *suggested merge*.
+    *   **Example:** If a user consistently prefers the higher calorie count from their heart rate monitor over their fitness app's estimate, the model learns this preference. When a new conflict arises, the app would present a pre-filled, merged entry with a "Smart Suggestion" tag, which the user can accept with a single tap.
+
+2.  **Proactive Trend Analysis & Notifications (US-40):**
+    *   **User Problem:** Users have vast amounts of data but may not have the time or expertise to spot meaningful, long-term trends.
+    *   **Proposed Solution:** An on-device model that periodically analyzes the user's local data store for statistically significant trends (e.g., changes in resting heart rate, sleep duration, or activity levels over weeks or months).
+    *   **Example:** The system would generate a notification like: "Health Trend Detected: Your average resting heart rate has decreased by 5bpm over the last 30 days. Great job!" This feature is purely for insights and will not provide medical advice.
+
+3.  **LLM-Powered Sync Troubleshooter (related to US-35):**
+    *   **User Problem:** Standard FAQ documents can be generic and frustrating for users facing a specific, complex sync error.
+    *   **Proposed Solution:** An interactive, conversational troubleshooter powered by an LLM (via Amazon Bedrock). The LLM would be provided with anonymized error logs and our full technical documentation as context.
+    *   **Example:** Instead of a static error page, the user could interact with a chatbot: "It looks like your Garmin sync is failing with a '429' error. This usually means you've hit an API limit. This can happen during a large historical sync. Would you like me to check the status of your sync job?"
+
+#### Level 3: Conceptual Components (Future AI Insights Service)
+
+The AI Insights Service will be composed of several conceptual components. The implementation will be subject to rigorous security, privacy, and cost-benefit analysis.
+
+*   **`On-Device Analytics Engine`:** A lightweight library integrated into the mobile app for running privacy-preserving trend analysis directly on the user's phone.
+*   **`Conflict Resolution Model`:** A cloud-hosted SageMaker model trained on anonymized, historical conflict resolution choices to predict user preferences.
+*   **`LLM Gateway Service`:** A dedicated backend service (API Gateway + Lambda) that acts as a secure intermediary between the app and Amazon Bedrock. This service will be responsible for prompt engineering, injecting relevant context (like documentation), and stripping any PII from requests before they are sent to the LLM.
 
 ### Mitigating "Viral User" Hot Partitions
 
