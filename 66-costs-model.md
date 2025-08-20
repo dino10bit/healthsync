@@ -124,6 +124,16 @@ Based on the new cost structure (Fixed: ~$200/month, Variable: ~$991/month per 1
 
 *Note: Fixed costs are held constant for this projection. A more detailed analysis is required to model how these costs (e.g., for cache clusters) will step-scale with significantly higher user loads.*
 
+### 4.3. Low-End Scalability Analysis
+
+For a clearer view of costs during the initial growth phases of the platform, this section projects costs for lower DAU tiers. The same fixed and variable cost model is applied.
+
+| Metric                | 100 DAU (Projected) | 1k DAU (Projected) | 10k DAU (Projected) | 50k DAU (Projected) | 100k DAU (Projected) |
+| :-------------------- | :------------------ | :----------------- | :------------------ | :------------------ | :------------------- |
+| **Variable Costs/Month**| ~$0.10              | ~$1                | ~$10                | ~$50                | ~$99                 |
+| **Fixed Costs/Month**   | ~$200               | ~$200              | ~$200               | ~$200               | ~$200                |
+| **Total Monthly Cost**  | **~$200**           | **~$201**          | **~$210**           | **~$250**           | **~$299**            |
+
 ## 5. Cost of Goods Sold (COGS) Analysis (Revised)
 
 This analysis is updated with the new total monthly cost of ~$1,191.
