@@ -670,21 +670,29 @@ A dual-pronged data anonymization strategy will be implemented.
 A dedicated **Anonymizer Proxy Lambda** will be used for real-time operational features.
 *   **Testability and Observability:** The Anonymizer Proxy is a critical component and **must** have its own suite of unit and integration tests. Its latency and error rate will be monitored with dedicated CloudWatch Alarms.
 *   **Latency SLO:** The P99 latency for the proxy itself is an SLO that **must be under 50ms** and will be tracked on a dashboard.
-*   **PII Stripping Strategy:** The following table defines the PII stripping strategy. **[C-006]** This list is explicitly not exhaustive and represents a critical security gap. It **must be updated** with a comprehensive list of all fields across all canonical models before any user data is processed by an AI service. **[TODO: Complete this table for all canonical models.]**
-| Field (from any Canonical Model) | Action | Rationale |
-| :--- | :--- | :--- |
-| `userId` | **Remove** | The internal user ID is a direct identifier and must be removed. The AI service should operate on data from a single user at a time, without needing to know their ID. |
-| `sourceId` | **Hash** | Hashed with a per-user salt to prevent reverse-engineering while maintaining referential integrity for a given user's data. |
-| `title` | **Remove** | High-risk for free-text PII (e.g., "Run with Jane Doe"). |
-| `notes` | **Remove** | High-risk for free-text PII. |
-| `latitude`, `longitude` (and all other location data) | **Generalize** | Convert specific GPS coordinates to a general region (e.g., "San Francisco, CA") or remove entirely. Start and end points of a workout are especially sensitive. |
-| `heartRateSamples` | **Aggregate** | Replace detailed timeseries data with summary statistics (e.g., `avg`, `min`, `max`). The raw series could potentially be used to identify a user. |
-| `sleepStages` | **Aggregate** | Replace detailed sleep stage data (e.g., timestamps of REM, deep, light) with total durations for each stage. |
-| `calories` | **Keep** | Generally not considered PII in isolation. |
-| `steps` | **Keep** | Generally not considered PII in isolation. |
-| `distance` | **Keep** | Generally not considered PII in isolation. |
-| `deviceName` | **Remove** | Can contain user's name (e.g., "John's iPhone"). |
-| `weatherInfo` | **Generalize** | Keep general weather (e.g., "Cloudy"), but remove specific temperature or location details that could narrow down the user's location. |
+*   **PII Stripping Strategy:** The following table defines the PII stripping strategy. **[C-006]** This list represents the comprehensive set of rules to be applied across all canonical models before any user data is processed by an AI service. This process is a critical security control.
+
+| Field (from any Canonical Model)                | Action      | Rationale                                                                                                                              |
+| :---------------------------------------------- | :---------- | :------------------------------------------------------------------------------------------------------------------------------------- |
+| `userId`                                        | **Remove**  | The internal user ID is a direct identifier and must be removed. The AI service should operate on data from a single user at a time, without needing to know their ID. |
+| `sourceId`                                      | **Hash**    | Hashed with a per-user salt to prevent reverse-engineering while maintaining referential integrity for a given user's data.              |
+| `recordId`                                      | **Remove**  | The unique ID for a specific data record (e.g., a single workout) is an unnecessary tracking vector and must be removed.                 |
+| `title`                                         | **Remove**  | High-risk for free-text PII (e.g., "Run with Jane Doe").                                                                                 |
+| `notes`                                         | **Remove**  | High-risk for free-text PII.                                                                                                           |
+| `latitude`, `longitude` (and all other location data) | **Generalize**| Convert specific GPS coordinates to a general region (e.g., "San Francisco, CA") or remove entirely. Start and end points of a workout are especially sensitive. |
+| `startTime`, `endTime`                          | **Generalize**| Round timestamps to the nearest 15 minutes to obscure precise start/end times of activities, which can reveal sensitive user patterns. |
+| `heartRateSamples`                              | **Aggregate** | Replace detailed timeseries data with summary statistics (e.g., `avg`, `min`, `max`). The raw series could potentially be used to identify a user.                    |
+| `stepsTimeseries`                               | **Aggregate** | Replace detailed intra-day step counts with hourly or daily totals to obscure fine-grained activity patterns.                            |
+| `sleepStages`                                   | **Aggregate** | Replace detailed sleep stage data (e.g., timestamps of REM, deep, light) with total durations for each stage.                            |
+| `calories`                                      | **Keep**    | Generally not considered PII in isolation.                                                                                             |
+| `steps` (daily total)                           | **Keep**    | Generally not considered PII in isolation.                                                                                             |
+| `distance`                                      | **Keep**    | Generally not considered PII in isolation.                                                                                             |
+| `weightKg`                                      | **Keep**    | A user's weight is not considered PII in isolation.                                                                                    |
+| `bodyFatPercentage`                             | **Keep**    | A user's body fat percentage is not considered PII in isolation.                                                                       |
+| `bmi`                                           | **Keep**    | A user's BMI is not considered PII in isolation.                                                                                       |
+| `deviceName`                                    | **Remove**  | Can contain user's name (e.g., "John's iPhone").                                                                                       |
+| `weatherInfo`                                   | **Generalize**| Keep general weather (e.g., "Cloudy"), but remove specific temperature or location details that could narrow down the user's location. |
+| `sourcePayload`                                 | **Remove**  | The original, raw payload from the third-party provider must be removed as it may contain unexpected PII not mapped to the canonical model. |
 *   **Privacy Guarantee:** This proxy-based architecture provides a strong guarantee that no raw user PII is ever processed by the AI models.
 
 #### Batch Anonymization for Analytics
