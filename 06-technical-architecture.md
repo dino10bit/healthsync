@@ -66,7 +66,7 @@ This diagram shows the system in its environment, illustrating its relationship 
 
 ### Level 2: Containers
 
-This level zooms into the system boundary to show the high-level technical containers for the MVP. The architecture is focused on a low-latency **"hot path"** for handling real-time syncs of recent data. While the system uses multiple serverless services like EventBridge, the core business logic resides in a **unified AWS Lambda worker fleet**, promoting code reuse. A core technology used is **Kotlin Multiplatform (KMP)**, which allows for sharing this worker logic between the mobile application and the backend.
+This level zooms into the system boundary to show the high-level technical containers for the MVP. The architecture is focused on a low-latency **"hot path"** for handling real-time syncs of recent data. While the system uses multiple serverless services like EventBridge, the core business logic resides in a **unified worker fleet**, promoting code reuse. A core technology used is **Kotlin Multiplatform (KMP)**, which allows for sharing this worker logic between the mobile application and the backend.
 
 Designs for post-MVP features like the "cold path" for historical syncs have been deferred and are captured in `45-future-enhancements.md`.
 
@@ -144,7 +144,7 @@ For the backend, this means the general strategy is to compile the KMP module to
 *   **`ApiClient`:** Handles HTTP calls to backend and third-party services.
 *   **`SecureStorageWrapper`:** Abstraction for Keychain/Keystore (on-device) and AWS Secrets Manager (on-backend).
     *   **Error Handling:** If the underlying secret store (e.g., Secrets Manager) is unavailable, this component **must** throw a specific, catchable `SecureStorageUnavailableException` to allow the caller to implement appropriate retry logic.
-    *   **[T-002] System-Level Fallback:** If Secrets Manager is unavailable for an extended period, the system will enter a degraded mode. Syncs requiring new tokens will fail, but syncs for existing, cached connections may continue if the `WorkerLambda` has a warm container with the tokens already in memory. **[NEEDS_CLARIFICATION: Q-05]** The business must formally accept that a prolonged Secrets Manager outage will result in the failure of most data sync functionality.
+    *   **[T-002] System-Level Fallback:** If Secrets Manager is unavailable for an extended period, the system will enter a degraded mode. Syncs requiring new tokens will fail, but syncs for existing, cached connections may continue if the `WorkerFargateTask` has a warm container with the tokens already in memory. **[NEEDS_CLARIFICATION: Q-05]** The business must formally accept that a prolonged Secrets Manager outage will result in the failure of most data sync functionality.
 
 ### Level 3: Extensible Provider Integration Architecture
 
@@ -177,7 +177,7 @@ A secure and scalable strategy is essential for managing provider-specific confi
 *   **Application API Credentials:** The OAuth `client_id` and `client_secret` for each third-party service are highly sensitive. These are stored securely in **AWS Secrets Manager**. The backend services retrieve these credentials at runtime using a narrowly-scoped IAM role.
 *   **User OAuth Tokens:** User-specific `access_token` and `refresh_token` are encrypted and stored in **AWS Secrets Manager**. To avoid storing a predictable secret ARN in the database, the `Connection` item in DynamoDB will store a randomly generated UUID as the pointer to the secret.
     *   **Secure ARN Mapping:** The mapping from this UUID to the full AWS Secrets Manager ARN **must** be stored securely. This mapping will be managed as a secure JSON object within **AWS AppConfig**. This approach provides a central, auditable, and securely managed location for this critical mapping data.
-    *   **Dynamic IAM Policies for Least Privilege:** When a Worker Lambda processes a job, it must be granted permission to retrieve *only* the specific secret for the connection it is working on. This is a critical security control. This will be achieved by having the orchestrating service (e.g., Step Functions) generate a **dynamic, narrowly-scoped IAM session policy** that grants temporary access only to the specific secret ARN required for the job. This policy is then passed to the `WorkerLambda`, ensuring it operates under the principle of least privilege for every execution.
+    *   **Dynamic IAM Policies for Least Privilege:** When a Worker Fargate Task processes a job, it must be granted permission to retrieve *only* the specific secret for the connection it is working on. This is a critical security control. This will be achieved by having the orchestrating service (e.g., Step Functions) generate a **dynamic, narrowly-scoped IAM session policy** that grants temporary access only to the specific secret ARN required for the job. This policy is then passed to the `WorkerFargateTask`, ensuring it operates under the principle of least privilege for every execution.
 
 ## 3. Sync Models: A Hybrid Architecture
 
@@ -203,10 +203,10 @@ For the MVP, cloud-to-cloud syncs are handled by a single, reliable architectura
     1.  The Mobile App sends a request to API Gateway to start a sync.
     2.  **API Gateway** uses a direct service integration to validate the request and publish a semantic `HotPathSyncRequested` event to the **EventBridge Event Bus**.
     3.  An EventBridge rule filters for these events and sends them to the `HotPathSyncQueue` **Amazon SQS queue**. This queue acts as a buffer, protecting the system from load spikes.
-    4.  The SQS queue triggers the `Worker Lambda`, which processes the job.
+    4.  The SQS queue is polled by the `Worker Fargate Task`, which processes the job.
     5.  **Failure Handling:** The primary SQS queue is configured with a **Dead-Letter Queue (DLQ)**. On a **non-transient processing error** (e.g., an invalid credentials error `401`, a permanent API change `404`, or an internal code bug), the worker throws an exception. After a configured number of retries (`maxReceiveCount`), SQS automatically moves the failed message to the DLQ for out-of-band analysis.
         *   **`maxReceiveCount` Rationale:** This will be set to **5**. This value is chosen to balance allowing recovery from intermittent, transient network or third-party API errors against not waiting too long to detect a persistent failure. A message that fails 5 times over approximately 1-2 minutes indicates a persistent issue that requires manual intervention and aligns with our goal of identifying and fixing broken integrations quickly.
-    6.  Upon successful completion, the `Worker Lambda` publishes a `SyncSucceeded` event back to the EventBridge bus. This event is consumed by other services, primarily to trigger a push notification to the user and for analytics.
+    6.  Upon successful completion, the `Worker Fargate Task` publishes a `SyncSucceeded` event back to the EventBridge bus. This event is consumed by other services, primarily to trigger a push notification to the user and for analytics.
 *   **Advantage:** This is a highly reliable and extensible model. Leveraging the native SQS DLQ feature simplifies the worker logic, increases reliability, and improves observability.
 
 *(See Diagram 4 in the "Visual Diagrams" section below.)*
@@ -220,6 +220,22 @@ The ability for users to backfill months or years of historical data is a key fe
 ### Model 3: Cloud-to-Device Sync
 *(Unchanged)*
 
+### Model 4: Webhook-Driven Sync (Push Model)
+
+To provide a near real-time user experience and dramatically reduce the cost of unnecessary polling, the architecture will adopt a **webhook-first (push) strategy** for providers that support it (e.g., Fitbit, Strava). This model replaces periodic polling with event-driven notifications from the third-party provider.
+
+*   **Use Case:** Receiving notifications that new data is available for a user, triggering a targeted sync.
+*   **Flow:**
+    1.  A third-party provider (e.g., Strava) sends a `POST` request to our dedicated, public **Webhook Ingress Endpoint**.
+    2.  The **API Gateway** receives the webhook. It performs initial validation (e.g., checking for a provider-specific verification header).
+    3.  The request is forwarded to a dedicated `WebhookProcessorLambda`.
+    4.  The `WebhookProcessorLambda` is responsible for:
+        a. **Verifying the webhook's authenticity** using the provider's recommended mechanism (e.g., checking a signature).
+        b. **Parsing the payload** to extract the `userId` and the type of data that was updated.
+        c. **Publishing a targeted `HotPathSyncRequested` event** to the EventBridge Event Bus. The event payload will contain the specific `userId` and `dataType` to sync.
+    5.  From this point, the event is processed by the existing "Hot Path" sync architecture (SQS queue and Worker Fargate Task) to perform the actual data synchronization.
+*   **Advantage:** This is the most efficient and cost-effective model, as compute resources are only consumed when there is actual work to be done. It eliminates millions of "empty" polls for inactive users.
+
 ## 3a. Unified End-to-End Idempotency Strategy
 
 In a distributed, event-driven system, operations can be retried, making a robust idempotency strategy critical for data integrity. We will implement a unified strategy based on a client-generated idempotency key.
@@ -228,7 +244,7 @@ In a distributed, event-driven system, operations can be retried, making a robus
 
 *   **Key Generation:** The mobile client is responsible for generating a unique `Idempotency-Key` (e.g., a UUID) for each new state-changing operation. This same key **must** be used for any client-side retries of that same operation.
 
-*   **Locking Mechanism:** Before starting any processing, the asynchronous worker (Lambda) will attempt to acquire an exclusive lock using an atomic **`SET-if-not-exists`** operation against the central cache (Redis). This ensures that a job is processed at most once and handles race conditions where multiple workers attempt to process the same job simultaneously.
+*   **Locking Mechanism:** Before starting any processing, the asynchronous worker (Fargate task) will attempt to acquire an exclusive lock using an atomic **`SET-if-not-exists`** operation against the central cache (Redis). This ensures that a job is processed at most once and handles race conditions where multiple workers attempt to process the same job simultaneously.
 
 #### Post-MVP: Idempotency for Historical Syncs (Step Functions)
 For long-running historical syncs, an additional layer of idempotency will be required at the orchestration level. The design for this is captured alongside the Historical Sync architecture in `45-future-enhancements.md`.
@@ -273,8 +289,8 @@ The practice of chaos engineering is critical. We will use the **AWS Fault Injec
 
 *   **Ownership and Frequency:** Experiments will be owned by the Core Backend team and executed on a **bi-weekly basis** in the `staging` environment as part of the standard release cycle.
 *   **MVP Experiment Catalog:**
-    *   **Worker Failure:** Terminate a random percentage (10-50%) of Lambda instances to ensure SQS retries and the remaining fleet can handle the load.
-    *   **API Latency:** Inject a 500ms latency into calls from a worker Lambda to a third-party API endpoint.
+    *   **Worker Failure:** Terminate a random percentage (10-50%) of Fargate tasks to ensure SQS retries and the remaining fleet can handle the load.
+    *   **API Latency:** Inject a 500ms latency into calls from a worker Fargate task to a third-party API endpoint.
     *   **DynamoDB Latency:** Inject latency on DynamoDB reads/writes to test application-level timeouts.
     *   **Secrets Manager Unavailability:** Block access to AWS Secrets Manager to verify graceful failure and retry.
     *   **Availability Zone Failure:** Simulate the failure of a single AZ to validate Multi-AZ configurations.
@@ -303,7 +319,7 @@ The following diagram shows how a worker interacts with the distributed rate lim
 
 ```mermaid
 sequenceDiagram
-    participant Worker as "Worker Lambda"
+    participant Worker as "Worker Fargate Task"
     participant Redis as "ElastiCache for Redis\n(Rate Limiter)"
     participant SQS as "SQS Queue"
     participant ThirdParty as "Third-Party API"
@@ -319,21 +335,11 @@ sequenceDiagram
     end
 ```
 
-#### Load Projections & Concurrency Risk Mitigation
-**NOTICE: The following risk analysis is the most critical finding in this document and requires immediate attention before any implementation begins.**
+#### Load Projections & Scalability Model
 
 *   **Governing NFR:** The system must be designed and load-tested to handle a peak load of **3,000 requests per second (RPS)**.
-*   **Concurrency Calculation:** Based on the P90 SLO for job duration (15 seconds), this implies a worst-case requirement of **~45,000 concurrent Lambda executions**.
-*   **Feasibility & Risk Mitigation (CRITICAL PROJECT BLOCKER):**
-    *   **Risk Statement:** The projection of **~45,000 concurrent executions** represents a worst-case scenario that is considered a **potential project-threatening risk** due to its extreme financial and technical implications.
-    *   **Architectural Status:** The current Lambda-per-job architecture is **not approved** for implementation.
-    *   **Mandatory Prerequisites:** The project **must be halted** until the following actions are completed and formally approved by all stakeholders:
-        1.  **Build Cost Model:** Create a detailed cost model for the 45,000 concurrency Lambda architecture.
-        2.  **Mandatory Proof-of-Concept (PoC):** Execute a load test to validate the technical feasibility and cost of this model.
-        3.  **Architectural Re-evaluation:** Prototype and perform a comparative analysis of alternatives that reduce concurrency. This **must** include:
-            *   **Job Batching:** Processing multiple sync jobs within a single Lambda invocation.
-            *   **Container-based Model (AWS Fargate):** Moving the workload to a container-based model.
-            The goal is to find a more cost-effective and less risky approach.
+*   **Compute Model:** The sync engine's worker fleet will be implemented using **AWS Fargate**. This container-based approach is better suited for the constant, high-throughput nature of the workload compared to a Lambda-per-job model.
+*   **Scalability Strategy:** An auto-scaling fleet of Fargate tasks will continuously poll the `HotPathSyncQueue` and process jobs in a loop. The fleet will scale based on the number of messages in the SQS queue, ensuring that we have enough capacity to handle peak load while scaling down to minimize costs during idle periods. This model provides a more cost-effective and predictable performance profile at scale, mitigating the risks associated with extreme Lambda concurrency.
 
 #### DynamoDB Capacity Model
 We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased (e.g., via a Savings Plan) to handle the predictable average load, with an initial estimate of covering **70% of expected peak usage**. **On-Demand Capacity** will handle any traffic that exceeds this provisioned throughput. This ratio will be tuned based on production traffic patterns.
@@ -545,26 +551,40 @@ data class ProviderTokens(
 
 ### 3f. Automatic Sync Scheduling Architecture
 
-A scalable fan-out pattern will be used to trigger automatic, periodic syncs for all users.
+To align infrastructure costs with revenue and provide a premium experience for paying users, a **tiered sync frequency** model will be implemented. This will be achieved using a scalable fan-out pattern for both `PRO` and `FREE` user tiers, with different scheduling intervals.
 
 *   **Core Components:**
-    *   **Master Scheduler (EventBridge Rule):** A single EventBridge Rule runs on a fixed **15-minute schedule**. This interval balances near real-time scheduling with minimizing unnecessary, system-wide scheduler runs.
-    *   **Scheduler State Machine (AWS Step Functions):** Orchestrates the process of finding and enqueuing sync jobs.
+    *   **Master Schedulers (EventBridge Rules):** Two separate EventBridge Rules will be created:
+        *   **Pro Tier Scheduler:** Runs on a fixed **15-minute schedule** (`cron(0/15 * * * ? *)`).
+        *   **Free Tier Scheduler:** Runs **once per day** (`cron(0 12 * * ? *)`).
+    *   **Scheduler State Machine (AWS Step Functions):** A single, reusable state machine will orchestrate the process of finding and enqueuing sync jobs. It will be triggered by both schedulers.
 
 *   **Workflow:**
-    1.  **Trigger & Fan-Out:** The Master Scheduler triggers the state machine. The first step calculates the number of shards to process. The number of shards is configured dynamically in **AWS AppConfig**.
-    2.  **Process Shards in Parallel (`Map` State):** The state machine uses a `Map` state to invoke a `ShardProcessorLambda` for each shard in parallel. A shard is a logical segment of the user base, calculated as `shard = hash(userId) % total_shards`.
-        *   **[C-011] Hashing Algorithm:** The hashing algorithm **must** be a high-quality, deterministic, non-cryptographic algorithm. **Murmur3** is the recommended choice. Using a non-deterministic hash would result in catastrophic data inconsistency.
-    3.  **Shard Processor Lambda:** Each invocation is responsible for a single shard.
-        a. **Query for Eligible Users:** It queries a dedicated GSI on the `SyncWellMetadata` table to find all users in its shard eligible for a sync. The GSI must be defined as:
-            *   **GSI Partition Key:** `ShardId`
+    1.  **Trigger:** The appropriate Master Scheduler (Pro or Free) triggers the state machine, passing in the `tier` (`PRO` or `FREE`) as a parameter.
+    2.  **Fan-Out:** The state machine calculates the number of shards to process based on configuration in AWS AppConfig.
+    3.  **Process Shards in Parallel (`Map` State):** The state machine uses a `Map` state to invoke a `ShardProcessorLambda` for each shard in parallel, passing the `tier` along. A shard is a logical segment of the user base, calculated as `shard = hash(userId) % total_shards`.
+        *   **[C-011] Hashing Algorithm:** The hashing algorithm **must** be a high-quality, deterministic, non-cryptographic algorithm. **Murmur3** is the recommended choice.
+    4.  **Shard Processor Lambda:** Each invocation is responsible for a single shard and a single tier.
+        a. **Query for Eligible Users:** It queries a dedicated GSI on the `SyncWellMetadata` table to find all users in its shard and tier who are eligible for a sync. The GSI must be defined to support this query efficiently:
+            *   **GSI Partition Key:** `SyncTierShardId` (e.g., `PRO#5`, `FREE#12`)
             *   **GSI Sort Key:** `NextSyncTimestamp`
         b. **Enqueue Jobs:** For each eligible user, it publishes a `HotPathSyncRequested` event to the EventBridge Event Bus.
-    4.  **Job Processing:** The events are routed to the SQS queue and consumed by the Lambda worker fleet.
+    5.  **Job Processing:** The events are routed to the SQS queue and consumed by the Fargate worker fleet.
 
-*   **Scalability and Resilience:** This architecture is highly scalable by increasing the number of shards. The use of Step Functions provides built-in retries and error handling for the scheduling process itself.
+*   **Scalability and Resilience:** This architecture is highly scalable by increasing the number of shards. The use of Step Functions provides built-in retries and error handling for the scheduling process itself. This design also significantly reduces the workload generated by free users, lowering overall system load and cost.
 
-The following diagram illustrates this scalable fan-out architecture, including the query to DynamoDB.
+The following diagram illustrates this scalable, tiered fan-out architecture.
+
+#### Adaptive Polling for Other Providers
+
+For providers that do not support webhooks (e.g., Garmin, and as a fallback for webhook-enabled providers), a brute-force, fixed-interval polling approach is inefficient. To mitigate this, we will implement an **intelligent, adaptive polling strategy**.
+
+*   **Concept:** Instead of a fixed 15-minute or daily schedule for all users of a given tier, we will dynamically adjust the polling frequency for each user based on their historical data patterns. Users who sync data frequently will be polled more often, while inactive users will be polled very rarely, if at all.
+*   **Architecture:**
+    1.  **Sync History Analysis:** A periodic batch job will analyze each user's sync history stored in DynamoDB to determine their "sync velocity" (i.e., how often they generate new data).
+    2.  **Dynamic Schedule Creation:** Based on this analysis, the system will use **Amazon EventBridge Scheduler** to create dynamic, **one-time schedules** for each user. For example, an active user might get a schedule to be polled in 20 minutes, while an inactive user might be scheduled for a poll in 48 hours.
+    3.  **Execution:** When a one-time schedule from EventBridge Scheduler fires, its target will be to publish a `HotPathSyncRequested` event to the main EventBridge bus, which then flows through the standard SQS and worker architecture. After the sync completes, the analysis service will create a *new* one-time schedule for that user's next poll.
+*   **Benefit:** This model dramatically reduces the number of "empty" polls that yield no new data, significantly cutting costs associated with the polling infrastructure for a large portion of the user base. It replaces the high-volume, indiscriminate fan-out model with a targeted, intelligent scheduling approach.
 
 *(See Diagram 6 in the "Visual Diagrams" section below.)*
 
@@ -606,10 +626,10 @@ This strategy ensures that the app remains responsive and that user actions are 
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
 | **Authentication Service** | **Firebase Authentication** | **Rationale vs. Amazon Cognito:** While Amazon Cognito is a native AWS service, Firebase Authentication has been chosen for the MVP due to its superior developer experience, higher-quality client-side SDKs (especially for social logins on iOS and Android), and more generous free tier. This choice prioritizes rapid development and a smooth user onboarding experience. The cross-cloud dependency is an acceptable trade-off for the MVP, but a migration to Cognito could be considered in the future if the benefits of a single-cloud solution outweigh the advantages of Firebase's SDKs. **Dependency Risk:** This introduces a hard dependency on Google Cloud. An outage in Firebase Authentication would prevent all users from logging in, even if the AWS backend is healthy. This risk is formally accepted by the product owner. |
-| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. However, to meet our strict latency SLOs, the KMP/JVM runtime should only be used for **asynchronous `WorkerLambda` functions** where cold starts are less critical. The latency-sensitive API entrypoint is handled by API Gateway's direct integrations, and the `AuthorizerLambda` **must be written in a faster-starting runtime like TypeScript or Python** to ensure the P99 API latency target can be met. **[NEEDS_CLARIFICATION: Q-04]** The engineering team must formally confirm their acceptance of the added complexity of maintaining a separate runtime and toolchain for this single critical function. **Alternative Considered:** A "backend-for-frontend" (BFF) approach, where the backend is written in a separate, more performant runtime (like Go or Rust) and only shares the canonical data models with the client, was considered. The current KMP-on-Lambda approach was chosen for the MVP to maximize code reuse and development speed. |
+| **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. The KMP/JVM runtime will be packaged in a container for the asynchronous `WorkerFargateTask`. For latency-sensitive functions that are not part of the worker fleet (e.g., the `AuthorizerLambda`), a faster-starting runtime like TypeScript or Python must be used to meet strict latency SLOs. **[NEEDS_CLARIFICATION: Q-04]** The engineering team must formally confirm their acceptance of the added complexity of maintaining a separate runtime and toolchain for these specific functions. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Primary Database** | **Amazon DynamoDB with Global Tables** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance required to support 1M DAU. The single-table design enables efficient, complex access patterns. We use On-Demand capacity mode, which is the most cost-effective choice for our unpredictable, spiky workload, as it automatically scales to meet traffic demands without the need for manual capacity planning. Global Tables provide the multi-region, active-active replication needed for high availability and low-latency access for our global user base.** |
-| **Backend Compute** | **AWS Lambda** | **Unified Compute Model for MVP.** All backend compute for the initial launch—including the API layer and all asynchronous workers—will run on **AWS Lambda**. This unified serverless model is chosen for its scalability, operational simplicity, and ability to handle the 3,000 RPS target. As detailed in the Technology Radar (see Appendix A), AWS Fargate is being assessed as a potential future optimization for cost-performance at extreme scale (Phase 2), but a pure Lambda approach is the definitive strategy for the MVP. |
+| **Backend Compute** | **AWS Fargate on Graviton (ARM64)** | **Container-based Compute for High Throughput.** The asynchronous worker fleet will be run as a container-based service on **AWS Fargate**, standardized on the **`arm64` (AWS Graviton) architecture**. For a constant, high-throughput workload like our sync engine, Fargate is significantly more cost-effective than a Lambda-per-job model. It avoids the high costs associated with massive Lambda concurrency and provides more predictable performance for long-running tasks. The worker application will be packaged into a Docker image and run as an auto-scaling fleet of Fargate tasks that continuously poll the SQS queue. |
 | **Schema Governance** | **AWS Glue Schema Registry** | **Data Integrity & Evolution.** Provides a managed, centralized registry for our canonical data schemas. Enforces backward-compatibility checks in the CI/CD pipeline, preventing breaking changes and ensuring system stability as new data sources are added. |
 | **Distributed Cache** | **Amazon ElastiCache for Redis** | **Performance & Scalability.** Provides a high-throughput, low-latency in-memory cache for reducing database load and implementing distributed rate limiting. |
 | **AI & Machine Learning (Future)** | **Amazon SageMaker, Amazon Bedrock** | **Rationale for Future Use:** When we implement AI features, these managed services will allow us to scale without managing underlying infrastructure, reducing operational overhead and allowing focus on feature development. |
@@ -627,7 +647,7 @@ This strategy ensures that the app remains responsive and that user actions are 
 A detailed financial model is a mandatory prerequisite before implementation.
 
 **Primary Cost Drivers:**
-1.  **AWS Lambda:** As the sole compute service, this will be a primary cost driver. Costs are based on the number of requests and execution duration, which will be significant at the 3,000 RPS scale.
+1.  **AWS Fargate:** As the primary compute service for the worker fleet, Fargate will be a major cost driver. Costs are based on vCPU and memory consumption over time. This model is more cost-effective than Lambda for our high-throughput workload.
 2.  **Cross-Region Data Transfer:** The multi-region architecture incurs data transfer costs for every write operation across all replicated services:
     *   **DynamoDB Global Tables:** Every write, update, or delete is replicated and billed.
     *   **AWS Secrets Manager:** Replicating secrets incurs costs.
@@ -635,9 +655,9 @@ A detailed financial model is a mandatory prerequisite before implementation.
 4.  **NAT Gateway:** Outbound traffic from Lambda functions in a VPC to **third-party APIs** will incur data processing charges. (Note: Traffic to internal AWS services will use VPC Endpoints to minimize this cost).
 
 **Cost Management Strategy:**
-*   **Mandatory Financial Modeling:** Develop a detailed cost model using the AWS Pricing Calculator for the 3,000 RPS Lambda-based, multi-region architecture.
+*   **Mandatory Financial Modeling:** Develop a detailed cost model using the AWS Pricing Calculator for the 3,000 RPS Fargate-based, multi-region architecture.
 *   **Aggressive Log Management:** Implement dynamic log levels via AppConfig, set short retention periods in CloudWatch, and automate archiving to S3/Glacier.
-*   **Explore Savings Plans:** As usage becomes more predictable, a Compute Savings Plan can significantly reduce Lambda costs.
+*   **Explore Savings Plans:** As usage becomes more predictable, a Compute Savings Plan can significantly reduce Fargate and Lambda costs.
 *   **Cost Anomaly Detection:** Configure AWS Cost Anomaly Detection to automatically alert the team to unexpected spending.
 *   **Optimize VPC Networking:** Implement VPC Endpoints for all internal AWS service communication to minimize data transfer costs through the NAT Gateway.
 
@@ -656,7 +676,7 @@ A detailed financial model is a mandatory prerequisite before implementation.
 *   **Code & Pipeline Security:** Production builds will be obfuscated. Dependency scanning (Snyk) and SAST will be integrated into the CI/CD pipeline, failing the build on critical vulnerabilities. Any new AI frameworks must undergo a formal security review, which includes threat modeling and a review by the security team, before being integrated.
 
 ### Compliance
-*   **Data Handling and Ephemeral Processing:** User health data is only ever processed **ephemerally in memory**. The maximum lifetime for data in-flight is guaranteed to be **under 5 minutes** by enforcing this as the maximum Lambda function timeout.
+*   **Data Handling and Ephemeral Processing:** User health data is only ever processed **ephemerally in memory**. The maximum lifetime for data in-flight is guaranteed to be **under 5 minutes** by enforcing this as the maximum task duration for Fargate tasks.
 *   **HIPAA Alignment:** While not formally HIPAA certified, the architecture is designed to align with HIPAA's technical safeguards. This claim **must be validated by a third-party compliance expert** before any public statements are made.
 *   **GDPR & CCPA:** The architecture is designed to be compliant by enforcing data minimization and user control.
 *   **Audit Trails:** All administrative actions are logged via **AWS CloudTrail**. Critical alerts **must** be configured for suspicious administrative actions (e.g., disabling CloudTrail, modifying critical IAM policies).
@@ -706,7 +726,7 @@ For analytics, **Amazon Kinesis Data Firehose** will be used.
     *   **Log Schema:** The core JSON schema will include: `timestamp`, `level` (e.g., INFO, ERROR), `service` (e.g., "worker-lambda"), `correlationId`, `message`, and a `payload` object for contextual data.
     *   **Scrubbing:** The process for scrubbing PII from logs **must be tested and audited** as part of the QA cycle for any feature that introduces new log statements.
 *   **Key Metrics & Alerting:**
-    *   **Idempotency Key Collisions:** This will be tracked via a custom CloudWatch metric published using the **Embedded Metric Format (EMF)** from the worker Lambda. An alarm will trigger on any anomalous spike.
+    *   **Idempotency Key Collisions:** This will be tracked via a custom CloudWatch metric published using the **Embedded Metric Format (EMF)** from the worker Fargate task. An alarm will trigger on any anomalous spike.
     *   **KPIs:** In addition to system metrics, we will track business and product KPIs. The following table provides a more complete view.
 
 | KPI Metric Name | User Story | Business Goal | Description | Threshold / Alert |
@@ -726,7 +746,7 @@ For analytics, **Amazon Kinesis Data Firehose** will be used.
 | | **SwiftUI / Jetpack Compose** | Modern UI frameworks for iOS and Android. |
 | | **SQLDelight** | KMP library for type-safe SQL. |
 | | **Ktor** | KMP HTTP client. |
-| **Backend Development** | **AWS Lambda, SQS, DynamoDB** | Core AWS services for the serverless backend. |
+| **Backend Development** | **AWS Fargate, SQS, DynamoDB** | Core AWS services for the serverless backend. |
 | | **Terraform** | Infrastructure as Code tool. |
 | **Testing** | **JUnit, XCTest, Espresso, MockK, Turbine** | Standard libraries for unit, UI, and integration testing. |
 | | **k6** | Modern, scriptable load testing tool. |
@@ -798,7 +818,7 @@ These are technologies we have chosen as the foundation for the SyncWell platfor
 | Technology | Domain | Justification |
 | :--- | :--- | :--- |
 | **Kotlin Multiplatform** | Cross-Platform Logic | Core strategy for code reuse between mobile clients. |
-| **AWS Lambda, SQS, DynamoDB** | Backend Platform | Core of our scalable, event-driven architecture. |
+| **AWS Fargate, SQS, DynamoDB** | Backend Platform | Core of our scalable, event-driven architecture. Fargate provides the most cost-effective compute for our high-throughput worker fleet. |
 | **Terraform** | Infrastructure as Code | Standard for provisioning and managing our cloud infrastructure. |
 | **LocalStack** | Local Development | Essential for providing a high-fidelity local development loop. |
 | **Pact** | Contract Testing | Critical for ensuring API stability between the client and backend. |
@@ -818,7 +838,6 @@ These are technologies that could be game-changers in the longer term. We should
 
 | Technology | Domain | Justification |
 | :--- | :--- | :--- |
-| **AWS Fargate** | Backend Compute | For the MVP, we will use a Lambda-only compute model. The trigger to assess Fargate will be when **cost projections for the Lambda model exceed $50,000/month OR the mandatory PoC for the 45k concurrency model fails**. |
 | **MLflow** | MLOps | When we begin developing the AI Insights features, MLflow is a tool we must assess for managing the end-to-end machine learning lifecycle. It is compatible with our choice of Amazon SageMaker. |
 
 ### Hold
@@ -907,6 +926,7 @@ graph TD
     subgraph "AWS Cloud"
         WAF[AWS WAF]
         APIGateway[API Gateway]
+        WebhookIngressLambda[Webhook Ingress Lambda]
         AuthorizerLambda[Authorizer Lambda]
         HotPathEventBus[EventBridge Event Bus]
         DynamoDB[DynamoDB Table]
@@ -918,7 +938,7 @@ graph TD
             style VPC fill:#f5f5f5,stroke:#333
             NetworkFirewall[AWS Network Firewall]
             subgraph "Private Subnets"
-                WorkerLambda["Worker Lambda"]
+                WorkerFargateTask["Worker Fargate Task"]
                 ElastiCache[ElastiCache for Redis]
             end
         end
@@ -936,17 +956,21 @@ graph TD
     APIGateway -- "Validates JWT with" --> AuthorizerLambda
     AuthorizerLambda -- "Fetches public keys from" --> FirebaseAuth
     APIGateway -- "Publishes 'HotPathSyncRequested' event" --> HotPathEventBus
+    ThirdPartyAPIs -- "Sends Webhook -->" --> APIGateway
+    APIGateway -- "Routes to" --> WebhookIngressLambda
+    WebhookIngressLambda -- "Publishes 'HotPathSyncRequested' event" --> HotPathEventBus
+
 
     HotPathEventBus -- "Rule routes to" --> HotPathSyncQueue
-    HotPathSyncQueue -- "Target for" --> WorkerLambda
+    HotPathSyncQueue -- "drives" --> WorkerFargateTask
     HotPathSyncQueue -- "On failure, redrives to" --> HotPathSyncDLQ
 
-    WorkerLambda -- "Reads/writes user state" --> DynamoDB
-    WorkerLambda -- "Gets credentials" --> SecretsManager
-    WorkerLambda -- "Reads/Writes cache" --> ElastiCache
-    WorkerLambda -- "Logs & Metrics" --> Observability
-    WorkerLambda -- "Fetches runtime config from" --> AppConfig
-    WorkerLambda -- "Makes outbound API calls via" --> NetworkFirewall
+    WorkerFargateTask -- "Reads/writes user state" --> DynamoDB
+    WorkerFargateTask -- "Gets credentials" --> SecretsManager
+    WorkerFargateTask -- "Reads/Writes cache" --> ElastiCache
+    WorkerFargateTask -- "Logs & Metrics" --> Observability
+    WorkerFargateTask -- "Fetches runtime config from" --> AppConfig
+    WorkerFargateTask -- "Makes outbound API calls via" --> NetworkFirewall
     NetworkFirewall -- "Allow-listed traffic to" --> ThirdPartyAPIs
 ```
 
@@ -979,7 +1003,7 @@ graph TD
         A[Mobile App] -- 1. Initiate --> B[API Gateway]
         B -- 2. Publishes 'HotPathSyncRequested' event --> C[EventBridge]
         C -- 3. Forwards to --> SQS[HotPathSyncQueue]
-        SQS -- 4. Triggers --> D[Worker Lambda]
+        SQS -- 4. Triggers --> D[Worker Fargate Task]
         D -- 5. Fetch/Write data --> E[Third-Party APIs]
         D -- 6. Publishes 'SyncSucceeded' event --> C
     end
@@ -992,35 +1016,35 @@ sequenceDiagram
     autonumber
     participant Client
     participant APIGateway as "API Gateway"
-    participant WorkerLambda
+    participant WorkerFargateTask
     participant IdempotencyStore as "DynamoDB"
 
     Client->>APIGateway: POST /sync-jobs<br>Idempotency-Key: K1
     APIGateway-->>Client: 202 Accepted
 
-    note over WorkerLambda: Receives job for key K1
+    note over WorkerFargateTask: Receives job for key K1
 
-    WorkerLambda->>IdempotencyStore: PutItem({PK: "IDEM#K1", SK: "IDEM#K1", status: "INPROGRESS", ttl: ...})<br>Condition: attribute_not_exists(PK)
+    WorkerFargateTask->>IdempotencyStore: PutItem({PK: "IDEM#K1", SK: "IDEM#K1", status: "INPROGRESS", ttl: ...})<br>Condition: attribute_not_exists(PK)
     alt Lock Failed (ConditionalCheckFailedException)
-        IdempotencyStore-->>WorkerLambda: ConditionalCheckFailedException
-        WorkerLambda->>IdempotencyStore: GetItem({PK: "IDEM#K1"})
+        IdempotencyStore-->>WorkerFargateTask: ConditionalCheckFailedException
+        WorkerFargateTask->>IdempotencyStore: GetItem({PK: "IDEM#K1"})
         alt Key is "COMPLETED"
-            IdempotencyStore-->>WorkerLambda: {status: "COMPLETED"}
-            WorkerLambda->>WorkerLambda: Log "Duplicate suppressed" and exit
+            IdempotencyStore-->>WorkerFargateTask: {status: "COMPLETED"}
+            WorkerFargateTask->>WorkerFargateTask: Log "Duplicate suppressed" and exit
         else Key is "INPROGRESS" or missing
-            IdempotencyStore-->>WorkerLambda: {status: "INPROGRESS"} / null
-            WorkerLambda->>WorkerLambda: Log "Race condition suppressed" and exit
+            IdempotencyStore-->>WorkerFargateTask: {status: "INPROGRESS"} / null
+            WorkerFargateTask->>WorkerFargateTask: Log "Race condition suppressed" and exit
         end
     else Lock Acquired
-        IdempotencyStore-->>WorkerLambda: OK
-        WorkerLambda->>WorkerLambda: Execute business logic...
+        IdempotencyStore-->>WorkerFargateTask: OK
+        WorkerFargateTask->>WorkerFargateTask: Execute business logic...
         alt Business logic is successful
-            WorkerLambda->>IdempotencyStore: UpdateItem({PK: "IDEM#K1", status: "COMPLETED", ttl: ...})
+            WorkerFargateTask->>IdempotencyStore: UpdateItem({PK: "IDEM#K1", status: "COMPLETED", ttl: ...})
             note right of IdempotencyStore: Update key, set 24hr TTL
         else Business logic fails
-            WorkerLambda->>IdempotencyStore: DeleteItem({PK: "IDEM#K1"})
+            WorkerFargateTask->>IdempotencyStore: DeleteItem({PK: "IDEM#K1"})
             note right of IdempotencyStore: Delete lock to allow clean retry.<br>If this fails, the lock expires<br>in 5 mins anyway via TTL.
-            WorkerLambda->>WorkerLambda: Throw error to allow SQS retry
+            WorkerFargateTask->>WorkerFargateTask: Throw error to allow SQS retry
         end
     end
 ```
@@ -1044,11 +1068,11 @@ graph TD
         DynamoDB[DynamoDB GSI]
         F["Main Event Bus<br>(EventBridge)"];
         G[SQS Queue];
-        H["Worker Fleet<br>(AWS Lambda)"];
+        H["Worker Fleet<br>(AWS Fargate)"];
     end
 
     E1 -- "1. Queries for users to sync" --> DynamoDB;
     E1 -- "2. Publishes 'SyncRequested' events" --> F;
     F -- "3. Routes events to" --> G;
-    G -- "4. Triggers" --> H;
+    G -- "4. Drives" --> H;
 ```
