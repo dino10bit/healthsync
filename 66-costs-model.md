@@ -167,11 +167,11 @@ The following scenarios model the impact of a significant percentage increase in
 
 ### Analysis of Findings
 
-*   **Most Sensitive Variable:** The model is most sensitive to **Scenario 1: Increased Data Complexity**. A 50% increase in log volume per job leads to a nearly 9% increase in total platform cost. This is because **CloudWatch Log Ingestion** is the single largest variable cost component in the architecture. Any changes that increase the verbosity of the application's logging could have a significant and direct financial impact.
+*   **Most Sensitive Variable:** The model is most sensitive to **Scenario 1: Increased Data Complexity**. A 50% increase in log volume per job leads to a **~26.1% increase** in total platform cost. This is because **CloudWatch Log Ingestion** is the single largest variable cost component in the architecture. Any changes that increase the verbosity of the application's logging could have a significant and direct financial impact.
 
 *   **Event-Driven Costs:** The cost of the event-driven backbone (Scenario 3) is also highly significant. Adding just one extra event to the workflow of each job would increase the monthly bill by over $200, highlighting the need for efficient event design.
 
-*   **Compute Efficiency:** While still important, the cost model is less sensitive to a decrease in Fargate compute efficiency (Scenario 2). A 50% increase in compute time results in a more modest 5.1% increase in total cost. This suggests that while optimizing the worker code for speed is beneficial, optimizing for **log and event generation** is a higher-leverage activity for cost management.
+*   **Compute Efficiency:** While still important, the cost model is less sensitive to a decrease in Fargate compute efficiency (Scenario 2). A 50% increase in compute time results in a more modest **~14.9% increase** in total cost. This suggests that while optimizing the worker code for speed is beneficial, optimizing for **log and event generation** is a higher-leverage activity for cost management.
 
 This analysis concludes that managing the "data footprint" of each job—specifically the volume of logs it generates—is the most critical factor for controlling variable costs at scale.
 
@@ -235,7 +235,7 @@ The direct cost comparison reveals a significant difference for this specific ty
 
 The Lambda-based model is projected to be **over 10 times more expensive** than the Fargate model for the worker fleet's compute costs.
 
-**Conclusion:** The primary reason for this cost difference is the workload pattern. The SyncWell worker fleet is designed to be constantly active, processing a steady stream of jobs from the SQS queue. For such high-throughput, sustained workloads, Fargate is significantly more cost-effective. Fargate's pricing model, based on provisioned vCPU and memory per hour for a long-running task, is better suited to this pattern than Lambda's per-invocation, per-millisecond pricing. While Lambda offers superior scaling for spiky, unpredictable, or low-volume workloads, the selection of **Fargate for this core worker fleet is a critical cost optimization** that saves over $3,400 per month on compute alone.
+**Conclusion:** The primary reason for this cost difference is the workload pattern. The SyncWell worker fleet is designed to be constantly active, processing a steady stream of jobs from the SQS queue. For such high-throughput, sustained workloads, Fargate is significantly more cost-effective. Fargate's pricing model, based on provisioned vCPU and memory per hour for a long-running task, is better suited to this pattern than Lambda's per-invocation, per-millisecond pricing. While Lambda offers superior scaling for spiky, unpredictable, or low-volume workloads, the selection of **Fargate for this core worker fleet is a critical cost optimization** that saves over $3,700 per month on compute alone.
 
 ## 11. Detailed Networking Cost Analysis
 
