@@ -89,21 +89,20 @@ To minimize the risk of production incidents, all backend services are deployed 
 *   **Monitoring:** The canary is closely monitored for any increase in error rates or latency.
 *   **Rollout/Rollback:** If the canary is stable, traffic is gradually shifted until it serves 100% of requests. If issues are detected, traffic is immediately routed back to the stable version.
 
-### 4b. Canary Releases for Event-Driven Fargate Workers
+### 4b. Canary Releases for Event-Driven Lambda Workers
 
-Canary releasing for a synchronous, user-facing service like an API is straightforward (e.g., using weighted traffic routing in API Gateway). However, for an asynchronous, event-driven service like the Fargate worker fleet that consumes jobs from an SQS queue, a different pattern is required.
+Canary releasing for a synchronous, user-facing service like an API is straightforward. For our asynchronous, event-driven Lambda worker that consumes jobs from an SQS queue, we will use **Lambda's built-in support for weighted aliases**.
 
-We will use a **feature flag-driven, consumer-side canary** pattern, which is controlled by AWS AppConfig.
+This approach provides a clean, infrastructure-level solution for traffic shifting without requiring complex feature-flag logic in the application code.
 
 **Deployment & Canary Process:**
 
-1.  **Deployment of New Version:** The CI/CD pipeline deploys a new version of the Fargate service. Critically, this deployment **does not** immediately replace the old version. Instead, both the old and new versions of the Fargate tasks run concurrently, consuming messages from the same SQS queue.
-2.  **Canary Logic in Code:** The application code within the Fargate task contains the logic for both the old and new features/behaviors. A feature flag retrieved from AWS AppConfig at runtime controls which logic path is executed.
-3.  **Initial Canary Configuration:** The feature flag in AppConfig is initially configured to be `false` or to have a `canary` value for a very small percentage of invocations (e.g., 1%). This means that even though the new code is deployed, it is not active for the vast majority of jobs.
-4.  **Monitoring:** The new code path is instrumented with specific metrics (e.g., a CloudWatch metric with a `version` dimension). We monitor the error rate and performance of only the canary invocations.
-5.  **Gradual Rollout:** If the canary proves stable, the configuration in AppConfig is updated to gradually increase the percentage of jobs that use the new logic path (e.g., 1% -> 10% -> 50% -> 100%). This requires no new deployment; it is purely a configuration change.
-6.  **Rollback:** If the canary shows any issues, the AppConfig configuration is instantly changed back to 0%, disabling the new logic path for all tasks. This provides an immediate and safe rollback without needing to re-deploy the previous version of the service.
-7.  **Code Cleanup:** Once the feature is fully rolled out and stable, the old logic path and the feature flag are removed from the code in a subsequent release, as per the Feature Flag Lifecycle defined in this document.
+1.  **Deploy New Version:** The CI/CD pipeline deploys a new version of the Lambda function. This creates a new, numbered version (e.g., `v2`).
+2.  **Create Alias:** A Lambda alias (e.g., `live`) is used as the event source for the SQS trigger. This alias initially points 100% to the stable, existing version (e.g., `v1`).
+3.  **Shift Traffic:** To begin the canary release, the `live` alias is reconfigured to route a small percentage of traffic (e.g., 10%) to the new version (`v2`), while the remaining 90% continues to go to the stable version (`v1`).
+4.  **Monitoring:** We monitor the CloudWatch metrics for the specific new version (`v2`), checking its error rate and duration. Alarms will be configured to automatically trigger a rollback if the canary's error rate exceeds a defined threshold.
+5.  **Gradual Rollout:** If the canary version is stable, we gradually update the alias weights, shifting more traffic to the new version (e.g., 10% -> 25% -> 50% -> 100%) over a period of time.
+6.  **Rollback:** If issues are detected, the alias is immediately reconfigured to send 100% of traffic back to the stable version (`v1`), providing an instant and safe rollback.
 
 This approach provides a high degree of safety and control for releasing changes to our most critical asynchronous service.
 

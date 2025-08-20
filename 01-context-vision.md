@@ -73,19 +73,14 @@ The primary goal of this PRD is to provide a comprehensive, enterprise-grade roa
 
 ## 6. Risk Analysis & Mitigation
 
-(This section remains largely the same as it was already comprehensive, but is included for completeness.)
+This section provides a high-level summary of key business risks. A comprehensive, detailed, and actively managed risk register for all technical, strategic, and operational risks is maintained in **`21-risks.md`**. That document is the single source of truth for risk management.
 
 | Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
 | :--- | :--- | :--- | :--- | :--- |
-| **R-01** | A third-party API changes or is deprecated, breaking a key integration. | High | High | Implement a robust monitoring system to detect API changes. Develop a modular architecture to isolate integrations and facilitate rapid updates. |
-| **R-02**| The app is rejected from the app stores due to policy violations. | Medium | High | Thoroughly review and adhere to all app store guidelines, particularly those related to health data and subscriptions. |
-| **R-03**| The solo developer becomes a single point of failure (e.g., due to illness). | Low | High | Maintain comprehensive documentation and consider establishing a contingency plan with a trusted third-party developer. |
-| **R-04**| The app fails to gain traction and attract a sufficient user base. | Medium | High | Focus on a core set of highly-requested integrations for the MVP. Implement a targeted marketing strategy and a generous free trial to encourage adoption. |
-| **R-05**| **Failure at Scale:** Backend services or third-party rate limits fail under the load of millions of users, causing cascading failures. | Medium | High | Rigorous load testing, designing for graceful degradation, and proactive rate limit management. |
-| **R-06**| **Feature Creep:** The 10 new features dilute focus from the core MVP. | High | Medium | A phased rollout strategy as defined in the `13-roadmap.md`, with clear go/no-go decisions for each feature based on MVP success. |
-| **R-07 (Critical)** | **Concurrency Model Feasibility:** The technical architecture, as initially designed, projects a worst-case scenario of ~45,000 concurrent executions. This is financially and technically infeasible for the MVP. | High | Critical | **Project Halt & PoC:** The project must halt until a proof-of-concept is completed to validate a more cost-effective concurrency model (e.g., job batching). This is the highest technical priority. |
-| **R-08 (High)** | **Third-Party API Instability (Garmin):** A key integration relies on an unofficial, reverse-engineered Garmin API. This API could be changed or disabled without notice, destroying a core feature. | Medium | High | **Strategic Decision:** The business must make a formal decision on whether to accept this risk for the MVP or defer the Garmin integration. Technical mitigation involves robust monitoring and a quick-response plan. |
-| **R-09 (High)** | **Firebase Authentication Dependency:** The use of Firebase Auth creates a hard dependency on a non-AWS service for a critical function (user login). | High | Medium | **Accepted Risk for MVP:** This is an accepted risk for the MVP to accelerate development. A high-level exit strategy (e.g., a migration plan to Amazon Cognito) must be drafted before launch. |
+| **R-01** | A third-party API changes or is deprecated, breaking a key integration. | High | High | See `21-risks.md` for detailed mitigation plan. |
+| **R-02**| The app is rejected from the app stores due to policy violations. | Medium | High | Thoroughly review and adhere to all app store guidelines. |
+| **R-03**| The solo developer becomes a single point of failure (e.g., due to illness). | Low | High | See `21-risks.md` for detailed mitigation plan. |
+| **R-04**| The app fails to gain traction and attract a sufficient user base. | Medium | High | Focus on a core set of highly-requested integrations for the MVP. |
 
 
 ## 7. Execution Plan / Step-by-Step Implementation

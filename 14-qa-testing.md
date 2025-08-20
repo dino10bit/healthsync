@@ -97,10 +97,10 @@ Our testing strategy follows the principles of the classic testing pyramid.
 *   **Test Scenarios:** The load test suite will include a variety of scenarios to simulate realistic user behavior and stress the system in different ways:
     *   **Spike Test:** A sudden, massive increase in traffic to simulate a viral event or a coordinated sync (e.g., after a notification). The goal is to verify that the SQS queue can absorb the spike and that the system remains stable.
     *   **Soak Test:** A sustained, high-load test over a long period (e.g., 4-8 hours). The goal is to identify memory leaks, performance degradation over time, and other issues that only manifest under prolonged load.
-    *   **Stress Test:** A test that pushes the system beyond its expected limits (e.g., >10,000 RPS). The goal is to understand how the system fails and to ensure that it fails gracefully (e.g., by throttling requests) rather than crashing.
+    *   **Stress Test:** A test that pushes the system beyond its expected limits (e.g., >3,000 RPS). The goal is to understand how the system fails and to ensure that it fails gracefully (e.g., by throttling requests) rather than crashing.
 *   **CI/CD Integration:** A smaller-scale load test will be integrated into the CI/CD pipeline to run on every merge to the `develop` branch. This will provide early feedback on performance regressions. Full-scale load tests will be run manually before each major release.
 *   **Success Criteria:**
-    *   The system must handle 10,000 RPS with P95 latency below 500ms for API Gateway and a Lambda error rate below 0.5%.
+    *   The system must handle **3,000 RPS** with P95 latency below 500ms for API Gateway and a Lambda error rate below 0.5%.
     *   The SQS queue depth should not grow uncontrollably during the soak test.
     *   The system should not crash during the stress test.
 

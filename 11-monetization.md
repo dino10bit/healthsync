@@ -29,7 +29,7 @@ This investor-ready document details the path to profitability, including specif
 | **Unfair Advantage** | **Channels** | **Customer Segments** | **Cost Structure** |
 | - Solo developer agility and low overhead.<br>- Direct relationship with users.<br>- Deep focus on UX and reliability over feature quantity. | - Apple App Store<br>- Google Play Store<br>- Content Marketing (Blog, Social Media)<br>- Word of Mouth | - **Data-Driven Athletes:** Multi-device owners who want to consolidate performance data.<br>- **Health-Conscious Professionals:** Busy individuals who want a simple way to manage their wellness data. | - App Store Commissions (15-30%)<br>- Third-Party Services (Help Desk, Analytics, Canny)<br>- Legal & Marketing (Initial & Ongoing) |
 | **Revenue Streams** |
-| - **SyncWell Pro (Subscription):** Auto-renewing yearly subscriptions.<br>- **SyncWell Pro (Lifetime):** One-time "Lifetime License" In-App Purchase.<br>- **SyncWell Family Plan:** A higher-tier subscription for multiple users. |
+| - **SyncWell Pro (Subscription):** Auto-renewing yearly subscriptions.<br>- **SyncWell Family Plan:** A higher-tier subscription for multiple users. |
 
 ## 3. Pricing Tiers & Rationale
 
@@ -38,20 +38,20 @@ The pricing model is built on a "freemium" base to maximize user acquisition, wi
 | Tier | Price (USD) | Features & Rationale |
 | :--- | :--- | :--- |
 | **SyncWell Standard** | **Free** | **Includes:** Basic sync between 2 services, Sync Health Dashboard.<br>**Rationale:** A generous free tier is our most powerful marketing tool. It allows users to experience SyncWell's core reliability and solves a basic problem at no cost, building immense trust and a large user base for potential upsell. |
-| **SyncWell Pro** | **$24.99 / year**<br>or<br>**$49.99 / lifetime** | **Unlocks:**<br>- Unlimited connected services.<br>- **The Recovery Sync** (Historical Import).<br>- **Smart Conflict Resolution**.<br>- **Pro-Tier Power User Tools**.<br>**Rationale:** This tier captures the high-value users (our target personas). The price is significantly higher than the old model, reflecting the immense value of these unique features. It positions SyncWell as a premium, professional-grade tool. |
+| **SyncWell Pro** | **$24.99 / year** | **Unlocks:**<br>- Unlimited connected services.<br>- **The Recovery Sync** (Historical Import).<br>- **Smart Conflict Resolution**.<br>- **Pro-Tier Power User Tools**.<br>**Rationale:** This tier captures the high-value users (our target personas). A recurring subscription model is chosen to build a sustainable, predictable revenue stream, which is essential for long-term product maintenance and development. |
 | **SyncWell Family** | **$39.99 / year** | **Unlocks:** SyncWell Pro features for up to 5 family members.<br>**Rationale:** This provides a simple, cost-effective way for families to manage their health data together, filling a clear gap in the market and increasing the potential LTV of a single conversion. |
 
 ## 4. Financial Projections (High-Level)
 
-These projections are updated to reflect the new, value-based pricing model and a focus on converting free users to the Pro tier.
+These projections are updated to reflect a subscription-only model.
 
 | Metric | Year 1 Target | Year 2 Target | Assumptions |
 | :--- | :--- | :--- | :--- |
 | **Active Pro Users** | 7,500 | 25,000 | Assumes larger top-of-funnel from the free tier and a 10% conversion rate to Pro. |
-| **Revenue Mix** | 70% Yearly Sub, 30% Lifetime | 60% Yearly Sub, 40% Lifetime | Subscriptions become the primary revenue driver over time. |
-| **Average Revenue Per Pro User (ARPU)** | ~$32 | ~$35 | Weighted average of subscription and lifetime purchases. |
-| **Gross Revenue** | ~$240,000 | ~$875,000 | Based on active Pro users and the higher ARPU. |
-| **Net Revenue** | ~$192,000 | ~$700,000 | After accounting for ~20% average app store commission. |
+| **Revenue Mix** | 100% Yearly Subscription | 100% Yearly Subscription | The business model is focused exclusively on recurring revenue for sustainability. |
+| **Average Revenue Per Pro User (ARPU)** | $24.99 | $24.99 | Based on the yearly subscription price. |
+| **Gross Revenue** | ~$187,000 | ~$625,000 | Based on active Pro users and ARPU. |
+| **Net Revenue** | ~$150,000 | ~$500,000 | After accounting for ~20% average app store commission. |
 
 ## 5. Entitlement & Billing Architecture
 
@@ -71,7 +71,6 @@ This architecture abstracts away the complexity of receipt validation, purchase 
 *   **Monthly Recurring Revenue (MRR):** Revenue from active subscriptions.
 *   **Customer Lifetime Value (LTV):** `(Average Revenue Per User) / Churn Rate`. Should be significantly higher than CAC.
 *   **Customer Acquisition Cost (CAC):** `(Total Marketing & Sales Spend) / (Number of New Customers)`. Initially, this will be close to $0.
-*   **Sales Mix:** Ratio of Lifetime vs. Subscription purchases.
 
 ## 7. Execution Plan
 
