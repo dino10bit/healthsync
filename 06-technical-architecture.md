@@ -292,7 +292,6 @@ The following table details the specific items to be cached:
 | :--- | :--- | :--- | :--- | :--- |
 | **API Gateway Authorizer (L1 Cache)** | User's Identity Token | The generated IAM policy document | 5 minutes | The primary, most critical cache. Caches the final authorization policy at the API Gateway level. |
 | **JWT Public Keys (L2 Cache)**| `jwks##{providerUrl}` | The JSON Web Key Set (JWKS) document | 1 hour | An in-memory cache inside the authorizer Lambda to reduce latency on the first request for a user. **[R-002] Risk:** Caching keys creates a risk where a compromised and revoked key could be considered valid for up to 1 hour. **Mitigation:** The authorizer must include a mechanism to force-invalidate a specific cached key via an administrative action. |
-| **Idempotency Key** | `idem##{idempotencyKey}` | `INPROGRESS` or `COMPLETED` | 5m / 24h | Prevents duplicate processing of operations. |
 | **User Sync Config** | `config##{userId}` | Serialized user sync configurations | 15 minutes | Reduces DynamoDB reads for frequently accessed user settings. |
 | **Rate Limit Token Bucket** | `ratelimit##{...}` | A hash containing tokens and timestamp | 60 seconds | Powers the distributed rate limiter for third-party APIs. |
 | **Negative Lookups** | e.g., `nosub##{userId}` | A special "not-found" value | 1 minute | Prevents repeated, fruitless queries for non-existent data (e.g., checking if a user has a Pro subscription). |
@@ -448,7 +447,7 @@ This endpoint **must** be implemented to allow clients to poll for the status of
     ```json
     {
       "jobId": "job_abc123",
-      "status": "SUCCEEDED", // PENDING, RUNNING, FAILED, SUCCEEDED
+      "status": "SUCCEEDED",
       "progress": {
         "totalChunks": 52,
         "processedChunks": 52,

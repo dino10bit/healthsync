@@ -114,6 +114,15 @@ When a sync job permanently fails and is moved to the Dead-Letter Queue (DLQ), i
 ## 8. Visual Diagrams
 
 ### Sync Engine Architecture (MVP)
+This diagram illustrates the flow of a real-time sync request through the event-driven, serverless architecture. The components are designed to be decoupled, scalable, and resilient.
+
+1.  **Request Initiation (`MobileApp`)**: The user initiates a sync from the mobile application. The app sends a secure HTTPS request to the API Gateway endpoint.
+2.  **Ingestion & Decoupling (`API Gateway` -> `EventBridge`)**: The API Gateway validates the request and, using a direct service integration, publishes a `RealtimeSyncRequested` event to the EventBridge bus. This decouples the client-facing API from the backend processing.
+3.  **Buffering (`EventBridge` -> `HotQueue`)**: An EventBridge rule filters for these events and routes them to the primary SQS queue (`HotQueue`). This queue acts as a durable buffer, absorbing traffic spikes and ensuring no sync jobs are lost.
+4.  **Processing (`HotQueue` -> `WorkerLambda`)**: The SQS queue triggers the `WorkerLambda`. This Lambda contains the core business logic to perform the synchronization as detailed in "The Synchronization Algorithm".
+5.  **State Management & Data Sync (`WorkerLambda` -> `DynamoDB` & `ThirdPartyAPIs`)**: The worker reads and writes state information (like `lastSyncTime`) from DynamoDB and communicates with the external third-party APIs to fetch and push health data.
+6.  **Fault Tolerance (`HotQueue` -> `DLQ_SQS`)**: If the `WorkerLambda` fails to process a message after multiple retries (due to a persistent error), the message is automatically moved from the `HotQueue` to the Dead-Letter Queue (`DLQ_SQS`) for manual inspection by support engineers. This prevents a single "poison pill" message from blocking the entire sync pipeline.
+
 ```mermaid
 graph TD
     subgraph User Device
@@ -147,6 +156,19 @@ graph TD
 ```
 
 ### Sequence Diagram for Delta Sync (MVP)
+
+This diagram details the step-by-step interaction between the `Worker Lambda` and other services
+during a single, successful delta sync job. This sequence is the core of the synchronization
+algorithm defined in Section 3 of 05-data-sync.md.
+
+1.  Get State (`Get lastSyncTime & strategy`): The worker begins by retrieving the `SyncConfig` item from DynamoDB. This provides the `lastSyncTime`, which acts as a high-water mark, and the user's chosen `conflictResolutionStrategy`.
+2.  Fetch from Source (`Fetch data since lastSyncTime`): Using the `lastSyncTime`, the worker calls the source `DataProvider` to fetch only the new data that has arrived since the last successful sync.
+3.  Fetch from Destination (`Fetch overlapping data`): To prepare for conflict resolution, the worker fetches data from the destination provider for the exact time range covered by the new source data. This is necessary to detect potential overwrites or duplicates.
+4.  Resolve Conflicts (`Run local conflict resolution`): The `Conflict Resolution Engine` compares the source and destination datasets. It applies the user's strategy (e.g., "Prioritize Source") to produce a final, conflict-free set of data to be written.
+5.  Write to Destination (`Write final data`): The worker pushes the processed data to the destination `DataProvider`. The worker inspects the result of this operation to ensure it was 100% successful.
+6.  Update State (`Update lastSyncTime`): Only after a fully successful write, the worker updates the `lastSyncTime` in DynamoDB. This atomic update ensures that if any part of the process fails, the state is not advanced, and the job can be safely retried.
+7.  Acknowledge Completion (`Delete Job Message`): The final step is to delete the message from the SQS queue. This signals that the job is complete and prevents it from being processed again.
+
 ```mermaid
 sequenceDiagram
     participant Worker as Worker Lambda
@@ -175,6 +197,15 @@ sequenceDiagram
 
 ### Lifecycle of a Hot Path Sync Job Message
 *(This diagram illustrates the lifecycle of a single message in the SQS queue, not an AWS Step Functions state machine)*
+
+The following steps detail the journey of a single sync job message, ensuring reliability and fault tolerance through the native features of Amazon SQS.
+
+1.  **Queued:** A `RealtimeSyncRequested` event is routed to the primary SQS queue. The message is now durably stored and waiting to be processed by a worker.
+2.  **In Progress:** A `WorkerLambda` instance polls the queue and receives the message. Upon receipt, SQS makes the message temporarily invisible to other consumers for a configured `VisibilityTimeout` period. This prevents other workers from processing the same job simultaneously.
+3.  **Succeeded:** If the `WorkerLambda` successfully completes all steps of the synchronization algorithm (fetching, resolving conflicts, writing data, and updating state), it makes an explicit call to SQS to delete the message from the queue. This marks the job as complete.
+4.  **Retrying:** If the worker encounters a transient error (e.g., a temporary network issue, a brief third-party API outage) or a bug, it will throw an exception. It does **not** delete the message. When the `VisibilityTimeout` expires, the message reappears in the queue and can be picked up by another worker for a new attempt. SQS automatically increments the message's internal `ReceiveCount`.
+5.  **Moved to DLQ:** The SQS queue is configured with a `maxReceiveCount` threshold (e.g., 5 attempts). If a message fails to be processed successfully after this many attempts, SQS automatically gives up and moves the message to the configured Dead-Letter Queue (DLQ). This "poison pill" handling prevents a single, consistently failing job from blocking the entire sync pipeline. The DLQ can then be inspected by support engineers to diagnose the root cause of the failure.
+
 ```mermaid
 graph TD
     A[Queued] --> B{In Progress};
@@ -197,6 +228,75 @@ As part of a research spike, we evaluated several tools to enhance the project's
 *   **Recommendation:**
     *   We recommend **LangGraph** for implementing the `Interactive AI Troubleshooter` feature, as specified in `06-technical-architecture.md` and `24-user-support.md`.
     *   **Rationale:** LangGraph's ability to model conversational flows as a graph is a perfect fit for a troubleshooting agent that needs to ask clarifying questions, remember context, and guide a user through a decision tree. This provides a more robust and powerful user experience than a simple, single-call LLM.
-    *   **[C-003] [TODO: A diagram illustrating the proposed state machine for the LangGraph-based AI Troubleshooter needs to be created and inserted here.]**
+    *   **[C-003]** The diagram below illustrates the proposed state machine for the LangGraph-based AI Troubleshooter.
 
-*(Section 10 has been removed to align with the decision to standardize on the AWS-native serverless architecture and avoid the operational complexity of a self-hosted open-source stack.)*
+### AI Troubleshooter State Machine (LangGraph)
+
+The state machine below represents the agent's internal logic. Each node is a step in the process, and the edges represent the flow of conversation based on conditions and user input. The agent's state (e.g., conversation history, extracted entities) is passed between nodes.
+
+1.  **Greet & Gather Info (`GreetUser`)**: The graph's entry point. The agent greets the user and prompts for their issue, establishing the initial conversation state.
+
+2.  **Analyze & Check KB (`AnalyzeProblem`, `CheckKB`)**: This node uses an LLM to analyze the user's free-text problem description. It extracts key entities (e.g., provider names, error messages) and then uses a `Tool` to perform a semantic search against a vector database of our Help Center articles and known issues.
+
+3.  **Decision: Found in KB? (`FoundInKB`)**: This is a conditional edge. Based on the search results from the previous step, the graph routes the conversation:
+    *   **Yes:** If a high-confidence match is found, the flow proceeds to `ProposeSolution`.
+    *   **No:** If no relevant information is found, the agent needs more context and moves to `AskClarifyingQuestion`.
+
+4.  **Clarification Loop (`AskClarifyingQuestion` -> `AnalyzeUserResponse` -> `SufficientInfo`)**: This is a sub-cycle to gather more information.
+    *   The agent uses an LLM to generate a targeted question based on the conversation history.
+    *   After the user responds, the new information is added to the state.
+    *   A conditional edge (`SufficientInfo`) determines if the agent should re-attempt the KB search (`CheckKB`) or if it needs to ask another question.
+
+5.  **Propose & Verify (`ProposeSolution` -> `GetUserFeedback`)**: The agent presents the potential solution from the knowledge base and asks the user if it worked.
+
+6.  **Decision: Resolved? (`Resolved`)**: This is the final conditional edge based on the user's feedback.
+    *   **Yes:** The conversation moves to the `EndSuccess` terminal state.
+    *   **No:** The issue is escalated. The agent proceeds to `EscalateToHuman`.
+
+7.  **Escalate to Human (`EscalateToHuman`)**: This node's job is to prepare a seamless handoff. It uses an LLM to generate a concise summary of the entire interaction (user's problem, steps taken, failed solution). This summary is then used to pre-populate a support ticket, which is then passed to the `EndEscalated` state.
+
+```mermaid
+stateDiagram-v2
+    [*] --> GreetUser
+    GreetUser: Greet & Gather Initial Info
+    GreetUser --> AnalyzeProblem
+
+    AnalyzeProblem: Analyze Problem Description
+    AnalyzeProblem --> CheckKB
+
+    CheckKB: Check Knowledge Base
+    CheckKB --> FoundInKB
+
+    state FoundInKB <<choice>>
+    FoundInKB --> ProposeSolution : Yes
+    FoundInKB --> AskClarifyingQuestion : No
+
+    AskClarifyingQuestion: Ask Clarifying Questions
+    AskClarifyingQuestion --> AnalyzeUserResponse
+
+    AnalyzeUserResponse: Analyze User's Response
+    AnalyzeUserResponse --> SufficientInfo
+
+    state SufficientInfo <<choice>>
+    SufficientInfo --> CheckKB : Yes
+    SufficientInfo --> AskClarifyingQuestion : No
+
+    ProposeSolution: Propose Solution
+    ProposeSolution --> GetUserFeedback
+
+    GetUserFeedback: Get User Feedback on Solution
+    GetUserFeedback --> Resolved
+
+    state Resolved <<choice>>
+    Resolved --> EndSuccess : Yes
+    Resolved --> EscalateToHuman : No
+
+    EscalateToHuman: Escalate to Human Support
+    EscalateToHuman --> EndEscalated
+
+    EndSuccess: End (Success)
+    EndSuccess --> [*]
+
+    EndEscalated: End (Escalated)
+    EndEscalated --> [*]
+```

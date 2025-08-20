@@ -59,8 +59,8 @@ The architecture, as defined in `06-technical-architecture.md`, is explicitly de
 A distributed, in-memory cache using **Amazon ElastiCache for Redis** is a cornerstone of our performance strategy. It serves multiple critical functions to reduce latency and database load.
 
 *   **Configuration Caching:** User-specific sync configurations and settings are cached, dramatically reducing read operations on DynamoDB for every sync job. This lowers latency and cost.
-*   **Distributed Locking:** ElastiCache provides a mechanism for distributed locks, preventing race conditions where multiple workers might attempt to process the same sync job for the same user simultaneously. This ensures data integrity without relying on slower database locks.
 *   **Rate Limit Enforcement:** The cache acts as a high-speed, centralized counter for our global rate-limiting engine, enabling us to manage third-party API call frequency across tens of thousands of concurrent Lambda executions.
+*   **Note on Idempotency:** The critical distributed locking mechanism for idempotency is handled by **DynamoDB**, not ElastiCache, to ensure stronger consistency and durability guarantees as defined in `06-technical-architecture.md`.
 
 ### 3.2. Load Projections & Resource Planning
 
@@ -125,18 +125,48 @@ The SyncWell architecture is designed from the ground up for massive, automatic 
         participant Worker as Worker Lambda
         participant Cache as ElastiCache for Redis
         participant DB as DynamoDB
-
-        Worker->>+Cache: GET config##{userId}
-        alt Cache Hit
-            Cache-->>-Worker: Return cached config
-        else Cache Miss
-            Cache-->>-Worker: nil
-            Worker->>+DB: Query for user config
-            DB-->>-Worker: Return user config
-            Worker->>+Cache: SET config##{userId} (with TTL)
-            Cache-->>-Worker: OK
+    
+        Worker->>Cache: GET config#{userId}
+        alt Cache hit
+            Cache-->>Worker: Return cached config
+        else Cache miss
+            Cache-->>Worker: nil
+            Worker->>DB: Query for user config
+            DB-->>Worker: Return user config
+            Worker->>Cache: SET config#{userId} (with TTL)
+            Cache-->>Worker: OK
         end
+    
         Worker->>Worker: Continue processing with config...
+
     ```
 *   **[C-022] Job Chunking Flow:**
-    *   *[TODO: A visual representation of how a large historical sync request is broken into multiple jobs needs to be created and inserted here. This diagram is critical for understanding the historical sync design.]*
+    *   The following diagram illustrates the orchestration flow for a large historical sync request, as described in Section 3.3. An AWS Step Function state machine is triggered to break the request (e.g., "sync last 2 years") into smaller, manageable jobs (e.g., one job per month). These individual jobs are then dispatched to the main SQS queue to be processed by the existing worker fleet, ensuring resilience and controlled concurrency for long-running backfills.
+
+    ```mermaid
+    graph TD
+        subgraph "User Request"
+            A[Client App] -->|1. POST /sync/historical| B(API Gateway)
+        end
+
+        subgraph "AWS Step Functions: Historical Sync Orchestrator"
+            B --> C{Start Execution};
+            C --> D[State: Calculate Chunks Lambda];
+            D -->|Outputs array of date ranges| E{Map State: For Each Chunk};
+            E --> F[State: Dispatch Job to SQS];
+            F --> G([SQS Queue for Sync Jobs]);
+            E --> H{End Map};
+            H --> I{Execution Complete};
+        end
+
+        subgraph "Async Worker Fleet (Existing Infrastructure)"
+            G -->|Jobs processed in parallel| J(Worker Lambdas);
+            J -->|Store historical data| K[(DynamoDB)];
+        end
+
+        style C fill:#D5A6BD,stroke:#333,stroke-width:2px
+        style I fill:#D5A6BD,stroke:#333,stroke-width:2px
+        style D fill:#A9D18E,stroke:#333,stroke-width:2px
+        style F fill:#A9D18E,stroke:#333,stroke-width:2px
+        style E fill:#F4B183,stroke:#333,stroke-width:2px
+    ```
