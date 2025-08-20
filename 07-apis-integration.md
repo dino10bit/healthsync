@@ -89,18 +89,19 @@ interface DataProvider {
     suspend fun revoke(tokens: ProviderTokens)
 
     /**
-     * Fetches data (e.g., workouts) from the provider's API for a given time range
-     * and transforms it into the application's `CanonicalWorkout` model.
+     * Fetches a specific type of data from the provider's API for a given time range
+     * and transforms it into a list of `CanonicalData` models.
+     * @param dataType The type of data to fetch (e.g., "steps", "workouts"). The provider
+     * implementation is responsible for checking if it supports the given type.
      */
-    suspend fun fetchData(tokens: ProviderTokens, dateRange: DateRange): List<CanonicalWorkout>
+    suspend fun fetchData(tokens: ProviderTokens, dateRange: DateRange, dataType: String): List<CanonicalData>
 
     /**
-     * Pushes a list of canonical workout models to the provider's API.
-     * Note: This interface is specific to `CanonicalWorkout`. If other data types need
-     * to be pushed in the future (e.g., sleep), they should have their own dedicated
-     * `pushSleepData` method to avoid ambiguity.
+     * Pushes a list of canonical data models to the provider's API. The implementation
+     * is responsible for casting the `CanonicalData` objects to the correct concrete type
+     * based on the `dataType` of the sync job.
      */
-    suspend fun pushWorkouts(tokens: ProviderTokens, data: List<CanonicalWorkout>): PushResult
+    suspend fun pushData(tokens: ProviderTokens, data: List<CanonicalData>): PushResult
 }
 
 /**

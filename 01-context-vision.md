@@ -1,7 +1,19 @@
+# PRD Section 1: Context & Vision
+
+## 0. Document Management
+
+### Version History
+| Version | Date       | Author(s) | Summary of Changes |
+| :--- | :--- | :--- | :--- |
+| 1.0     | 2025-08-10 | J. Doe    | Initial draft. |
+| 1.1     | 2025-08-20 | J. Doe    | Aligned NFRs (RPS, compute model) with MVP scope. Elevated critical risks from technical PRDs. |
+
+---
+
 ## Dependencies
 
 ### Core Dependencies
-- None
+- `GLOSSARY.md` - The single source of truth for all project terminology.
 
 ### Strategic / Indirect Dependencies
 - `02-product-scope.md` - Product Scope, Personas & MVP Definition
@@ -56,7 +68,7 @@ The primary goal of this PRD is to provide a comprehensive, enterprise-grade roa
 *   **Reliability:** The app must ensure >99% data integrity and sync reliability. Data loss or corruption is not acceptable.
 *   **Performance:** App launch time <2s. UI animations at 60fps. Background syncs must be battery-efficient and not appear on the OS's high-consumption list.
 *   **Security:** All data transfer over TLS 1.2+. Sensitive tokens stored exclusively in the platform's native Keychain/Keystore. No personal health data stored on company servers.
-*   **Scalability:** The backend architecture must support **1 million Daily Active Users (DAU)** with an average of 4 syncs per day per user, and handle peak loads of up to **10,000 requests per second (RPS)** without performance degradation. The system will be built on event-driven principles and use a hybrid compute model (AWS Lambda for the API layer, AWS Fargate for workers) to ensure cost-efficiency, massive scalability, and minimal operational overhead.
+*   **Scalability:** The backend architecture must be designed to support **1 million Daily Active Users (DAU)**. For the MVP launch, the system will be load-tested and provisioned to handle a peak load of **3,000 requests per second (RPS)**. This is a pragmatic starting point that balances cost and performance, with a clear path to scale further. The compute model for the MVP will be a **unified serverless model using AWS Lambda** for all business logic. This prioritizes developer velocity and operational simplicity. AWS Fargate will be assessed as a potential future optimization for cost-performance at extreme scale, but is out of scope for the MVP.
 *   **Usability:** The app must be intuitive enough for a non-technical user to configure their first sync within 2 minutes of completing onboarding.
 
 ## 6. Risk Analysis & Mitigation
@@ -71,6 +83,9 @@ The primary goal of this PRD is to provide a comprehensive, enterprise-grade roa
 | **R-04**| The app fails to gain traction and attract a sufficient user base. | Medium | High | Focus on a core set of highly-requested integrations for the MVP. Implement a targeted marketing strategy and a generous free trial to encourage adoption. |
 | **R-05**| **Failure at Scale:** Backend services or third-party rate limits fail under the load of millions of users, causing cascading failures. | Medium | High | Rigorous load testing, designing for graceful degradation, and proactive rate limit management. |
 | **R-06**| **Feature Creep:** The 10 new features dilute focus from the core MVP. | High | Medium | A phased rollout strategy as defined in the `13-roadmap.md`, with clear go/no-go decisions for each feature based on MVP success. |
+| **R-07 (Critical)** | **Concurrency Model Feasibility:** The technical architecture, as initially designed, projects a worst-case scenario of ~45,000 concurrent executions. This is financially and technically infeasible for the MVP. | High | Critical | **Project Halt & PoC:** The project must halt until a proof-of-concept is completed to validate a more cost-effective concurrency model (e.g., job batching). This is the highest technical priority. |
+| **R-08 (High)** | **Third-Party API Instability (Garmin):** A key integration relies on an unofficial, reverse-engineered Garmin API. This API could be changed or disabled without notice, destroying a core feature. | Medium | High | **Strategic Decision:** The business must make a formal decision on whether to accept this risk for the MVP or defer the Garmin integration. Technical mitigation involves robust monitoring and a quick-response plan. |
+| **R-09 (High)** | **Firebase Authentication Dependency:** The use of Firebase Auth creates a hard dependency on a non-AWS service for a critical function (user login). | High | Medium | **Accepted Risk for MVP:** This is an accepted risk for the MVP to accelerate development. A high-level exit strategy (e.g., a migration plan to Amazon Cognito) must be drafted before launch. |
 
 
 ## 7. Execution Plan / Step-by-Step Implementation

@@ -1,3 +1,15 @@
+# PRD Section 4: User Stories & Acceptance Criteria
+
+## 0. Document Management
+
+### Version History
+| Version | Date       | Author(s) | Summary of Changes |
+| :--- | :--- | :--- | :--- |
+| 1.0     | 2025-08-12 | J. Doe    | Initial draft. |
+| 1.1     | 2025-08-20 | J. Doe    | Aligned monetization model from "lifetime license" to "Pro subscription" to resolve inconsistency with other PRDs. |
+
+---
+
 ## Dependencies
 
 ### Core Dependencies
@@ -705,8 +717,8 @@ For the **engineering team**, this document serves as the primary "to-do list" f
 
 ---
 
-#### **US-09:** Purchase the lifetime license to unlock the full app.
-*   **User Story:** As a trial user (Sarah), I want a clear and simple way to purchase the lifetime license so that I can continue using the app after my trial ends.
+#### **US-09:** Purchase the Pro subscription to unlock the full app.
+*   **User Story:** As a trial user (Sarah), I want a clear and simple way to purchase the Pro subscription so that I can continue using the app after my trial ends.
 *   **Persona:** Sarah
 *   **Priority:** Must-Have (M-7)
 *   **Story Pts:** 5
@@ -741,7 +753,7 @@ For the **engineering team**, this document serves as the primary "to-do list" f
     *   **Given** my 7-day free trial has expired.
     *   **When** I open the app.
     *   **Then** I am presented with a blocking paywall screen.
-    *   **And** the paywall screen clearly states the benefits of the Pro license and the one-time purchase price.
+    *   **And** the paywall screen clearly states the benefits of the Pro subscription and the recurring price.
     *   **And** when I tap the "Unlock Pro" button, the native iOS/Android purchase flow is initiated.
     *   **And** upon successful payment, the paywall is dismissed, and the app becomes fully functional.
     *   **Scenario: Purchase Fails**
@@ -803,7 +815,7 @@ For the **engineering team**, this document serves as the primary "to-do list" f
     *   **Paywall Conversion:** The contextual paywall for this feature has a conversion rate of >5%.
 
 *   **Dependencies:**
-    *   **US-09:** User must have a Pro license to access this feature.
+    *   **US-09:** User must have a Pro subscription to access this feature.
     *   **US-17:** A contextual paywall must be implemented to upsell this feature to free users.
     *   **US-05:** Reuses the core sync and data mapping logic.
 
@@ -883,7 +895,7 @@ For the **engineering team**, this document serves as the primary "to-do list" f
 ---
 
 #### **US-11:** Restore a previous purchase on a new device.
-*   **User Story:** As a user (Sarah), I want a "Restore Purchases" button so that I can easily activate my license on a new phone.
+*   **User Story:** As a user (Sarah), I want a "Restore Purchases" button so that I can easily activate my subscription on a new phone.
 *   **Persona:** Sarah
 *   **Priority:** Must-Have (M-7)
 *   **Story Pts:** 3
@@ -911,11 +923,11 @@ For the **engineering team**, this document serves as the primary "to-do list" f
         *   Test the restore process on a fresh install of the app.
 
 *   **Acceptance Criteria (AC):**
-    *   **Given** I have previously purchased the lifetime license.
+    *   **Given** I have previously purchased the Pro subscription.
     *   **When** I install the app on a new device using the same App Store / Play Store account.
     *   **Then** I see a "Restore Purchases" button on the paywall screen and in the Settings menu.
     *   **And** when I tap the button, the app communicates with the store API to check for existing purchases.
-    *   **And** my previous lifetime license is detected and applied to the new installation.
+    *   **And** my previous subscription is detected and applied to the new installation.
     *   **And** the app is fully unlocked.
     *   **Scenario: No Purchase to Restore**
         *   **When** I tap "Restore Purchases" but have no previous purchase.
