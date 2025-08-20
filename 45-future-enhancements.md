@@ -319,3 +319,115 @@ A "hot partition" for a viral user is a significant risk. The primary mitigation
     *   **Error Handling & Rollback:** The workflow will have a comprehensive `Catch` block. If any step (e.g., data copy, verification) fails, the workflow will automatically roll back by deleting any partially copied data and removing the `migrationStatus` flag from the user's profile in the main table. A critical alert will be sent to the engineering team.
 *   **Automated De-Migration:** A user can be de-migrated (moved back to the main table) if their traffic patterns return to normal for a sustained period (e.g., 7 consecutive days). This will be triggered by a separate scheduled process that analyzes traffic on the hot-user table.
 *   **Secondary Strategy (Write Sharding):** If a single user's write traffic becomes too extreme for one partition, write sharding is a possible secondary strategy. This involves appending a shard number to the partition key (e.g., `USER#{userId}-1`). This adds significant read-side complexity (requiring a scatter-gather query) and is considered a major architectural project, out of scope for the MVP.
+
+## 6. Deferred Architectural Designs from PRD-06
+
+This section archives detailed architectural designs that were originally specified in `06-technical-architecture.md` but have been deferred to post-MVP releases to focus the initial development effort.
+
+### Historical Sync ("Cold Path")
+
+The ability for users to backfill months or years of historical data is a key feature planned for a post-MVP release. This "Cold Path" is designed for large-scale, non-urgent data processing and is architecturally distinct from the "Hot Path" used for real-time syncs.
+
+*   **User Experience Goals:**
+    *   The user should be able to start a historical sync with a clear understanding of how long it might take.
+    *   The process must be resilient to app closures, network changes, and other interruptions.
+    *   The user must be clearly notified of progress, success, and any failures that require their attention.
+*   **Architectural Principles:**
+    *   **Asynchronous & Server-Driven:** The entire workflow is orchestrated on the backend to ensure reliability.
+    *   **Resilient & Idempotent:** The system must be able to recover from transient failures and prevent duplicate data processing.
+    *   **Observable:** Every step of the long-running process must be logged and monitored.
+    *   **Cost-Effective:** The solution must be designed to minimize cloud spend for potentially very long-running jobs.
+
+#### Level 4: Historical Sync Workflow (AWS Step Functions)
+
+To handle long-running historical data syncs, we will use an **AWS Step Functions Standard Workflow**. This provides the required durability, observability, and error handling for a process that could last for hours.
+
+```mermaid
+graph TD
+    A[Start] --> B(Validate & Initiate);
+    B --> C(Calculate Chunks);
+    C --> D{Map State: Process Chunks};
+    D -- For Each Chunk --> E(Process Chunk Worker);
+    E --> F{Did Chunk Succeed?};
+    F -- Yes --> D;
+    F -- No --> G(Log Chunk Failure);
+    G --> D;
+    D -- All Chunks Done --> H(Aggregate Results);
+    H --> I(Notify User);
+    I --> J[End];
+
+    subgraph Error Handling
+        E -- On Error --> K{Catch & Retry};
+        K -- Retryable Error --> E;
+        K -- Terminal Error --> G;
+    end
+```
+
+*   **State Machine Logic:**
+    1.  **Initiate & Validate:** Triggered by an API call from the app. A Lambda function validates the request, confirms the user's subscription status, and creates a job record in DynamoDB. It then sends a push notification (`N-04`: "Your historical sync has started...") to the user.
+    2.  **Calculate Chunks:** A Lambda function calculates the total date range and breaks it into an array of smaller, logical chunks (e.g., 7-day periods). This array is passed as the input to the next state.
+        *   *Payload Management:* To avoid the 256KB state payload limit, if the chunk array is very large, it will be written to an S3 object, and only the S3 object key will be passed in the state.
+    3.  **Process in Parallel (`Map` State):** The state machine uses a `Map` state to iterate over the array of chunks. For each chunk, it invokes a `WorkerLambda` in parallel.
+        *   *Concurrency Control:* The `Map` state has a configurable concurrency limit (e.g., `MaxConcurrency: 10`) to avoid overwhelming downstream provider APIs. This is a critical cost and performance control.
+    4.  **Error Handling (`Retry` and `Catch`):**
+        *   **`Retry` Policy:** Each `WorkerLambda` invocation will have a declarative `Retry` policy for transient errors (e.g., API rate limiting), with **3 max attempts** and an **exponential backoff rate of 2.0**.
+        *   **`Catch` Logic:** If retries fail, a `Catch` block routes the failure to a `Log Chunk Failure` Lambda. This function records the failed chunk's details in DynamoDB for later analysis or retry (see US-39). The `Map` state continues processing the remaining chunks.
+    5.  **Aggregate Results & Notify User:** After the `Map` state completes, a final Lambda function aggregates the results (total successes, total failures). It updates the main job status in DynamoDB and publishes a `HistoricalSyncCompleted` event. This event triggers a final push notification: `N-05` ("Your historical sync is complete.") or `N-06` ("Your historical sync finished with some errors.").
+
+*   **Scalability and Cost Management:**
+    *   **Compute:** The `Process Chunk Worker` will be implemented as a Fargate task invoked by Step Functions, which is the most cost-effective solution for potentially long-running data processing jobs.
+    *   **Intelligent Tiering:** All artifacts generated by the workflow (e.g., chunk definitions, logs) will be stored in Amazon S3 with an "Intelligent Tiering" lifecycle policy to automatically manage storage costs.
+
+#### Idempotency for Historical Syncs (Step Functions)
+For long-running historical syncs, an additional layer of idempotency is applied at the orchestration level:
+*   **Execution Naming:** The API Gateway integration **must** be configured to use the client-provided `Idempotency-Key` as the `name` for the Step Function's execution.
+*   **Handling Existing Executions:** If API Gateway's attempt to start an execution fails with an `ExecutionAlreadyExists` error, the system **must not** assume success. Instead, the integration logic will call `DescribeExecution` to check the status of the existing execution.
+    *   If the existing execution is `SUCCEEDED` or `RUNNING`, the API can safely return a `202 Accepted` to the client.
+    *   If the existing execution `FAILED`, the API must return a `409 Conflict` (or similar error), indicating that the original request failed and a new request with a new `Idempotency-Key` is required.
+
+#### DynamoDB Schema for Historical Sync Jobs
+| Entity | PK (Partition Key) | SK (Sort Key) | Key Attributes & Defined Values |
+| :--- | :--- | :--- | :--- |
+| **Hist. Sync Job** | `USER#{userId}` | `HISTORICAL##{jobId}` | `ExecutionArn`, `Status`: `PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED` |
+
+### AI Insights Service
+
+This service is a long-term strategic pillar, planned for a future release cycle, designed to add a layer of intelligence on top of the user's synchronized data. It will encapsulate all machine learning (ML) models and Large Language Model (LLM) integrations, ensuring the core sync engine remains deterministic and focused.
+
+*   **Core Principle: Privacy by Design.** All features in this service will be **opt-in only**. No user data will be processed by any AI model without explicit, granular consent. Where feasible, models will be designed to run on-device to maximize privacy. For cloud-based models, all data will be anonymized before processing. A comprehensive Data Protection Impact Assessment (DPIA) will be required before development begins.
+
+*   **Technology Stack:** The proposed stack includes Amazon SageMaker for custom model training, Amazon Bedrock for accessing foundational LLMs, and AWS Lambda for serverless inference.
+
+#### Potential AI-Powered Features
+
+1.  **Intelligent Conflict Resolution (US-15):**
+    *   **User Problem:** When two sources provide conflicting data for the same time period (e.g., different calorie counts for the same workout), the user is forced to manually choose.
+    *   **Proposed Solution:** A cloud-based ML model that analyzes the two conflicting data points along with historical user preferences. It would not just pick one, but generate a *suggested merge*.
+    *   **Example:** If a user consistently prefers the higher calorie count from their heart rate monitor over their fitness app's estimate, the model learns this preference. When a new conflict arises, the app would present a pre-filled, merged entry with a "Smart Suggestion" tag, which the user can accept with a single tap.
+
+2.  **Proactive Trend Analysis & Notifications (US-40):**
+    *   **User Problem:** Users have vast amounts of data but may not have the time or expertise to spot meaningful, long-term trends.
+    *   **Proposed Solution:** An on-device model that periodically analyzes the user's local data store for statistically significant trends (e.g., changes in resting heart rate, sleep duration, or activity levels over weeks or months).
+    *   **Example:** The system would generate a notification like: "Health Trend Detected: Your average resting heart rate has decreased by 5bpm over the last 30 days. Great job!" This feature is purely for insights and will not provide medical advice.
+
+3.  **LLM-Powered Sync Troubleshooter (related to US-35):**
+    *   **User Problem:** Standard FAQ documents can be generic and frustrating for users facing a specific, complex sync error.
+    *   **Proposed Solution:** An interactive, conversational troubleshooter powered by an LLM (via Amazon Bedrock). The LLM would be provided with anonymized error logs and our full technical documentation as context.
+    *   **Example:** Instead of a static error page, the user could interact with a chatbot: "It looks like your Garmin sync is failing with a '429' error. This usually means you've hit an API limit. This can happen during a large historical sync. Would you like me to check the status of your sync job?"
+
+#### Level 3: Conceptual Components (Future AI Insights Service)
+
+The AI Insights Service will be composed of several conceptual components. The implementation will be subject to rigorous security, privacy, and cost-benefit analysis.
+
+*   **`On-Device Analytics Engine`:** A lightweight library integrated into the mobile app for running privacy-preserving trend analysis directly on the user's phone.
+*   **`Conflict Resolution Model`:** A cloud-hosted SageMaker model trained on anonymized, historical conflict resolution choices to predict user preferences.
+*   **`LLM Gateway Service`:** A dedicated backend service (API Gateway + Lambda) that acts as a secure intermediary between the app and Amazon Bedrock. This service will be responsible for prompt engineering, injecting relevant context (like documentation), and stripping any PII from requests before they are sent to the LLM.
+
+### Mitigating "Viral User" Hot Partitions
+
+A "hot partition" for a viral user is a significant risk. The primary mitigation strategy is to automate the migration of that user to a dedicated table.
+*   **Automated Identification:** A CloudWatch Alarm on the `ThrottledRequests` metric will trigger this process. This alarm **must** be configured to use high-cardinality custom metrics generated via **CloudWatch Embedded Metric Format (EMF)** to pinpoint the specific `userId` causing the throttling.
+*   **Automated Migration Workflow:** The alarm will trigger a Step Functions workflow to orchestrate the migration.
+    *   **Error Handling & Rollback:** The workflow will have a comprehensive `Catch` block. If any step (e.g., data copy, verification) fails, the workflow will automatically roll back by deleting any partially copied data and removing the `migrationStatus` flag from the user's profile in the main table. A critical alert will be sent to the engineering team.
+*   **Automated De-Migration:** A user can be de-migrated (moved back to the main table) if their traffic patterns return to normal for a sustained period (e.g., 7 consecutive days). This will be triggered by a separate scheduled process that analyzes traffic on the hot-user table.
+*   **Secondary Strategy (Write Sharding):** If a single user's write traffic becomes too extreme for one partition, write sharding is a possible secondary strategy. This involves appending a shard number to the partition key (e.g., `USER#{userId}-1`). This adds significant read-side complexity (requiring a scatter-gather query) and is considered a major architectural project, out of scope for the MVP.

@@ -149,7 +149,11 @@ For the MVP, a formal, versioned SDK package adds unnecessary overhead. To prior
 This approach ensures all `DataProvider` implementations are always using the same version of the core interfaces, and it removes the complexity of managing a private artifact repository and coordinating SDK releases. A formal, versioned SDK can be extracted from the monorepo in the future if the number of integrations and teams grows to a scale where it becomes necessary.
 
 ### 2.4. Network Environment & Security
-All backend `DataProvider` logic runs within the main application's VPC on AWS. As a critical security measure, all outbound traffic from this VPC is routed through an **AWS Network Firewall**. This means that for a new `DataProvider` to function, the domain name(s) of the third-party API it needs to call **must** be added to the firewall's allow-list. This enforces a "least privilege" model at the network level and is a mandatory part of the process for enabling a new provider.
+All backend `DataProvider` logic runs within the main application's VPC on AWS. To balance cost and security, outbound traffic is routed through a **hybrid firewall model**, as defined in `06-technical-architecture.md`.
+*   **High-Security Path (AWS Network Firewall):** All outbound traffic to unknown, lower-volume, or security-sensitive endpoints is routed through an **AWS Network Firewall**. This provides advanced inspection and ensures the highest level of security.
+*   **Cost-Optimized Path (AWS NAT Gateway):** High-volume, trusted traffic to the primary API endpoints of major partners (e.g., Fitbit, Strava) is routed through a standard **AWS NAT Gateway** to reduce data processing costs. This path is still secured via VPC route tables and network ACLs.
+
+This hybrid approach means that for a new `DataProvider` to function, the domain name(s) of the third-party API it needs to call **must** be added to the allow-list of the appropriate egress path (either the Network Firewall or the route table for the NAT Gateway). This enforces a "least privilege" model at the network level and is a mandatory part of the process for enabling a new provider.
 
 ## 3. Authentication: A Secure Hybrid Flow
 

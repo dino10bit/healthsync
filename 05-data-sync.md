@@ -26,18 +26,18 @@ This document serves as a blueprint for the **product and engineering teams**, d
 ## 2. Sync Engine Architecture (MVP)
 
 The data synchronization engine for the MVP is a server-side, event-driven system built on AWS, as defined in `06-technical-architecture.md`. The architecture is designed for reliability and is focused exclusively on the **"Hot Path"** for handling syncs of recent data. It incorporates a multi-faceted sync strategy to optimize for cost and performance:
-*   **Webhook-First Model:** For providers that support it, a push-based webhook model provides the most efficient, real-time syncs.
-*   **Tiered Sync Frequency:** For polling-based providers, sync frequency is aligned with the user's subscription tier.
-*   **Adaptive Polling:** To further optimize polling, an intelligent adaptive polling mechanism is used to adjust sync frequency based on user activity.
+*   **Webhook-Driven Sync with Event Coalescing:** For providers that support webhooks, this model provides near real-time updates while minimizing cost. It uses a dedicated SQS queue to buffer and coalesce incoming events, preventing "event chatter" and reducing downstream load.
+*   **Mobile-Initiated Sync:** For manual syncs or device-native integrations (e.g., HealthKit), the mobile app makes a direct API call that places a job onto a high-priority SQS FIFO queue.
+*   **Adaptive Polling:** For providers without webhooks, an intelligent adaptive polling mechanism is used to adjust sync frequency based on user activity, reducing the number of "empty" polls.
+
 These strategies are detailed in the main technical architecture document.
 
-*   **Hot Path (for Real-time Syncs):** This path is optimized for low-latency, high-volume, short-lived sync jobs. It uses an SQS queue to reliably buffer requests and decouple the API from the workers.
+*   **Hot Path (for Real-time Syncs):** This path is optimized for low-latency, high-volume, short-lived sync jobs. It uses an SQS FIFO queue to reliably buffer requests and prevent duplicate processing.
 *   **Post-MVP (Cold Path):** The architecture for long-running historical data backfills (the "Cold Path") is a post-MVP feature. The detailed design, which uses AWS Step Functions, is captured in `45-future-enhancements.md`.
 
 The core components for the MVP are:
-*   **`API Gateway`:** The public-facing entry point. It uses **direct service integrations** to validate requests and publish events, enhancing performance and reducing cost.
-*   **`EventBridge Event Bus`:** The central nervous system. It receives `RealtimeSyncRequested` events directly from API Gateway and routes them to the SQS queue.
-*   **`SQS Queue`:** A primary, durable SQS queue that acts as a critical buffer for real-time sync jobs, absorbing traffic spikes and ensuring no jobs are lost.
+*   **`API Gateway`:** The public-facing entry point. For mobile-initiated syncs, it uses a **direct AWS service integration** to send messages to the SQS FIFO queue, a critical cost and performance optimization.
+*   **`SQS FIFO Queue (`HotPathSyncQueue`)`:** A primary, durable SQS FIFO queue that acts as a critical buffer for real-time sync jobs, absorbing traffic spikes and providing exactly-once processing guarantees.
 *   **`SQS Dead-Letter Queue (DLQ)`:** A secondary SQS queue configured as the DLQ for the primary queue. If a `WorkerFargateTask` fails to process a message after multiple retries, SQS automatically moves the message here for analysis.
 *   **`Worker Service (AWS Fargate)`:** The heart of the engine. A containerized service running on AWS Fargate that contains the core sync logic, invoked by SQS messages.
 *   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration must implement.
@@ -51,12 +51,17 @@ The `Worker Fargate Task` will follow this algorithm for each job pulled from th
 1.  **Job Dequeue:** The Fargate task receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
 2.  **Get State from DynamoDB:** The worker task performs a `GetItem` call on the `SyncWellMetadata` table to retrieve the `SyncConfig` item. This read provides the `lastSyncTime` and the user's chosen `conflictResolutionStrategy`.
 3.  **Fetch New Data:** It calls the `fetchData(since: lastSyncTime, dataType: job.dataType)` method on the source `DataProvider`. The `dataType` (e.g., "steps", "workouts") is retrieved from the job payload.
-4.  **Fetch Destination Data for Conflict Resolution:** To enable conflict resolution, the worker fetches potentially overlapping data from the destination `DataProvider`, again specifying the `dataType`. The time range for this query will be the exact time range of the new data fetched from the source.
-5.  **Conflict Resolution:** The `Conflict Resolution Engine` is invoked. It compares the source and destination data and applies the user's chosen strategy (e.g., "Prioritize Source").
-6.  **Write Data:** The worker calls the generic `pushData(data: conflictFreeData)` method on the destination provider.
-7.  **Handle Partial Failures:** The worker **must** inspect the `PushResult` returned from the `pushData` call. For the MVP, if the push is not completely successful, the entire job will be considered failed. The worker will throw an error, allowing SQS to retry the job. This is a safe-by-default strategy. It is expected that on the subsequent retry, the entire batch of data will be re-processed. Destination systems are responsible for providing their own idempotency (e.g., based on activity timestamp and source ID) to prevent data duplication.
-8.  **Update State in DynamoDB:** Only upon full successful completion, the worker performs an `UpdateItem` call on the `SyncConfig` item in `SyncWellMetadata` to set the new `lastSyncTime`.
-9.  **Delete Job Message:** The worker deletes the job message from the SQS queue to mark it as complete.
+4.  **Algorithmic Optimization ("Sync Confidence" Check):** Before fetching from the destination, the worker performs a check against the "Sync Confidence" cache (Redis).
+    *   If the user's conflict strategy is `Prioritize Source`, the destination fetch is skipped entirely.
+    *   If the confidence counter for the user/provider pair exceeds a configured threshold (indicating a pattern of no-conflict syncs), the destination fetch is also skipped.
+    *   If the check is skipped, proceed directly to Step 6.
+5.  **Fetch Destination Data for Conflict Resolution:** To enable conflict resolution, the worker fetches potentially overlapping data from the destination `DataProvider`, again specifying the `dataType`. The time range for this query will be the exact time range of the new data fetched from the source.
+6.  **Conflict Resolution:** The `Conflict Resolution Engine` is invoked. It compares the source and destination data (if fetched) and applies the user's chosen strategy (e.g., "Prioritize Source").
+7.  **Write Data:** The worker calls the generic `pushData(data: conflictFreeData)` method on the destination provider.
+8.  **Handle Partial Failures:** The worker **must** inspect the `PushResult` returned from the `pushData` call. For the MVP, if the push is not completely successful, the entire job will be considered failed. The worker will throw an error, allowing SQS to retry the job. This is a safe-by-default strategy. It is expected that on the subsequent retry, the entire batch of data will be re-processed. Destination systems are responsible for providing their own idempotency (e.g., based on activity timestamp and source ID) to prevent data duplication.
+9.  **Update State in DynamoDB:** Only upon full successful completion, the worker performs an `UpdateItem` call on the `SyncConfig` item in `SyncWellMetadata` to set the new `lastSyncTime`.
+10. **Update "Sync Confidence" Cache:** If the destination API call was skipped (Step 4) and the write failed due to a conflict, the confidence counter in Redis **must** be reset to zero. If the destination API was called and returned no data, the counter is incremented.
+11. **Delete Job Message:** The worker deletes the job message from the SQS queue to mark it as complete.
 
 ## 4. Conflict Resolution Engine (MVP)
 
@@ -68,12 +73,14 @@ A conflict is detected if a `source` activity and a `destination` activity have 
 
 ### 4.2. Resolution Strategies (MVP)
 
-*   **`Prioritize Source` (Default):** New data from the source platform will always overwrite any existing data in the destination for the same time period.
-*   **`Prioritize Destination`:** Never overwrite existing data. If a conflicting entry is found in the destination, the source entry is ignored.
+*   **`source_wins` (Default):** New data from the source platform will always overwrite any existing data in the destination for the same time period.
+*   **`dest_wins`:** Never overwrite existing data. If a conflicting entry is found in the destination, the source entry is ignored.
+*   **`newest_wins`:** The data record (source or destination) with the most recent modification timestamp is preserved.
 
 ## 5. Data Integrity
 
-*   **Durable Queueing & Idempotency:** The combination of SQS and Fargate guarantees that a real-time sync job will be processed "at-least-once". To prevent duplicate processing, the system uses a robust, end-to-end idempotency strategy based on a client-generated `Idempotency-Key`, as defined in `06-technical-architecture.md`.
+*   **Durable and Exactly-Once Queueing:** The `HotPathSyncQueue` is configured as an **Amazon SQS FIFO (First-In, First-Out) queue**. This guarantees that sync jobs are processed in the order they are received and, critically, provides native, content-based deduplication.
+*   **Idempotency:** To prevent duplicate processing from client retries, the system leverages the native deduplication feature of SQS FIFO queues. The client-generated `Idempotency-Key` (passed in the API header) is used as the `MessageDeduplicationId` when the message is sent to SQS. This ensures that a retried API call will not result in a duplicate job being processed within the 5-minute deduplication window, which is a simpler and more cost-effective solution than a separate application-level lock.
 *   **Transactional State:** State updates in DynamoDB are atomic. The `lastSyncTime` is only updated if the entire write operation to the destination platform succeeds.
 *   **Dead Letter Queue (DLQ):** If a job fails repeatedly (e.g., due to a persistent third-party API error), SQS will automatically move it to a DLQ. This allows for manual inspection and debugging without blocking the main queue.
 
@@ -118,14 +125,13 @@ When a sync job permanently fails and is moved to the Dead-Letter Queue (DLQ), i
 ## 8. Visual Diagrams
 
 ### Sync Engine Architecture (MVP)
-This diagram illustrates the flow of a real-time sync request through the event-driven, serverless architecture. The components are designed to be decoupled, scalable, and resilient.
+This diagram illustrates the flow of a real-time sync request initiated by a mobile client. The components are designed to be decoupled, scalable, and resilient, with a focus on cost-efficiency.
 
-1.  **Request Initiation (`MobileApp`)**: The user initiates a sync from the mobile application. The app sends a secure HTTPS request to the API Gateway endpoint.
-2.  **Ingestion & Decoupling (`API Gateway` -> `EventBridge`)**: The API Gateway validates the request and, using a direct service integration, publishes a `RealtimeSyncRequested` event to the EventBridge bus. This decouples the client-facing API from the backend processing.
-3.  **Buffering (`EventBridge` -> `HotQueue`)**: An EventBridge rule filters for these events and routes them to the primary SQS queue (`HotQueue`). This queue acts as a durable buffer, absorbing traffic spikes and ensuring no sync jobs are lost.
-4.  **Processing (`HotQueue` -> `WorkerFargateTask`)**: The SQS queue is polled by the `WorkerFargateTask`. This containerized service contains the core business logic to perform the synchronization as detailed in "The Synchronization Algorithm".
-5.  **State Management & Data Sync (`WorkerFargateTask` -> `DynamoDB` & `ThirdPartyAPIs`)**: The worker reads and writes state information (like `lastSyncTime`) from DynamoDB and communicates with the external third-party APIs to fetch and push health data.
-6.  **Fault Tolerance (`HotQueue` -> `DLQ_SQS`)**: If the `WorkerFargateTask` fails to process a message after multiple retries (due to a persistent error), the message is automatically moved from the `HotQueue` to the Dead-Letter Queue (`DLQ_SQS`) for manual inspection by support engineers. This prevents a single "poison pill" message from blocking the entire sync pipeline.
+1.  **Request Initiation (`MobileApp`)**: The user initiates a sync from the mobile application. The app sends a secure HTTPS request to the API Gateway endpoint, including a unique `Idempotency-Key` header.
+2.  **Ingestion & Queueing (`API Gateway` -> `HotPathSyncQueue`)**: The API Gateway validates the request. Using a direct AWS service integration, it sends the job message directly to the `HotPathSyncQueue`. This bypasses AWS Lambda or EventBridge for the ingestion step, significantly reducing cost and latency. The `Idempotency-Key` from the header is passed as the `MessageDeduplicationId`.
+3.  **Processing (`HotPathSyncQueue` -> `WorkerFargateTask`)**: The `HotPathSyncQueue` is an SQS FIFO queue, which provides exactly-once processing and acts as a durable buffer. It is polled by the `WorkerFargateTask`, a containerized service that contains the core sync logic.
+4.  **State Management & Data Sync (`WorkerFargateTask` -> `DynamoDB`, `Redis`, `ThirdPartyAPIs`)**: The worker reads/writes state from DynamoDB, checks the "Sync Confidence" cache in Redis, and communicates with external third-party APIs.
+5.  **Fault Tolerance (`HotPathSyncQueue` -> `DLQ_SQS`)**: If the `WorkerFargateTask` fails to process a message after multiple retries, SQS automatically moves the message to the Dead-Letter Queue (`DLQ_SQS`) for manual inspection.
 
 ```mermaid
 graph TD
@@ -134,68 +140,79 @@ graph TD
     end
     subgraph AWS
         APIGateway[API Gateway]
-        EventBridge[EventBridge Bus]
 
         subgraph "Hot Path (MVP)"
-            HotQueue[SQS for Real-time Jobs]
+            HotPathSyncQueue["SQS FIFO Queue<br>(HotPathSyncQueue)"]
             DLQ_SQS[SQS DLQ]
         end
 
         WorkerFargateTask["Worker Service (Fargate)"]
         DynamoDB[DynamoDB]
+        Redis[ElastiCache for Redis]
     end
     subgraph External
         ThirdPartyAPIs[3rd Party Health APIs]
     end
 
-    MobileApp -- Sync Request --> APIGateway
+    MobileApp -- "1. Sync Request (with Idempotency-Key)" --> APIGateway
 
-    APIGateway -- "Publishes 'RealtimeSyncRequested' event" --> EventBridge
-    EventBridge -- "Routes to" --> HotQueue
-    HotQueue -- Drives --> WorkerFargateTask
-    HotQueue -- "On Failure, redrives to" --> DLQ_SQS
+    APIGateway -- "2. Sends message with Deduplication ID" --> HotPathSyncQueue
+    HotPathSyncQueue -- "3. Drives" --> WorkerFargateTask
+    HotPathSyncQueue -- "5. On Failure, redrives to" --> DLQ_SQS
 
-    WorkerFargateTask -- Read/Write --> DynamoDB
-    WorkerFargateTask -- Syncs Data --> ThirdPartyAPIs
+    WorkerFargateTask -- "4. Read/Write State" --> DynamoDB
+    WorkerFargateTask -- "4. Check Sync Confidence" --> Redis
+    WorkerFargateTask -- "4. Syncs Data" --> ThirdPartyAPIs
 ```
 
 ### Sequence Diagram for Delta Sync (MVP)
 
-This diagram details the step-by-step interaction between the `Worker Lambda` and other services
-during a single, successful delta sync job. This sequence is the core of the synchronization
-algorithm defined in Section 3 of 05-data-sync.md.
+This diagram details the step-by-step interaction between the `Worker Fargate Task` and other services during a single, successful delta sync job, including the "Sync Confidence" optimization.
 
-1.  Get State (`Get lastSyncTime & strategy`): The worker begins by retrieving the `SyncConfig` item from DynamoDB. This provides the `lastSyncTime`, which acts as a high-water mark, and the user's chosen `conflictResolutionStrategy`.
-2.  Fetch from Source (`Fetch data since lastSyncTime`): Using the `lastSyncTime`, the worker calls the source `DataProvider` to fetch only the new data that has arrived since the last successful sync.
-3.  Fetch from Destination (`Fetch overlapping data`): To prepare for conflict resolution, the worker fetches data from the destination provider for the exact time range covered by the new source data. This is necessary to detect potential overwrites or duplicates.
-4.  Resolve Conflicts (`Run local conflict resolution`): The `Conflict Resolution Engine` compares the source and destination datasets. It applies the user's strategy (e.g., "Prioritize Source") to produce a final, conflict-free set of data to be written.
-5.  Write to Destination (`Write final data`): The worker pushes the processed data to the destination `DataProvider`. The worker inspects the result of this operation to ensure it was 100% successful.
-6.  Update State (`Update lastSyncTime`): Only after a fully successful write, the worker updates the `lastSyncTime` in DynamoDB. This atomic update ensures that if any part of the process fails, the state is not advanced, and the job can be safely retried.
-7.  Acknowledge Completion (`Delete Job Message`): The final step is to delete the message from the SQS queue. This signals that the job is complete and prevents it from being processed again.
+1.  **Get State**: The worker begins by retrieving the `SyncConfig` item from DynamoDB to get the `lastSyncTime` and `conflictResolutionStrategy`.
+2.  **Fetch from Source**: The worker fetches new data from the source provider since the `lastSyncTime`.
+3.  **Check Sync Confidence**: The worker queries the Redis cache to check the "Sync Confidence" counter. If the strategy is `source_wins` or the counter is high, it skips the next step.
+4.  **Fetch from Destination (Conditional)**: If the confidence check did not result in a skip, the worker fetches overlapping data from the destination provider.
+5.  **Resolve Conflicts**: The `Conflict Resolution Engine` runs, using destination data only if it was fetched.
+6.  **Write to Destination**: The worker pushes the final, conflict-free data to the destination provider.
+7.  **Update State**: After a successful write, the worker updates the `lastSyncTime` in DynamoDB.
+8.  **Update Sync Confidence**: The worker increments or resets the confidence counter in Redis based on the outcome.
+9.  **Acknowledge Completion**: The worker deletes the message from the SQS queue to mark the job as complete.
 
 ```mermaid
 sequenceDiagram
     participant Worker as Worker Fargate Task
     participant DynamoDB as DynamoDB
+    participant Redis as Redis Cache
     participant SourceAPI as Source API
     participant DestAPI as Destination API
     participant SQS as SQS Queue
 
-    Worker->>DynamoDB: Get lastSyncTime & strategy
+    Worker->>DynamoDB: 1. Get lastSyncTime & strategy
     activate Worker
     DynamoDB-->>Worker: Return state
-    Worker->>SourceAPI: Fetch data since lastSyncTime
+    Worker->>SourceAPI: 2. Fetch data since lastSyncTime
     SourceAPI-->>Worker: Return new data
-    Worker->>DestAPI: Fetch overlapping data
-    DestAPI-->>Worker: Return destination data
 
-    Worker->>Worker: Run local conflict resolution
+    Worker->>Redis: 3. Check Sync Confidence
+    Redis-->>Worker: Return counter
 
-    Worker->>DestAPI: Write final data
+    alt Destination fetch is NOT skipped
+        Worker->>DestAPI: 4. Fetch overlapping data
+        DestAPI-->>Worker: Return destination data
+    end
+
+    Worker->>Worker: 5. Run local conflict resolution
+
+    Worker->>DestAPI: 6. Write final data
     DestAPI-->>Worker: Success
-    Worker->>DynamoDB: Update lastSyncTime
+    Worker->>DynamoDB: 7. Update lastSyncTime
     DynamoDB-->>Worker: Success
-    Worker->>SQS: Delete Job Message
+
+    Worker->>Redis: 8. Update Sync Confidence counter
+    Redis-->>Worker: Success
+
+    Worker->>SQS: 9. Delete Job Message
     deactivate Worker
 ```
 

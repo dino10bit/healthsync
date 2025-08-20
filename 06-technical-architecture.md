@@ -509,11 +509,13 @@ Initiates a new synchronization job for a user.
       "destinationConnectionId": "conn_67890_providerB",
       "dataType": "workout",
       "mode": "manual",
+      "priority": "high",
       "dateRange": { "startDate": "2023-01-01", "endDate": "2023-12-31" }
     }
     ```
     *   **`dataType` (enum):** `workout`, `sleep_session`, `steps`, `weight`. Must align with `CanonicalData` models.
     *   **`mode` (enum):** `manual` (hot path), `historical` (cold path).
+    *   **`priority` (enum):** `high`, `medium`, `low`. This field is used by the distributed rate-limiter to prioritize jobs when the API budget is low. Defaults to `medium` if not provided.
     *   **`dateRange` (object):** Required if and only if `mode` is `historical`.
 
 *   **Success Response (202 Accepted):** Returns the `jobId` for tracking.
