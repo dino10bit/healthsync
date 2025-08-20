@@ -232,25 +232,24 @@ The ability for users to backfill months or years of historical data is a key fe
 
 ### Model 4: Webhook-Driven Sync with Event Coalescing
 
-To provide a near real-time user experience and dramatically reduce costs, the architecture uses a webhook-first strategy. However, to prevent "event chatter"—where multiple rapid-fire webhooks for the same user trigger numerous, expensive, individual sync jobs—this model is enhanced with an **Event Coalescing** layer.
+To provide a near real-time user experience and dramatically reduce costs, the architecture uses a webhook-first strategy. However, to prevent "event chatter"—where multiple rapid-fire webhooks for the same user trigger numerous, expensive, individual sync jobs—this model is enhanced with an **Event Coalescing** layer. This strategy significantly reduces the volume of events processed by EventBridge and SQS, which are key drivers of variable costs.
 
 *   **Use Case:** Receiving notifications that new data is available, buffering them briefly to merge related events, and then triggering a single, consolidated sync job.
+*   **New AWS Resources:**
+    *   **SQS FIFO Queue:** `CoalescingBufferQueue`
+    *   **AWS Lambda Function:** `CoalescingTriggerLambda`
+    *   **IAM Role:** An IAM role for the `CoalescingTriggerLambda` with permissions to publish events to EventBridge.
 *   **Flow:**
-    1.  A third-party provider sends a `POST` request to the **Webhook Ingress Endpoint** (API Gateway).
-    2.  The request is forwarded to the `WebhookProcessorLambda`.
-    3.  The `WebhookProcessorLambda` verifies the webhook and parses it to extract the `userId` and `dataType`.
-    4.  **Coalescing Step:** Instead of immediately triggering a sync, the Lambda performs an atomic `HSET` operation to a **"Coalescing Cache"** in Redis.
-        *   **Key:** `coalesce##{userId}`
-        *   **Field:** The `dataType` (e.g., "workout").
-        *   **Value:** The event timestamp.
-        *   The Lambda sets a short TTL on the Redis key (e.g., 3 minutes) only if it's a new key.
-    5.  **Delayed Trigger:** The `WebhookProcessorLambda` then sends a message containing the `userId` to a dedicated **SQS Delay Queue** with a visibility delay of **2 minutes**. If a message for that user is already in flight, SQS does not add a new one, providing cost-effective deduplication.
-    6.  **Job Consolidation:** A new, lightweight `CoalescingTriggerLambda` is subscribed to this SQS queue. When it receives a message, it:
-        a. Reads all accumulated `dataType` fields from the `coalesce##{userId}` key in Redis.
-        b. Deletes the Redis key.
-        c. Publishes a **single, consolidated `HotPathSyncRequested` event** to the EventBridge Event Bus. The event payload contains the `userId` and an array of data types (e.g., `dataTypes: ["workout", "steps", "weight"]`).
-    7.  **Execution:** The consolidated event is processed by the standard "Hot Path" architecture. The `WorkerFargateTask` is responsible for iterating through the `dataTypes` array and syncing each one.
-*   **Advantage:** This model directly attacks the "event chatter" identified as a key cost driver in the financial model. It significantly reduces the volume of EventBridge events and SQS messages, which are major variable costs at scale. It also allows the Fargate worker to perform more efficient syncs by handling multiple data types for a user in a single, authenticated session.
+    1.  **Ingestion:** The API Gateway endpoint that receives incoming webhooks will no longer publish events directly to the main EventBridge bus. Instead, it will send a message to a new **SQS FIFO (First-In, First-Out) queue** named `CoalescingBufferQueue`.
+    2.  **Buffering & Deduplication:** The `CoalescingBufferQueue` will have a `deliveryDelay` of approximately 60 seconds. This creates a short-term buffer, allowing multiple events for the same user to accumulate. The `userId` will be used as the `MessageDeduplicationId` to ensure that messages for the same user are processed in order.
+    3.  **Triggering:** A new, lightweight Lambda function, `CoalescingTriggerLambda`, will be configured with the `CoalescingBufferQueue` as its event source.
+    4.  **Coalescing Logic:**
+        *   When the `CoalescingTriggerLambda` is invoked, it will receive a batch of messages from the SQS queue.
+        *   It will iterate through the messages, extracting the `userId` from each.
+        *   Using a local `Set` to track unique user IDs within the batch, it will publish a single, consolidated `SyncRequest` event to the primary EventBridge bus for each unique user.
+        *   This ensures that even if 10 webhook events for a single user were received in the 60-second window, only one `SyncRequest` event is published.
+    5.  **Execution:** The consolidated event is routed to the SQS queue (`HotPathSyncQueue`) and processed by the standard "Hot Path" architecture.
+*   **Advantage:** This model directly attacks the "event chatter" identified as a key cost driver in the financial model. By relying on native SQS FIFO features for buffering and deduplication, it provides a simpler, more robust, and more cost-effective solution compared to a custom implementation using Redis. It significantly reduces the volume of downstream EventBridge events and SQS messages.
 
 ## 3a. Unified End-to-End Idempotency Strategy
 
@@ -321,15 +320,20 @@ The following table details the specific items to be cached:
 | **User Sync Config** | `config##{userId}` | Serialized user sync configurations | 15 minutes | Reduces DynamoDB reads for frequently accessed user settings. |
 | **Rate Limit Token Bucket** | `ratelimit##{...}` | A hash containing tokens and timestamp | 60 seconds | Powers the distributed rate limiter for third-party APIs. |
 | **Negative Lookups** | e.g., `nosub##{userId}` | A special "not-found" value | 1 minute | Prevents repeated, fruitless queries for non-existent data (e.g., checking if a user has a Pro subscription). |
-| **Sync Confidence** | `syncconf##{uid}##{src}##{dest}##{type}` | A hash: `{"empty_streak": <int>}` | 7 days | **Algorithmic Optimization:** Caches metadata about sync patterns to intelligently skip redundant API calls to destination providers, reducing latency, cost, and third-party API pressure. |
+| **Sync Confidence** | `sync:confidence:{userId}:{destProvider}` | An integer counter for consecutive empty results. | 7 days | **Algorithmic Optimization:** Caches metadata about sync patterns to intelligently skip redundant API calls to destination providers, reducing latency, cost, and third-party API pressure. |
 
 **Algorithmic Sync Optimization via "Sync Confidence"**
 
-To improve the efficiency of the core sync algorithm, the system will employ a "Sync Confidence" caching strategy. The default sync behavior (as defined in `05-data-sync.md`) fetches data from the destination provider to perform conflict resolution. However, this destination fetch is often unnecessary.
+To improve the efficiency of the core sync algorithm, the system will employ a "Sync Confidence" caching strategy. The default sync behavior (as defined in `05-data-sync.md`) fetches data from the destination provider to perform conflict resolution. However, this destination fetch is often unnecessary, and this optimization avoids that fetch under specific conditions.
 
-This optimization avoids that fetch under two conditions:
-1.  **Strategy-Based Elimination:** If a user's conflict resolution strategy is `Prioritize Source`, the data from the destination is irrelevant by definition. The worker can skip the fetch.
-2.  **Pattern-Based Elimination:** For a given sync pair (e.g., Fitbit steps to Google Fit), the worker will cache a counter (`empty_streak`) in Redis. If a sync finds no data at the destination, this counter is incremented. If the counter exceeds a configured threshold (e.g., 10 consecutive empty fetches), the worker will optimistically assume the destination is empty and skip the fetch. If a subsequent `pushData` operation fails due to a conflict, the counter is immediately reset to zero, and the system reverts to the safer fetch-first approach.
+*   **Implementation Details:**
+    *   **Redis Cache:** The `WorkerFargateTask` will use Redis to store a simple integer counter.
+    *   **Cache Key:** The key will follow the format `sync:confidence:{userId}:{destinationProvider}`.
+    *   **Logic:**
+        1.  **Strategy-Based Elimination:** Before a sync job, the worker will check the user's conflict resolution strategy. If it is `Prioritize Source`, the destination API call will be skipped entirely.
+        2.  **Pattern-Based Elimination:** If the strategy requires a destination check, the worker will check the value of the Redis key. If the counter exceeds a configured threshold (e.g., 10 consecutive polls that returned no data), the destination API call will be skipped.
+        3.  **Counter Management:** If the destination API is called and returns data, the counter is reset to 0. If it returns no data, the counter is incremented. If a `pushData` operation later fails due to a conflict (indicating the cache was wrong), the counter is also reset to zero, forcing a re-fetch on the next attempt.
+    *   **Configuration:** The threshold for consecutive empty polls will be managed as an environment variable in the `WorkerFargateTask` to allow for tuning without code redeployment.
 
 This strategy makes the sync algorithm adaptive, reducing redundant API calls for the majority of routine background syncs.
 
@@ -370,17 +374,16 @@ To improve throughput and further reduce costs across compute, database, and net
 *   **Batch and Conditional Database Writes:** When persisting metadata updates, the worker **must** use DynamoDB's `BatchWriteItem` operation to write multiple items in a single API call. Critically, to avoid costs from "empty" polls that find no new data, the worker **must not** perform a write operation for any sync job that results in zero new records being processed. This "write-avoidance" strategy significantly reduces the number of database writes at scale.
 *   **Cascading Benefits:** This strategy reduces the per-job overhead, leading to lower Fargate compute times, fewer total API calls to DynamoDB, and potentially reduced data transfer.
 
-**Just-in-Time (JIT) Credential Caching**
+#### Just-in-Time (JIT) Credential Caching
 
-To further enhance performance and resilience, the `WorkerFargateTask` will implement a local, in-memory cache for user credentials (OAuth tokens).
+To further enhance performance and resilience, the `WorkerFargateTask` will implement a local, in-memory cache for user credentials (OAuth tokens). This is particularly effective in a high-throughput environment where the same "hot" users are processed by the same warm container multiple times.
 
-*   **Problem:** Without a local cache, the worker must fetch credentials from AWS Secrets Manager for every user it processes, potentially multiple times during the worker's lifecycle. This adds latency to jobs and increases costs from Secrets Manager API calls.
+*   **Problem:** Without a local cache, the worker must fetch credentials from AWS Secrets Manager for every user it processes. This adds latency to jobs and increases costs from Secrets Manager API calls.
 *   **Mechanism:**
-    1.  The Fargate task process will maintain a simple, in-memory LRU (Least Recently Used) cache that maps a `userId` to their fetched `ProviderTokens`.
-    2.  When processing a job, the worker first checks this local cache for valid (non-expired) tokens.
-    3.  **Cache Hit:** If tokens are found, they are used immediately, avoiding any network calls.
-    4.  **Cache Miss:** If tokens are not in the cache, the worker fetches them from AWS Secrets Manager, stores them in the local cache with a short TTL (e.g., 5 minutes), and then proceeds.
-*   **Benefits:** This pattern significantly reduces the number of API calls to Secrets Manager, which lowers direct costs, decreases job latency, and makes the worker fleet more resilient to transient network or service issues with Secrets Manager.
+    *   **Cache Scope:** The cache will be implemented as a static, in-memory map within the worker's Java runtime, living for the lifetime of the warm container.
+    *   **Cache Library:** A lightweight, well-tested library like **Google's Guava Cache** will be used to implement a size-limited (e.g., 1,000 entries), time-based LRU (Least Recently Used) cache.
+    *   **Logic:** When a job is received, the worker will first attempt to retrieve credentials from the local cache. On a **cache miss**, it will fetch them from AWS Secrets Manager and populate the cache with a short TTL (e.g., 5 minutes) before proceeding. On a **cache hit**, the network call is avoided.
+*   **Benefits:** This pattern significantly reduces API calls to Secrets Manager, which lowers direct costs, decreases job latency, and makes the worker fleet more resilient to transient issues with the Secrets Manager service.
 
 #### Fargate "Warm Pool" for Improved Scale-Out Performance
 To enable more aggressive scale-to-zero settings for the Fargate fleet (especially during off-peak hours) without sacrificing performance during traffic spikes, the architecture will include a "warm pool" strategy.
