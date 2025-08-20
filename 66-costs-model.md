@@ -68,7 +68,36 @@ The event bus is the second largest cost category, driven by the sheer volume of
 | **Total** | | **~$624.00** |
 
 ## 3. Cost Analysis: Peak Load
-*(This section remains valuable for understanding maximum hourly burn rate and is unchanged.)*
+
+This section analyzes the maximum cost "burn rate" under the peak load non-functional requirement (NFR) of **3,000 requests per second (RPS)**, as specified in `06-technical-architecture.md`. This analysis is crucial for understanding the financial implications of a major traffic spike and ensuring the system's cost structure can handle such events without causing a financial incident.
+
+The following costs are calculated on an **hourly basis**, representing the cost incurred for one hour of sustained peak load.
+
+**Peak Load Assumptions:**
+*   **Ingress:** 3,000 requests per second.
+*   **Total Hourly Jobs:** 3,000 RPS * 3,600 seconds/hour = 10.8 million jobs/hour.
+*   **Fargate Scaling:** The worker fleet scales up from 9 tasks to ~310 tasks to handle the load.
+
+**Peak Load Hourly Cost Breakdown:**
+
+| Category | Service | Component & Calculation | Estimated Cost (per Hour) |
+| :--- | :--- | :--- | :--- |
+| **Core Compute** | AWS Fargate | Worker Fleet scales to ~310 tasks * $0.055/hr | $17.05 |
+| **Messaging & Events** | Amazon SQS | 10.8M messages * $0.40/M | $4.32 |
+| | Amazon EventBridge| Bus: ~21.6M events * $1.00/M | $21.60 |
+| **Database & Cache** | Amazon DynamoDB | 10.8M writes * $1.25/M | $13.50 |
+| **Observability** | AWS CloudWatch | Logs: ~53 GB ingested * $0.50/GB | $26.50 |
+| **Networking & Security**| AWS Network Firewall| Data: ~77 GB processed * $0.065/GB | $5.01 |
+| | AWS WAF | 10.8M requests * $0.60/M | $6.48 |
+| **Fixed Costs** | ElastiCache, Firewall Endpoints, etc. | Prorated hourly cost | $0.93 |
+| **Total** | | | **~$95.39 per hour** |
+
+### Analysis
+
+Under a sustained peak load of 3,000 RPS, the estimated cost for the infrastructure is approximately **$95 per hour**. This is a significant increase from the normal operating cost of ~$4.83/hour ($3,481 / 720 hours).
+
+*   **Primary Drivers:** During a peak event, the primary cost drivers shift to services that scale directly with request volume. **CloudWatch Log Ingestion** becomes the single largest expense, followed closely by **EventBridge** events and **Fargate** compute.
+*   **Financial Implications:** While a cost of nearly $100/hour is high, it's important to frame it within the context of a temporary spike. If such a peak were sustained for a full 24 hours, it would cost ~$2,280. This analysis confirms that the on-demand, serverless nature of the architecture allows it to handle extreme peaks in load, but highlights the importance of cost monitoring and anomaly detection to alert the team if such a peak is sustained for an unusual length of time.
 
 ## 4. Financial Projections & Scalability (Revised)
 
