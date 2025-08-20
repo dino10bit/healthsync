@@ -166,5 +166,44 @@ As the analysis shows, the Network Firewall is nearly **5 times more expensive**
 
 The use of Multi-AZ deployments for DynamoDB and ElastiCache incurs data transfer charges for replication. At the current scale, these costs are minimal and are generally included in the service's primary cost. However, at extreme scales (e.g., >10M DAU), this could become a more significant line item to monitor.
 
-## 11. Future Cost Optimization
+## 11. Cost Projections for Non-Production Environments
+
+This section outlines the cost projections for the non-production environments required to support the development and testing lifecycle of the SyncWell platform.
+
+### 11.1. Staging Environment
+
+The staging environment is a critical component for ensuring the quality and reliability of our production releases. It is designed as a scaled-down but functionally identical replica of the production environment. This allows for realistic end-to-end testing, load testing, and validation of new features before they are deployed to customers.
+
+The primary cost driver for staging is that it must run 24/7 to be available for pre-release testing and chaos engineering experiments as outlined in the technical architecture. However, the load is expected to be minimal and sporadic, consisting only of automated tests and manual QA activities.
+
+**Assumptions:**
+*   Load is <1% of production.
+*   Compute resources are scaled down to the minimum required for functionality.
+*   Data volumes are minimal.
+
+**Estimated Staging Costs:**
+
+| Service | Component & Calculation | Estimated Cost (per Month) | Rationale |
+| :--- | :--- | :--- | :--- |
+| **AWS Fargate** | 1x minimum size task | ~$20 | A single, non-scaled task to run the worker. |
+| **Amazon SQS / EventBridge** | Low volume of events | ~$5 | Minimal event traffic from testing. |
+| **Amazon DynamoDB** | On-demand, minimal RCU/WCU | ~$10 | Low, sporadic usage from tests. |
+| **Amazon ElastiCache**| 1x `cache.t4g.small` node | ~$25 | Smallest possible node for caching functionality. |
+| **AWS Network Firewall**| 1x endpoint (single AZ) | ~$285 | The largest fixed cost, but necessary for functional parity. |
+| **Other Services** | CloudWatch, WAF, etc. | ~$55 | Scaled down usage of ancillary services. |
+| **Total** | | **~$400** | |
+
+The total estimated monthly cost for the staging environment is approximately **$400**. While significant, this is a necessary investment in platform stability.
+
+### 11.2. Development Environment
+
+The development environment is optimized for developer velocity and minimal cost. The primary strategy, as defined in `06-technical-architecture.md`, is the use of **LocalStack** for local development. This allows engineers to run a high-fidelity emulation of the AWS backend on their local machines, eliminating the need for a shared, cloud-based development environment.
+
+*   **Cloud Costs:** Direct cloud costs for development are expected to be **near zero**.
+*   **LocalStack Pro Licenses:** The primary cost is the licensing for LocalStack Pro, which is required for advanced features and team collaboration. This is considered an engineering operational expense (OpEx) rather than a direct infrastructure cost.
+*   **CI/CD Environment:** A small, ephemeral environment is provisioned within the CI/CD pipeline to run integration tests against LocalStack, incurring minimal, transient costs.
+
+By heavily leveraging local emulation, we can provide a powerful development experience while keeping cloud spending for development to an absolute minimum.
+
+## 12. Future Cost Optimization
 *(This section was previously section 9 and remains valid.)*
