@@ -21,29 +21,30 @@ This section provides a detailed, bottom-up cost estimation based on the full te
 
 | Category | Service | Component & Calculation | Estimated Cost (per Month) |
 | :--- | :--- | :--- | :--- |
-| **Core Compute** | AWS Fargate | Worker Fleet: 90% Spot + 10% On-Demand | $163.94 |
+| **Core Compute** | AWS Fargate | 90% Spot + Batching Savings (10%) | $147.55 |
 | | AWS Lambda | Authorizer, Webhook, Scheduler funcs: ~115M invocations | $48.00 |
 | **Messaging & Events** | Amazon SQS | Queue for 396M jobs * $0.40/M | $158.40 |
-| | Amazon EventBridge| Bus (456M events) | $456.00 |
+| | Amazon EventBridge| Bus (228M events) | $228.00 |
 | | AWS Step Functions| Scheduling state machine: ~1.5M transitions | $37.50 |
-| **Database & Cache** | Amazon DynamoDB | 228M writes + 22.8M reads | $325.58 |
+| **Database & Cache** | Amazon DynamoDB | Batching Savings (10%) | $293.02 |
 | | Amazon ElastiCache| 2x `cache.t4g.medium` nodes for Redis | $100.80 |
 | **Observability** | AWS CloudWatch | Logs (114GB ingested), Metrics, Alarms, X-Ray | $232.00 |
-| **Networking & Security**| AWS Network Firewall| 2x endpoints + 1.6TB processed | $672.80 |
+| **Networking & Security**| AWS NAT Gateway | Egress for Fargate Fleet (1.6TB processed) | $137.00 |
 | | AWS WAF | Web ACL, rules, and 250M requests | $160.00 |
 | **Data Governance** | AWS Glue Schema Registry| 100 versions + 218M requests | $31.80 |
 | | AWS Secrets Manager| App secrets + cached API calls | $11.00 |
 | | AWS AppConfig | Free tier covers usage | $0.00 |
 | **Data Storage** | Amazon S3 | Log & backup storage with lifecycle policies | $8.00 |
-| **Total** | | | **~$2,674.82** |
+| **Total** | | | **~$1,862.07** |
 
 ### 2.1. Analysis of Deep Cost Model
-This detailed, bottom-up analysis reveals that the true operational cost is approximately **$2,700 per month**. This model incorporates a suite of significant cost optimizations, including aggressive log sampling, SQS-based adaptive polling, and leveraging Fargate Spot for compute.
+This detailed, bottom-up analysis reveals that the true operational cost is approximately **$1,900 per month**. This model incorporates a full suite of advanced cost optimizations.
 
-*   **Key Cost Drivers:** After optimizations, the most significant cost drivers are the managed **Network Firewall** (~$673/month) and the **Messaging & Events** layer (EventBridge at ~$456/month). Compute and Observability costs, while still significant, have been dramatically reduced.
+*   **Key Cost Drivers:** After extensive optimization, the remaining primary cost drivers are eventing (EventBridge/SQS), observability (CloudWatch), and core database/cache services.
 *   **Fixed vs. Variable Costs:**
-    *   **Fixed:** The largest fixed costs are the hourly charges for the Network Firewall endpoints (~$569) and the ElastiCache cluster (~$101). Total fixed costs are approximately **$700/month**.
-    *   **Variable:** The remaining **~$1,975/month** are variable costs that scale directly with user activity.
+    *   **Fixed:** The largest fixed costs are the hourly charges for the NAT Gateway (~$65) and the ElastiCache cluster (~$101). Total fixed costs are approximately **$200/month**.
+    *   **Variable:** The remaining **~$1,660/month** are variable costs that scale directly with user activity.
+*   **Note on Batching Savings:** The cost model applies a conservative 10% reduction to Fargate and DynamoDB costs to account for the expected efficiencies of worker batching. The true savings may be higher and should be validated with a proof-of-concept.
 
 ### 2.2. Granular Analysis of Key Cost Drivers
 To better understand the cost structure, this section provides a deeper look into the key cost drivers.
@@ -58,14 +59,16 @@ The observability suite, while still a major expense, has been significantly opt
 | **Custom Metrics & Alarms**| Placeholder for various metrics and alarms | $50.00 |
 | **Total** | | **~$232.00** |
 
-#### Amazon EventBridge & SQS Costs (~$614/month)
-The eventing and messaging layer is a critical part of the architecture. Costs are driven by the high volume of events flowing through the system to orchestrate sync jobs. The expensive EventBridge Scheduler has been replaced by a more cost-effective SQS-based delayed polling mechanism.
+#### Amazon EventBridge & SQS Costs (~$386/month)
+The eventing and messaging layer is a critical part of the architecture. Costs are driven by the high volume of events flowing through the system. The following optimizations are in place:
+*   The expensive EventBridge Scheduler has been replaced by a more cost-effective SQS-based delayed polling mechanism.
+*   The highest-volume ingestion path (API Gateway -> SQS) now bypasses EventBridge entirely.
 
 | Service | Component | Calculation | Estimated Cost (per Month) |
 | :--- | :--- | :--- | :--- |
-| **EventBridge** | Custom Event Puts | 456M events * $1.00/M | $456.00 |
+| **EventBridge** | Custom Event Puts | 228M events * $1.00/M | $228.00 |
 | **SQS** | Standard Queues | 396M messages * $0.40/M | $158.40 |
-| **Total** | | | **~$614.40** |
+| **Total** | | | **~$386.40** |
 
 ## 3. Cost Analysis: Peak Load
 
@@ -223,23 +226,25 @@ The Lambda-based model is projected to be **over 10 times more expensive** than 
 
 ## 11. Detailed Networking Cost Analysis
 
-The cost breakdown in Section 2 includes a significant line item for "AWS Network Firewall" at ~$673/month. This section provides a deeper analysis of that cost and compares it to alternatives, justifying the architectural choice.
+The cost breakdown in Section 2 has been updated to reflect a **Hybrid Egress Firewall Model**. This section provides a deeper analysis of that cost.
 
-### 10.1. VPC Endpoints for Internal Traffic
+### 11.1. VPC Endpoints for Internal Traffic
 
-A core cost-optimization strategy noted in the architecture is the use of VPC Endpoints (for S3, DynamoDB, SQS, etc.). This keeps traffic between the Fargate workers and other AWS services on the private AWS network. While Interface Endpoints have a small hourly cost (which is rolled into the firewall cost in this model), they avoid the much higher data processing charges of a NAT Gateway, saving thousands per month at scale.
+A core cost-optimization strategy noted in the architecture is the use of VPC Endpoints (for S3, DynamoDB, SQS, etc.). This keeps traffic between the Fargate workers and other AWS services on the private AWS network, avoiding the much higher data processing charges of a NAT Gateway and saving thousands per month at scale.
 
-### 10.2. Egress Traffic: Network Firewall vs. NAT Gateway
+### 11.2. Egress Traffic: Hybrid Firewall Model
 
-All egress traffic to third-party APIs must pass through a managed NAT device. The architecture specifies the use of the premium AWS Network Firewall service. The following table compares its cost to the standard AWS NAT Gateway for handling the estimated 1.6 TB of monthly egress traffic.
+The architecture now specifies a hybrid model for egress traffic to balance cost and security. The high-volume Fargate worker fleet, which communicates with a small, trusted set of partner APIs, will route its traffic through a standard, cost-effective **AWS NAT Gateway**. The more expensive **AWS Network Firewall** is reserved for future, low-volume workloads that may require more advanced security inspection.
 
-| Component | AWS Network Firewall (Chosen) | AWS NAT Gateway (Alternative) |
+This change has a significant impact on cost, as the primary data-generating component now uses the more economical egress path.
+
+| Component | AWS Network Firewall (Original) | AWS NAT Gateway (New) |
 | :--- | :--- | :--- |
 | **Hourly Cost (2 AZs)** | ~$569 | ~$65 |
 | **Data Processing Cost (1.6TB)** | ~$104 | ~$72 |
 | **Total Monthly Cost**| **~$673** | **~$137** |
 
-As the analysis shows, the Network Firewall is nearly **5 times more expensive** than a standard NAT Gateway. However, this choice is explicitly justified in the technical architecture document (`06-technical-architecture.md`) for security reasons. The Network Firewall is a fully managed service that provides advanced features like intrusion prevention, URL filtering, and centralized security logging. For an application handling sensitive user health data, the higher cost is accepted as a necessary expense for a more robust security posture.
+By routing the 1.6TB of Fargate traffic through the NAT Gateway, the monthly cost for this component is reduced from ~$673 to **~$137**, saving over $530 per month. This is a pragmatic optimization, as the destinations for this traffic are well-known and can be secured effectively with network ACLs and security groups, making the Network Firewall's advanced features unnecessary for this specific workload.
 
 ### 10.3. Cross-AZ Data Transfer
 

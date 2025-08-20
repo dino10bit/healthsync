@@ -201,8 +201,8 @@ For the MVP, cloud-to-cloud syncs are handled by a single, reliable architectura
 *   **Use Case:** Handling frequent, automatic, and user-initiated manual syncs for recent data.
 *   **Flow:**
     1.  The Mobile App sends a request to API Gateway to start a sync.
-    2.  **API Gateway** uses a direct service integration to validate the request and publish a semantic `HotPathSyncRequested` event to the **EventBridge Event Bus**.
-    3.  An EventBridge rule filters for these events and sends them to the `HotPathSyncQueue` **Amazon SQS queue**. This queue acts as a buffer, protecting the system from load spikes.
+    2.  **API Gateway** uses a direct AWS service integration to validate the request and send the `HotPathSyncRequested` message directly to the **Amazon SQS queue** (`HotPathSyncQueue`). This is a critical cost optimization that bypasses the more expensive EventBridge service for this specific high-volume ingestion path.
+    3.  The SQS queue, which now receives messages directly from API Gateway, acts as a buffer to protect the system from load spikes.
     4.  The SQS queue is polled by the `Worker Fargate Task`, which processes the job.
     5.  **Failure Handling:** The primary SQS queue is configured with a **Dead-Letter Queue (DLQ)**. On a **non-transient processing error** (e.g., an invalid credentials error `401`, a permanent API change `404`, or an internal code bug), the worker throws an exception. After a configured number of retries (`maxReceiveCount`), SQS automatically moves the failed message to the DLQ for out-of-band analysis.
         *   **`maxReceiveCount` Rationale:** This will be set to **5**. This value is chosen to balance allowing recovery from intermittent, transient network or third-party API errors against not waiting too long to detect a persistent failure. A message that fails 5 times over approximately 1-2 minutes indicates a persistent issue that requires manual intervention and aligns with our goal of identifying and fixing broken integrations quickly.
@@ -340,6 +340,14 @@ sequenceDiagram
 *   **Governing NFR:** The system must be designed and load-tested to handle a peak load of **3,000 requests per second (RPS)**.
 *   **Compute Model:** The sync engine's worker fleet will be implemented using **AWS Fargate**. This container-based approach is better suited for the constant, high-throughput nature of the workload compared to a Lambda-per-job model.
 *   **Scalability Strategy:** An auto-scaling fleet of Fargate tasks will continuously poll the `HotPathSyncQueue` and process jobs in a loop. The fleet will scale based on the number of messages in the SQS queue, ensuring that we have enough capacity to handle peak load while scaling down to minimize costs during idle periods. This model provides a more cost-effective and predictable performance profile at scale, mitigating the risks associated with extreme Lambda concurrency.
+
+#### Intelligent Worker Batching
+To improve throughput and further reduce costs across compute, database, and networking, the `WorkerFargateTask` will be optimized to process jobs in batches.
+
+*   **SQS Batch Polling:** Instead of receiving a single message, the worker will be configured to receive a batch of up to 10 messages from the `HotPathSyncQueue` in a single poll.
+*   **Grouped Execution:** The worker will group the jobs from the batch by the third-party provider (e.g., all Fitbit jobs together). This enables more efficient execution by, for example, reusing a single authenticated HTTP client for multiple requests to the same provider.
+*   **Batch Database Writes:** When persisting metadata updates, the worker **must** use DynamoDB's `BatchWriteItem` operation to write multiple items in a single API call, reducing the number of provisioned write operations and lowering database costs.
+*   **Cascading Benefits:** This strategy reduces the per-job overhead, leading to lower Fargate compute times, fewer total API calls to DynamoDB, and potentially reduced data transfer.
 
 #### DynamoDB Capacity Model
 We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased (e.g., via a Savings Plan) to handle the predictable average load, with an initial estimate of covering **70% of expected peak usage**. **On-Demand Capacity** will handle any traffic that exceeds this provisioned throughput. This ratio will be tuned based on production traffic patterns.
@@ -675,8 +683,10 @@ A detailed financial model is a mandatory prerequisite before implementation.
     *   **Secure Authorizer Implementation:** The `AuthorizerLambda` **must** use **AWS Lambda Powertools** to handle the complexities of JWT validation, including fetching the JWKS, validating the signature, and checking standard claims.
     *   **Granular IAM Roles:** Each compute component has its own unique IAM role with a narrowly scoped policy.
     *   **Resource-Based Policies:** Where applicable, resource-based policies are used as an additional layer of defense.
-*   **Egress Traffic Control (Firewall):** Outbound traffic from the VPC is routed through an **AWS Network Firewall** with an allow-list of required partner FQDNs.
-    *   **Justification:** While a NAT Gateway with a proxy server would be cheaper (~30-40% lower cost), the Network Firewall is a fully managed service that provides superior security features like intrusion prevention and centralized logging, justifying the higher cost for a system handling sensitive data.
+*   **Egress Traffic Control (Hybrid Firewall Model):** To balance cost and security, outbound traffic from the VPC is routed through a hybrid firewall model. This model uses separate egress paths depending on the destination's trust level and traffic volume.
+    *   **High-Security Path (AWS Network Firewall):** All outbound traffic to unknown, lower-volume, or security-sensitive endpoints is routed through an **AWS Network Firewall**. This provides advanced features like intrusion prevention and deep packet inspection, ensuring the highest level of security.
+    *   **Cost-Optimized Path (AWS NAT Gateway):** High-volume, trusted traffic to the primary, well-known API endpoints of major partners (e.g., Fitbit, Strava, Garmin) is routed through a separate, standard **AWS NAT Gateway**. This path is secured via VPC route tables and network ACLs.
+    *   **Justification:** This hybrid approach provides significant cost savings by routing the bulk of the data through the much cheaper NAT Gateway, while preserving the advanced security features of the Network Firewall for traffic that requires it. This is a pragmatic trade-off between cost and risk.
 *   **Code & Pipeline Security:** Production builds will be obfuscated. Dependency scanning (Snyk) and SAST will be integrated into the CI/CD pipeline, failing the build on critical vulnerabilities. Any new AI frameworks must undergo a formal security review, which includes threat modeling and a review by the security team, before being integrated.
 
 ### Compliance
