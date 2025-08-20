@@ -19,6 +19,9 @@
 
 This document defines the performance, scalability, and reliability requirements for the entire SyncWell system, designed to support **1 million Daily Active Users (DAU)**. These are not secondary concerns; they are primary features critical to user trust and retention. This document establishes a proactive strategy for engineering a system that is fast, resilient, and capable of handling massive scale. It details specific architectural choices, performance targets, and optimization techniques that will be implemented.
 
+> **[S-003] [RISK-CRITICAL-01] CRITICAL RISK ASSESSMENT**
+> The most significant finding in this document is the **potential project-threatening risk** associated with the projected **~45,000 concurrent Lambda executions** required to meet peak load. The cost and technical feasibility of this model are unproven. Implementation **must be gated** by the mandatory completion and approval of the cost modeling and PoC load tests detailed in Section 3.2.
+
 ## 2. Performance & Reliability Budget (SLOs)
 
 ### 2.1. Client-Side Performance Budget

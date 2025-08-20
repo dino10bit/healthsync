@@ -62,37 +62,7 @@ We will use the **C4 Model** as a framework to describe the architecture. The co
 
 This diagram shows the system in its environment, illustrating its relationship with users and external systems.
 
-```mermaid
----
-title: "System Context Diagram for SyncWell (v1.1 as of 2025-08-19)"
----
-graph TD
-    subgraph SyncWell Ecosystem
-        A[Mobile App]
-        B[Backend]
-    end
-
-    subgraph Users
-        C[Health-Conscious User]
-    end
-
-    subgraph External Systems
-        D["Third-Party Health Platforms<br>(Cloud APIs)"]
-        D2["On-Device Health Platforms<br>(e.g., HealthKit)"]
-        E[Platform App Stores]
-        F[Platform Notification Services]
-        G[Firebase Authentication]
-    end
-
-    C -- "Views, configures, and<br>initiates syncs via" --> A
-    A -- "Authenticates user with" --> G
-    A -- "Initiates cloud sync jobs via API" --> B
-    A -- "Reads/writes local health data from/to" --> D2
-    A -- "Is distributed through" --> E
-    B -- "Fetches and pushes data to" --> D
-    B -- "Sends push notifications via" --> F
-    B -- "Validates user tokens using" --> G
-```
+*(See Diagram 1 in the "Visual Diagrams" section below.)*
 
 ### Level 2: Containers
 
@@ -102,68 +72,7 @@ Designs for post-MVP features like the "cold path" for historical syncs have bee
 
 **Note on Diagram Clarity:** The following diagram is a high-level overview for the MVP. It omits secondary components like the S3 bucket for archiving DLQ messages and post-MVP components like the AI Insights Service. The S3 bucket will be configured with a standard lifecycle policy to transition objects to Glacier after 90 days and delete them after 1 year.
 
-```mermaid
----
-title: "Container Diagram for SyncWell (MVP)"
----
-graph TD
-    subgraph "User's Device"
-        MobileApp[Mobile Application w/ KMP Module]
-    end
-
-    subgraph "Google Cloud"
-        FirebaseAuth["Firebase Authentication<br>(provides Google Public Keys)"]
-    end
-
-    subgraph "External Services"
-        ThirdPartyAPIs["Third-Party Health APIs"]
-    end
-
-    subgraph "AWS Cloud"
-        WAF[AWS WAF]
-        APIGateway[API Gateway]
-        AuthorizerLambda[Authorizer Lambda]
-        HotPathEventBus[EventBridge Event Bus]
-        DynamoDB[DynamoDB Table]
-        SecretsManager[Secrets Manager]
-        Observability["CloudWatch Suite"]
-        AppConfig[AWS AppConfig]
-
-        subgraph "VPC"
-            style VPC fill:#f5f5f5,stroke:#333
-            NetworkFirewall[AWS Network Firewall]
-            subgraph "Private Subnets"
-                WorkerLambda["Worker Lambda"]
-                ElastiCache[ElastiCache for Redis]
-            end
-        end
-
-        subgraph "SQS Queues"
-            HotPathSyncQueue[SQS: HotPathSyncQueue]
-            HotPathSyncDLQ[SQS: HotPathSyncDLQ]
-        end
-    end
-
-    MobileApp -- "Signs up / signs in with" --> FirebaseAuth
-    MobileApp -- "HTTPS Request (with Firebase JWT)" --> WAF
-    WAF -- "Filters traffic to" --> APIGateway
-
-    APIGateway -- "Validates JWT with" --> AuthorizerLambda
-    AuthorizerLambda -- "Fetches public keys from" --> FirebaseAuth
-    APIGateway -- "Publishes 'HotPathSyncRequested' event" --> HotPathEventBus
-
-    HotPathEventBus -- "Rule routes to" --> HotPathSyncQueue
-    HotPathSyncQueue -- "Target for" --> WorkerLambda
-    HotPathSyncQueue -- "On failure, redrives to" --> HotPathSyncDLQ
-
-    WorkerLambda -- "Reads/writes user state" --> DynamoDB
-    WorkerLambda -- "Gets credentials" --> SecretsManager
-    WorkerLambda -- "Reads/Writes cache" --> ElastiCache
-    WorkerLambda -- "Logs & Metrics" --> Observability
-    WorkerLambda -- "Fetches runtime config from" --> AppConfig
-    WorkerLambda -- "Makes outbound API calls via" --> NetworkFirewall
-    NetworkFirewall -- "Allow-listed traffic to" --> ThirdPartyAPIs
-```
+*(See Diagram 2 in the "Visual Diagrams" section below.)*
 
 1.  **Mobile Application (Kotlin Multiplatform & Native UI)**
     *   **Description:** The user-facing application that runs on iOS or Android. It handles all user interactions and is a key component of the hybrid sync model.
@@ -256,24 +165,7 @@ The `ProviderManager` component acts as a factory to dynamically instantiate and
     4.  **Instantiation:** The `ProviderManager` consults its registry, finds the `FitbitProvider` class, instantiates it, and returns the object to the worker.
     5.  **Execution:** The worker then uses this object to perform the data fetch.
 
-```mermaid
-graph TD
-    A[SyncWorker]
-    B[ProviderManager]
-    C((Registry))
-
-    subgraph Initialization
-        direction LR
-        C -- "Registers 'fitbit' -> FitbitProvider.class" --> B
-    end
-
-    subgraph "Runtime"
-        A -- "Requests provider for 'fitbit'" --> B
-        B -- "Looks up 'fitbit' in registry" --> C
-        C -- "Returns FitbitProvider class" --> B
-        B -- "Instantiates and returns instance" --> A
-    end
-```
+*(See Diagram 3 in the "Visual Diagrams" section below.)*
 
 This design means that to add a new provider, a developer only needs to implement the `DataProvider` interface and register the new class with the `ProviderManager`'s registry.
 
@@ -317,17 +209,7 @@ For the MVP, cloud-to-cloud syncs are handled by a single, reliable architectura
     6.  Upon successful completion, the `Worker Lambda` publishes a `SyncSucceeded` event back to the EventBridge bus. This event is consumed by other services, primarily to trigger a push notification to the user and for analytics.
 *   **Advantage:** This is a highly reliable and extensible model. Leveraging the native SQS DLQ feature simplifies the worker logic, increases reliability, and improves observability.
 
-```mermaid
-graph TD
-    subgraph "Hot Path Sync Flow"
-        A[Mobile App] -- 1. Initiate --> B[API Gateway]
-        B -- 2. Publishes 'HotPathSyncRequested' event --> C[EventBridge]
-        C -- 3. Forwards to --> SQS[HotPathSyncQueue]
-        SQS -- 4. Triggers --> D[Worker Lambda]
-        D -- 5. Fetch/Write data --> E[Third-Party APIs]
-        D -- 6. Publishes 'SyncSucceeded' event --> C
-    end
-```
+*(See Diagram 4 in the "Visual Diagrams" section below.)*
 
 #### **Post-MVP: Historical Sync (Cold Path)**
 The ability for users to backfill months or years of historical data is a key feature planned for a post-MVP release. The detailed architecture for this "Cold Path," which will use AWS Step Functions to orchestrate the complex workflow, is captured in `45-future-enhancements.md`.
@@ -364,43 +246,7 @@ To ensure a single, consistent, and highly-available locking mechanism, the idem
 
 The following sequence diagram illustrates the robust end-to-end flow using DynamoDB.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client
-    participant APIGateway as "API Gateway"
-    participant WorkerLambda
-    participant IdempotencyStore as "DynamoDB"
-
-    Client->>APIGateway: POST /sync-jobs<br>Idempotency-Key: K1
-    APIGateway-->>Client: 202 Accepted
-
-    note over WorkerLambda: Receives job for key K1
-
-    WorkerLambda->>IdempotencyStore: PutItem({PK: "IDEM#K1", SK: "IDEM#K1", status: "INPROGRESS", ttl: ...})<br>Condition: attribute_not_exists(PK)
-    alt Lock Failed (ConditionalCheckFailedException)
-        IdempotencyStore-->>WorkerLambda: ConditionalCheckFailedException
-        WorkerLambda->>IdempotencyStore: GetItem({PK: "IDEM#K1"})
-        alt Key is "COMPLETED"
-            IdempotencyStore-->>WorkerLambda: {status: "COMPLETED"}
-            WorkerLambda->>WorkerLambda: Log "Duplicate suppressed" and exit
-        else Key is "INPROGRESS" or missing
-            IdempotencyStore-->>WorkerLambda: {status: "INPROGRESS"} / null
-            WorkerLambda->>WorkerLambda: Log "Race condition suppressed" and exit
-        end
-    else Lock Acquired
-        IdempotencyStore-->>WorkerLambda: OK
-        WorkerLambda->>WorkerLambda: Execute business logic...
-        alt Business logic is successful
-            WorkerLambda->>IdempotencyStore: UpdateItem({PK: "IDEM#K1", status: "COMPLETED", ttl: ...})
-            note right of IdempotencyStore: Update key, set 24hr TTL
-        else Business logic fails
-            WorkerLambda->>IdempotencyStore: DeleteItem({PK: "IDEM#K1"})
-            note right of IdempotencyStore: Delete lock to allow clean retry.<br>If this fails, the lock expires<br>in 5 mins anyway via TTL.
-            WorkerLambda->>WorkerLambda: Throw error to allow SQS retry
-        end
-    end
-```
+*(See Diagram 5 in the "Visual Diagrams" section below.)*
 
 ## 3b. Architecture for 1M DAU
 
@@ -721,31 +567,7 @@ A scalable fan-out pattern will be used to trigger automatic, periodic syncs for
 
 The following diagram illustrates this scalable fan-out architecture, including the query to DynamoDB.
 
-```mermaid
-graph TD
-    subgraph "Scheduling Infrastructure"
-        A["EventBridge Rule<br>cron(0/15 * * * ? *)"] --> B{"Scheduler State Machine"};
-        B --> C[Fan-Out Lambda<br>Calculates N shards];
-        C --> D{Map State<br>Processes N shards in parallel};
-    end
-
-    subgraph "Shard Processing (Parallel)"
-        style E1 fill:#f5f5f5,stroke:#333
-        D -- "Shard #1" --> E1[Shard Processor Lambda];
-    end
-
-    subgraph "Data & Execution"
-        DynamoDB[DynamoDB GSI]
-        F["Main Event Bus<br>(EventBridge)"];
-        G[SQS Queue];
-        H["Worker Fleet<br>(AWS Lambda)"];
-    end
-
-    E1 -- "1. Queries for users to sync" --> DynamoDB;
-    E1 -- "2. Publishes 'SyncRequested' events" --> F;
-    F -- "3. Routes events to" --> G;
-    G -- "4. Triggers" --> H;
-```
+*(See Diagram 6 in the "Visual Diagrams" section below.)*
 
 ### 3g. Client-Side Persistence and Offline Support Strategy
 
@@ -849,11 +671,16 @@ A dedicated **Anonymizer Proxy Lambda** will be used for real-time operational f
 *   **Testability and Observability:** The Anonymizer Proxy is a critical component and **must** have its own suite of unit and integration tests. Its latency and error rate will be monitored with dedicated CloudWatch Alarms.
 *   **Latency SLO:** The P99 latency for the proxy itself is an SLO that **must be under 50ms** and will be tracked on a dashboard.
 *   **PII Stripping Strategy:** The following table defines the PII stripping strategy. **[C-006]** This list is explicitly not exhaustive and represents a critical security gap. It **must be updated** with a comprehensive list of all fields across all canonical models before any user data is processed by an AI service. **[TODO: Complete this table for all canonical models.]**
-| Field | Action | Rationale |
+| Field (from any Canonical Model) | Action | Rationale |
 | :--- | :--- | :--- |
-| `sourceId` | **Hash** | Hashed to prevent reverse-engineering. |
-| `title` | **Remove** | High-risk PII (e.g., "Run with Jane Doe"). |
-| `notes` | **Remove** | High-risk PII. |
+| `sourceId` | **Hash** | Hashed with a per-user salt to prevent reverse-engineering while maintaining referential integrity for a given user. |
+| `title` | **Remove** | High-risk for free-text PII (e.g., "Run with Jane Doe"). |
+| `notes` | **Remove** | High-risk for free-text PII. |
+| `latitude`, `longitude` (and all other location data) | **Generalize** | Convert specific GPS coordinates to a general region (e.g., "San Francisco, CA") or remove entirely. |
+| `heartRateSamples` | **Aggregate** | Replace detailed timeseries data with summary statistics (e.g., `avg`, `min`, `max`). |
+| `calories` | **Keep** | Generally not considered PII. |
+| `steps` | **Keep** | Generally not considered PII. |
+| `distance` | **Keep** | Generally not considered PII. |
 *   **Privacy Guarantee:** This proxy-based architecture provides a strong guarantee that no raw user PII is ever processed by the AI models.
 
 #### Batch Anonymization for Analytics
@@ -1009,3 +836,209 @@ This appendix details critical operational policies that must be implemented.
 ## 11. Glossary
 
 A project-wide glossary of all business and technical terms is maintained in the root `GLOSSARY.md` file to ensure a single source of truth for terminology.
+
+## 12. Visual Diagrams
+
+This section contains all the architectural diagrams referenced in this document.
+
+### Diagram 1: System Context
+
+```mermaid
+---
+title: "System Context Diagram for SyncWell (v1.1 as of 2025-08-19)"
+---
+graph TD
+    subgraph SyncWell Ecosystem
+        A[Mobile App]
+        B[Backend]
+    end
+
+    subgraph Users
+        C[Health-Conscious User]
+    end
+
+    subgraph External Systems
+        D["Third-Party Health Platforms<br>(Cloud APIs)"]
+        D2["On-Device Health Platforms<br>(e.g., HealthKit)"]
+        E[Platform App Stores]
+        F[Platform Notification Services]
+        G[Firebase Authentication]
+    end
+
+    C -- "Views, configures, and<br>initiates syncs via" --> A
+    A -- "Authenticates user with" --> G
+    A -- "Initiates cloud sync jobs via API" --> B
+    A -- "Reads/writes local health data from/to" --> D2
+    A -- "Is distributed through" --> E
+    B -- "Fetches and pushes data to" --> D
+    B -- "Sends push notifications via" --> F
+    B -- "Validates user tokens using" --> G
+```
+
+### Diagram 2: Container Diagram (MVP)
+
+```mermaid
+---
+title: "Container Diagram for SyncWell (MVP)"
+---
+graph TD
+    subgraph "User's Device"
+        MobileApp[Mobile Application w/ KMP Module]
+    end
+
+    subgraph "Google Cloud"
+        FirebaseAuth["Firebase Authentication<br>(provides Google Public Keys)"]
+    end
+
+    subgraph "External Services"
+        ThirdPartyAPIs["Third-Party Health APIs"]
+    end
+
+    subgraph "AWS Cloud"
+        WAF[AWS WAF]
+        APIGateway[API Gateway]
+        AuthorizerLambda[Authorizer Lambda]
+        HotPathEventBus[EventBridge Event Bus]
+        DynamoDB[DynamoDB Table]
+        SecretsManager[Secrets Manager]
+        Observability["CloudWatch Suite"]
+        AppConfig[AWS AppConfig]
+
+        subgraph "VPC"
+            style VPC fill:#f5f5f5,stroke:#333
+            NetworkFirewall[AWS Network Firewall]
+            subgraph "Private Subnets"
+                WorkerLambda["Worker Lambda"]
+                ElastiCache[ElastiCache for Redis]
+            end
+        end
+
+        subgraph "SQS Queues"
+            HotPathSyncQueue[SQS: HotPathSyncQueue]
+            HotPathSyncDLQ[SQS: HotPathSyncDLQ]
+        end
+    end
+
+    MobileApp -- "Signs up / signs in with" --> FirebaseAuth
+    MobileApp -- "HTTPS Request (with Firebase JWT)" --> WAF
+    WAF -- "Filters traffic to" --> APIGateway
+
+    APIGateway -- "Validates JWT with" --> AuthorizerLambda
+    AuthorizerLambda -- "Fetches public keys from" --> FirebaseAuth
+    APIGateway -- "Publishes 'HotPathSyncRequested' event" --> HotPathEventBus
+
+    HotPathEventBus -- "Rule routes to" --> HotPathSyncQueue
+    HotPathSyncQueue -- "Target for" --> WorkerLambda
+    HotPathSyncQueue -- "On failure, redrives to" --> HotPathSyncDLQ
+
+    WorkerLambda -- "Reads/writes user state" --> DynamoDB
+    WorkerLambda -- "Gets credentials" --> SecretsManager
+    WorkerLambda -- "Reads/Writes cache" --> ElastiCache
+    WorkerLambda -- "Logs & Metrics" --> Observability
+    WorkerLambda -- "Fetches runtime config from" --> AppConfig
+    WorkerLambda -- "Makes outbound API calls via" --> NetworkFirewall
+    NetworkFirewall -- "Allow-listed traffic to" --> ThirdPartyAPIs
+```
+
+### Diagram 3: ProviderManager Factory Pattern
+
+```mermaid
+graph TD
+    A[SyncWorker]
+    B[ProviderManager]
+    C((Registry))
+
+    subgraph Initialization
+        direction LR
+        C -- "Registers 'fitbit' -> FitbitProvider.class" --> B
+    end
+
+    subgraph "Runtime"
+        A -- "Requests provider for 'fitbit'" --> B
+        B -- "Looks up 'fitbit' in registry" --> C
+        C -- "Returns FitbitProvider class" --> B
+        B -- "Instantiates and returns instance" --> A
+    end
+```
+
+### Diagram 4: Hot Path Sync Flow
+
+```mermaid
+graph TD
+    subgraph "Hot Path Sync Flow"
+        A[Mobile App] -- 1. Initiate --> B[API Gateway]
+        B -- 2. Publishes 'HotPathSyncRequested' event --> C[EventBridge]
+        C -- 3. Forwards to --> SQS[HotPathSyncQueue]
+        SQS -- 4. Triggers --> D[Worker Lambda]
+        D -- 5. Fetch/Write data --> E[Third-Party APIs]
+        D -- 6. Publishes 'SyncSucceeded' event --> C
+    end
+```
+
+### Diagram 5: Idempotency Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant APIGateway as "API Gateway"
+    participant WorkerLambda
+    participant IdempotencyStore as "DynamoDB"
+
+    Client->>APIGateway: POST /sync-jobs<br>Idempotency-Key: K1
+    APIGateway-->>Client: 202 Accepted
+
+    note over WorkerLambda: Receives job for key K1
+
+    WorkerLambda->>IdempotencyStore: PutItem({PK: "IDEM#K1", SK: "IDEM#K1", status: "INPROGRESS", ttl: ...})<br>Condition: attribute_not_exists(PK)
+    alt Lock Failed (ConditionalCheckFailedException)
+        IdempotencyStore-->>WorkerLambda: ConditionalCheckFailedException
+        WorkerLambda->>IdempotencyStore: GetItem({PK: "IDEM#K1"})
+        alt Key is "COMPLETED"
+            IdempotencyStore-->>WorkerLambda: {status: "COMPLETED"}
+            WorkerLambda->>WorkerLambda: Log "Duplicate suppressed" and exit
+        else Key is "INPROGRESS" or missing
+            IdempotencyStore-->>WorkerLambda: {status: "INPROGRESS"} / null
+            WorkerLambda->>WorkerLambda: Log "Race condition suppressed" and exit
+        end
+    else Lock Acquired
+        IdempotencyStore-->>WorkerLambda: OK
+        WorkerLambda->>WorkerLambda: Execute business logic...
+        alt Business logic is successful
+            WorkerLambda->>IdempotencyStore: UpdateItem({PK: "IDEM#K1", status: "COMPLETED", ttl: ...})
+            note right of IdempotencyStore: Update key, set 24hr TTL
+        else Business logic fails
+            WorkerLambda->>IdempotencyStore: DeleteItem({PK: "IDEM#K1"})
+            note right of IdempotencyStore: Delete lock to allow clean retry.<br>If this fails, the lock expires<br>in 5 mins anyway via TTL.
+            WorkerLambda->>WorkerLambda: Throw error to allow SQS retry
+        end
+    end
+```
+
+### Diagram 6: Scheduling Infrastructure
+
+```mermaid
+graph TD
+    subgraph "Scheduling Infrastructure"
+        A["EventBridge Rule<br>cron(0/15 * * * ? *)"] --> B{"Scheduler State Machine"};
+        B --> C[Fan-Out Lambda<br>Calculates N shards];
+        C --> D{Map State<br>Processes N shards in parallel};
+    end
+
+    subgraph "Shard Processing (Parallel)"
+        style E1 fill:#f5f5f5,stroke:#333
+        D -- "Shard #1" --> E1[Shard Processor Lambda];
+    end
+
+    subgraph "Data & Execution"
+        DynamoDB[DynamoDB GSI]
+        F["Main Event Bus<br>(EventBridge)"];
+        G[SQS Queue];
+        H["Worker Fleet<br>(AWS Lambda)"];
+    end
+
+    E1 -- "1. Queries for users to sync" --> DynamoDB;
+    E1 -- "2. Publishes 'SyncRequested' events" --> F;
+    F -- "3. Routes events to" --> G;
+    G -- "4. Triggers" --> H;
+```

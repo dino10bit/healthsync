@@ -182,8 +182,8 @@ With 1M DAU, we will make millions of API calls per day. Proactively managing th
 | **Google Fit** | Steps | `users/me/dataset:aggregate` | `users/me/dataSources/.../datasets:patch` | Hybrid | Requires Health Connect SDK on device. |
 | **Apple Health** | Steps | `HKSampleQuery` | `HKHealthStore.save()` | Device-to-Cloud / Cloud-to-Device | Uses the native HealthKit SDK on device. |
 | **Fitbit** | Steps | `1/user/-/activities/steps/date/[date]/1d.json` | `N/A` | Cloud-to-Cloud | Read-only for activity data. The granular `capabilities` enum clarifies this. |
-| **Garmin** | Steps | `daily-summary-service/daily-summary/...` | `N/A` | Cloud-to-Cloud | **[B-001] [RISK-HIGH-02] High Risk.** This appears to be an unofficial, reverse-engineered API. It could change or be shut down without notice. This integration must be considered unstable and directly contradicts the Q1 roadmap theme of reliability. **[NEEDS_CLARIFICATION: Q-02]** The business stakeholder who formally accepted this risk must be documented here. |
 | **Strava** | Activities | `athlete/activities` | `activities` | Cloud-to-Cloud | Does not provide daily step data. |
+| **Garmin** | Steps | `daily-summary-service/daily-summary/...` | `N/A` | Cloud-to-Cloud | **Deferred Post-MVP.** Per recommendation `[REC-HIGH-02]`, this integration has been removed from the MVP scope due to the extreme reliability risk of its unofficial API. It will be re-evaluated when an official, stable API is available. |
 
 ## 6. Risk Analysis & Mitigation
 
