@@ -349,7 +349,7 @@ For the **engineering team**, this document serves as the primary "to-do list" f
         *   Verify that the destination list is disabled or filtered to prevent a user from selecting the same app as the source.
         *   Verify that the user cannot proceed through the flow without making a selection at each step.
     *   **Edge Cases:**
-        *   Verify that platform limitations are handled (e.g., Garmin is shown as read-only and cannot be selected as a destination).
+        *   Verify that platform limitations are handled (e.g., a read-only provider is shown as disabled and cannot be selected as a destination).
         *   Test creating a sync configuration with all available data types selected.
 
 *   **Acceptance Criteria (AC):**
@@ -367,7 +367,7 @@ For the **engineering team**, this document serves as the primary "to-do list" f
 *   **Technical Notes:**
     *   The sync configuration is created on the client but the source of truth is stored in the backend database (DynamoDB). The client may cache this configuration for faster UI rendering.
     *   The configuration model must support multiple data types per sync connection.
-    *   The logic for graying out invalid destinations must be robust and consider platform limitations (e.g., Garmin as write-only). See `32-platform-limitations.md`.
+    *   The logic for graying out invalid destinations must be robust and consider platform limitations (e.g., a provider being read-only). See `32-platform-limitations.md`.
 *   **Non-Functional Requirements (NFRs):**
     *   **Performance:** The transition between steps in the configuration flow must feel instant (<250ms).
     *   **Data Integrity:** The configuration saved in the database must exactly match the user's selections. No data should be lost or misinterpreted.
@@ -1227,7 +1227,7 @@ For the **engineering team**, this document serves as the primary "to-do list" f
 ---
 
 #### **US-15:** Automatically detect and merge duplicate activities.
-*   **User Story:** As a user (Alex) who records a run on both their Garmin watch and Peloton bike, I want the app to automatically detect the duplicate and offer to merge them into one activity so my stats aren't counted twice.
+*   **User Story:** As a user (Alex) who records a ride on both their Wahoo bike computer and Peloton bike, I want the app to automatically detect the duplicate and offer to merge them into one activity so my stats aren't counted twice.
 *   **Persona:** Alex
 *   **Priority:** Should-Have (S-2)
 *   **Story Pts:** 13
@@ -1259,25 +1259,25 @@ For the **engineering team**, this document serves as the primary "to-do list" f
     *   **Edge Cases:**
         *   Test with activities that only partially overlap.
         *   Test the merge logic for various combinations of data types and sources.
-        *   Allow the user to set a default resolution strategy (e.g., "Always prefer Garmin").
+        *   Allow the user to set a default resolution strategy (e.g., "Always prefer Wahoo").
 
 *   **Acceptance Criteria (AC):**
     *   **Given** I am a Pro user.
-    *   **And** I have recorded the same activity in two different source apps (e.g., a run in Garmin and Peloton).
+    *   **And** I have recorded the same activity in two different source apps (e.g., a ride on Wahoo and Peloton).
     *   **When** the next sync runs.
     *   **Then** the app identifies that the two activities are duplicates based on time overlap and activity type.
     *   **And** the Sync Card on the dashboard shows a "1 Conflict Detected" status.
     *   **When** I tap on the card.
     *   **Then** I am taken to a Conflict Resolution screen showing the two activities side-by-side.
-    *   **And** I am presented with three options: "Keep Garmin", "Keep Peloton", or "Merge".
-    *   **And** if I choose "Merge," a single, enriched activity is created in the destination app, combining data from both sources (e.g., GPS track from Garmin, power data from Peloton).
+    *   **And** I am presented with three options: "Keep Wahoo", "Keep Peloton", or "Merge".
+    *   **And** if I choose "Merge," a single, enriched activity is created in the destination app, combining data from both sources (e.g., GPS track from Wahoo, power data from Peloton).
 
 *   **Technical Notes:**
     *   The core of this feature is the "duplicate detection" algorithm. It should be configurable (e.g., time tolerance, required data overlap).
     *   The "merge" logic will be powered by the **`AI Insights Service`** as defined in `06-technical-architecture.md`. The worker lambda will send the two conflicting activities to the service, which will use a trained ML model to return an intelligently merged super-activity. This is more powerful than simple, hard-coded rules.
 *   **Non-Functional Requirements (NFRs):**
     *   **Algorithmic Performance:** The duplicate detection algorithm must run efficiently and not significantly slow down the overall sync process.
-    *   **Configurability:** Power users should eventually be able to set their own merging rules (e.g., "Always prefer GPS from Garmin").
+    *   **Configurability:** Power users should eventually be able to set their own merging rules (e.g., "Always prefer GPS from Wahoo").
 *   **Stakeholder & Team Impact:**
     *   **Product & UX:** The design of the conflict resolution UI is critical. It must be incredibly clear and simple to prevent user confusion with a complex task.
     *   **Marketing:** This is a major selling point for the "Pro" tier.

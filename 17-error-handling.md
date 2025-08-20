@@ -93,9 +93,9 @@ A version-controlled dictionary will be the single source of truth for error def
     "userMessageKey": "error_fitbit_token_expired",
     "userAction": "NAVIGATE_TO_REAUTH_FITBIT"
   },
-  "GARMIN_API_UNAVAILABLE": {
+  "THIRD_PARTY_API_UNAVAILABLE": {
     "logLevel": "ERROR",
-    "userMessageKey": "error_service_unavailable_garmin",
+    "userMessageKey": "error_service_unavailable_generic",
     "userAction": "SHOW_SUPPORT_CONTACT"
   },
   "INTERNAL_SERVER_ERROR": {
@@ -123,9 +123,9 @@ All backend Lambda functions will output structured JSON logs to **AWS CloudWatc
   "service": "WorkerLambda",
   "correlationId": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
   "idempotencyKey": "client-generated-uuid-123",
-  "source": "garmin",
+  "source": "fitbit",
   "error": {
-    "name": "GarminApiError",
+    "name": "ThirdPartyApiError",
     "statusCode": 503,
     "message": "Service Unavailable"
   }

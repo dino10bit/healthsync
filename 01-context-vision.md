@@ -58,7 +58,7 @@ The primary goal of this PRD is to provide a comprehensive, enterprise-grade roa
 ### Functional Requirements
 
 *   **Cross-Platform Support:** Native-quality experience on both Android and iOS.
-*   **Multi-App Integration:** Support data sync from a wide range of sources, including but not limited to: Samsung Health, Strava, Fitbit, Garmin Connect, Oura, Polar, Suunto, Google Fit, and Apple Health.
+*   **Multi-App Integration:** Support data sync from a wide range of sources. Key launch partners for the MVP include Strava, Fitbit, Google Fit, and Apple Health. Other integrations (such as Garmin Connect, Oura, Polar, and Suunto) will be prioritized post-launch based on user feedback.
 *   **Configurable Sync Mapping:** Users can define sync direction (source → destination) for each supported data type.
 *   **Automatic Background Syncing:** The app performs automatic, periodic data syncs.
 *   **Historical Data Sync:** A premium feature allowing users to backfill their data history.

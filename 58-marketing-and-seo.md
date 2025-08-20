@@ -19,7 +19,7 @@ This document provides a granular, actionable marketing and SEO strategy for Syn
 ## 2. Go-to-Market Strategy
 
 ### 2.1. Target Personas
--   **"The Quantified Selfer":** Tech-savvy, data-obsessed user who owns multiple devices (e.g., Garmin watch, Oura ring, smart scale) and wants to aggregate all their data in one place for analysis.
+-   **"The Quantified Selfer":** Tech-savvy, data-obsessed user who owns multiple devices (e.g., a Wahoo bike computer, Oura ring, smart scale) and wants to aggregate all their data in one place for analysis.
 -   **"The Casual Athlete":** Uses a primary device for workouts (e.g., Apple Watch for running) but wants to sync that data to a social fitness app (e.g., Strava) to share with friends.
 -   **"The Health-Conscious Professional":** Uses a wellness tracker (e.g., Fitbit) for daily activity but their corporate wellness program uses a different platform. Needs a simple way to sync the data.
 
@@ -35,7 +35,7 @@ This document provides a granular, actionable marketing and SEO strategy for Syn
 ### 3.1. ASO Keyword Strategy - Deep Dive
 -   **Keyword Research:** We will use tools like AppTweak to identify high-intent, low-competition keywords.
 -   **Keyword Clusters:** We will target clusters of keywords for each integration.
-    -   *Example Cluster (Garmin):* "sync garmin to apple health", "garmin samsung health sync", "garmin connect to strava".
+    -   *Example Cluster (Fitbit):* "sync fitbit to apple health", "fitbit samsung health sync", "fitbit to strava".
 -   **Localization:** App Store metadata (title, keywords, description) will be localized for our top 5 target geos to improve ranking in those regions.
 
 ### 3.2. Content Marketing - Topic Clusters
@@ -50,14 +50,14 @@ This document provides a granular, actionable marketing and SEO strategy for Syn
 
 ### 3.4. Social Media Strategy
 -   **Primary Platform:** Twitter. We will engage with the #quantifiedself, #healthtech, and #fitness communities, and share product updates and content.
--   **Secondary Platform:** Reddit. We will monitor and participate in relevant subreddits like r/Garmin, r/OuraRing, and r/AppleWatch, offering helpful advice (not spammy links).
+-   **Secondary Platform:** Reddit. We will monitor and participate in relevant subreddits like r/Fitbit, r/OuraRing, and r/AppleWatch, offering helpful advice (not spammy links).
 
 ## 4. Paid Acquisition (Post-Launch)
 
 ### 4.1. Paid Acquisition Channel Analysis
 -   **Apple Search Ads:** High-intent channel. We will bid on competitor brand names and long-tail keywords directly within the App Store search.
 -   **Google App Campaigns:** Broader reach. Good for driving volume but requires careful monitoring of CPI and conversion rates.
--   **Social Media Ads (Facebook/Instagram):** Best for targeting users by interest (e.g., users who follow Garmin and Strava). Will require more creative assets (video, images).
+-   **Social Media Ads (Facebook/Instagram):** Best for targeting users by interest (e.g., users who follow Fitbit and Strava). Will require more creative assets (video, images).
 -   **Initial Focus:** Apple Search Ads, as it typically has the highest intent and ROI.
 
 ### 4.2. Measuring Marketing Effectiveness
@@ -76,7 +76,7 @@ graph TD
     A --> E[Blog];
     A --> F[Download];
     E --> G[Pillar Page: Ultimate Guide];
-    G --> H[Cluster Page: Garmin to Strava];
+    G --> H[Cluster Page: Fitbit to Strava];
     G --> I[Cluster Page: Oura to Google Fit];
 ```
 
@@ -110,7 +110,7 @@ graph TD
         -   *Volume:* Very High
         -   *Competition:* Very High
         -   *User Intent:* Low (User could be looking for anything)
-    -   **Long-Tail Keyword:** "sync garmin connect to samsung health"
+    -   **Long-Tail Keyword:** "sync fitbit to apple health"
         -   *Volume:* Low to Medium
         -   *Competition:* Low to Medium
         -   *User Intent:* Extremely High (User has a specific problem that our app solves)

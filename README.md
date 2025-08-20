@@ -4,7 +4,7 @@ This repository contains the complete Product Requirements Document (PRD) suite 
 
 ## 1. Project Vision
 
-SyncWell is a mobile application designed to solve the problem of data fragmentation in the digital health and fitness market. It acts as a secure "digital bridge," allowing users to synchronize their health data (e.g., steps, workouts, sleep) between various popular platforms like Garmin, Fitbit, Strava, Apple Health, and Google Fit.
+SyncWell is a mobile application designed to solve the problem of data fragmentation in the digital health and fitness market. It acts as a secure "digital bridge," allowing users to synchronize their health data (e.g., steps, workouts, sleep) between various popular platforms. The MVP will launch with support for Fitbit, Strava, Apple Health, and Google Fit, with other platforms like Garmin planned for post-launch releases.
 
 The primary goal is to provide a reliable, user-friendly, and privacy-focused solution for users who are invested in multiple health ecosystems.
 
@@ -34,5 +34,5 @@ A central `GLOSSARY.md` file is maintained at the root of this repository to ens
 This section lists the key business and technical assumptions that underpin the entire PRD suite.
 
 1.  **User Base Growth:** The user base is expected to grow to 1M DAU within 24 months of launch, but the MVP is architected and provisioned for a peak load of 3,000 RPS.
-2.  **Third-Party API Stability:** The APIs of our third-party partners (Fitbit, Garmin, etc.) will remain reasonably stable and will not introduce breaking changes without a standard deprecation notice period. Unofficial APIs (like Garmin's) are a known high risk tracked in `21-risks.md`.
+2.  **Third-Party API Stability:** The APIs of our third-party partners (e.g., Fitbit, Strava) will remain reasonably stable and will not introduce breaking changes without a standard deprecation notice period. The use of any unofficial APIs (like Garmin's) is deferred post-MVP.
 3.  **MVP Scope:** The feature set defined in `02-product-scope.md` is considered stable for the MVP launch.

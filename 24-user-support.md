@@ -39,7 +39,7 @@ For the **solo developer**, this document is a blueprint for building a scalable
     *   **Content Strategy:**
         *   **Troubleshooting Guides:** Step-by-step solutions for common errors (e.g., "How to Fix a Failing Sync").
         *   **How-To Guides:** Walkthroughs for key features (e.g., "How to Configure Historical Sync").
-        *   **Conceptual Explainers:** Articles explaining *why* something works the way it does (e.g., "Understanding Garmin's API Limitations").
+        *   **Conceptual Explainers:** Articles explaining *why* something works the way it does (e.g., "Understanding Read-Only Integrations").
     *   **Process:** New articles will be prioritized based on the frequency of related support tickets. All articles will be reviewed quarterly for accuracy.
 *   **Channel 3: Public Feedback Portal (Canny.io):** Serves as a community forum where users can see that others may be having the same issue or have the same idea, reducing duplicate tickets.
 

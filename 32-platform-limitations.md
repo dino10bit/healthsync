@@ -34,9 +34,9 @@ This matrix serves as our formal, internal database of all known limitations.
 
 | ID | Platform | Limitation / Quirk | Status | Discovered | Technical Implementation Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **L-01** | Garmin | **No Write Access:** The official API is read-only for almost all data types. | Confirmed | 2023-10-01 | In the `GarminProvider`, the `writeData()` method should immediately throw a `NotSupportedError`. The UI must disable Garmin as a destination option. |
-| **L-02** | Garmin | **Historical Data Limits:** API provides last 2 years of daily data and 5 years of activities. | Confirmed | 2023-10-01 | The `GarminProvider.fetchData()` method must check the requested date range and return an empty array for dates beyond the limit. The UI must disable the date picker accordingly. |
-| **L-03** | Garmin | **No 3rd-Party Activity Sync:** Does not expose activities synced *into* Garmin from other sources (e.g., Zwift). | Confirmed | 2023-10-01 | The `GarminProvider` cannot see this data. No technical action is possible, this must be handled via user communication. |
+| **L-01** | Garmin | **No Write Access:** The official API is read-only for almost all data types. | **Post-MVP** | 2023-10-01 | In the `GarminProvider`, the `writeData()` method should immediately throw a `NotSupportedError`. The UI must disable Garmin as a destination option. |
+| **L-02** | Garmin | **Historical Data Limits:** API provides last 2 years of daily data and 5 years of activities. | **Post-MVP** | 2023-10-01 | The `GarminProvider.fetchData()` method must check the requested date range and return an empty array for dates beyond the limit. The UI must disable the date picker accordingly. |
+| **L-03** | Garmin | **No 3rd-Party Activity Sync:** Does not expose activities synced *into* Garmin from other sources (e.g., Zwift). | **Post-MVP** | 2023-10-01 | The `GarminProvider` cannot see this data. No technical action is possible, this must be handled via user communication. |
 | **L-04** | Polar | **No Historical Data Access:** The API does not provide a mechanism to fetch data for a specified date range in the past. | Confirmed | 2023-10-05 | The `PolarProvider` will not implement the `fetchHistoricalData` method. The Historical Sync feature will be disabled in the UI when Polar is the selected source. |
 | **L-05** | Huawei | **Limited Write Access:** API only allows writing a small subset of data types (e.g., weight). | Confirmed | 2023-10-08 | The `HuaweiProvider.writeData()` method must check the `dataType` and throw a `NotSupportedError` for unsupported types like activities. |
 | **L-06** | Google Fit| **Native Tracking Conflicts:** If Google Fit's own tracking is enabled, it can lead to duplicated data. | Confirmed | 2023-09-15 | The app will use the Google Fit API to check if `com.google.android.gms` is a data source for steps. If so, a persistent warning will be shown on the dashboard. |
@@ -59,9 +59,9 @@ This matrix defines where and how we communicate these limitations to the user.
 
 | ID | Limitation | In Onboarding | In Sync Config UI | In Error Message | FAQ Article |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **L-01** | Garmin: No Write | No | Yes (Grayed out as destination, with tooltip) | Yes (If user somehow tries) | Yes (Dedicated Article) |
-| **L-02** | Garmin: History Limit| No | Yes (Date picker disabled) | No | Yes (Mentioned in Hist. Sync article) |
-| **L-03** | Garmin: 3rd Party | No | No | No | Yes (Dedicated Article) |
+| **L-01** | Garmin: No Write | Post-MVP | Post-MVP | Post-MVP | Post-MVP |
+| **L-02** | Garmin: History Limit| Post-MVP | Post-MVP | Post-MVP | Post-MVP |
+| **L-03** | Garmin: 3rd Party | Post-MVP | Post-MVP | Post-MVP | Post-MVP |
 | **L-04** | Polar: No History| No | Yes (Historical Sync option disabled) | No | Yes (Mentioned in Hist. Sync article) |
 | **L-06** | Google Fit: Conflicts| No | Yes (Persistent warning banner on dashboard) | No | Yes (Dedicated Article with video) |
 
@@ -72,9 +72,9 @@ This section documents workarounds that can be communicated to users in FAQ arti
 *   **Huawei Health in Unsupported Regions (L-05):**
     *   **Problem:** The Huawei Health Kit API is geo-restricted and not available in the USA.
     *   **Workaround:** Users can create a new Huawei ID, setting their region to a supported country (e.g., Mexico, UK). This allows the API to be enabled. This comes with the caveat that their old data will not be accessible. This process will be documented in detail in the Help Center.
-*   **Syncing Zwift/TrainerRoad Data (related to L-03):**
-    *   **Problem:** Users want to sync their Zwift data, but it doesn't show up if they sync it through Garmin.
-    *   **Workaround:** The user should connect their Zwift account to a free Strava account, and then connect both their Garmin and Strava accounts to SyncWell as sources. SyncWell will automatically de-duplicate the activities.
+*   **Syncing Zwift/TrainerRoad Data (related to L-03, Post-MVP):**
+    *   **Problem:** Users want to sync their Zwift data, but it doesn't show up if they sync it through a provider like Garmin that doesn't expose third-party activities.
+    *   **Workaround:** The user should connect their Zwift account to a free Strava account, and then connect both their primary device (e.g., Garmin) and Strava accounts to SyncWell as sources. SyncWell will automatically de-duplicate the activities.
 
 ## 6. Optional Visuals / Diagram Placeholders
 *   **[Flowchart] Limitation Discovery Process:** A flowchart showing the process from "New API Error Pattern Detected" to "Limitation ID Created" and "User Communication Matrix Updated."
