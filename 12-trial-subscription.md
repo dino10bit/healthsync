@@ -29,7 +29,6 @@ The app will model a user's access level as a formal state machine. A user can o
 *   `TRIALING`: The user has completed onboarding. The trial period is active. All features are unlocked except those explicitly gated (e.g., Historical Sync).
 *   `TRIAL_EXPIRED`: The trial period has ended. Core sync functionality is disabled. The user is prompted to upgrade.
 *   `SUBSCRIBED`: The user has an active, auto-renewing subscription. All features are unlocked.
-*   `LIFETIME`: The user has purchased the lifetime license. All features are unlocked.
 
 The entitlement state will be managed by the RevenueCat SDK, which serves as the source of truth, preventing trial abuse and simplifying cross-platform state management.
 
@@ -50,10 +49,10 @@ The entitlement state will be managed by the RevenueCat SDK, which serves as the
     *   The manual sync button is disabled.
 *   **Functionality:** Core data synchronization is completely disabled. The user can still access settings, the help center, and manage their connected apps.
 
-### `SUBSCRIBED` / `LIFETIME` State
+### `SUBSCRIBED` State
 
 *   **UI:** The app is fully unlocked. All trial-related banners and prompts are removed.
-*   **Settings:** The "Manage Account" screen shows the user's current status (e.g., "SyncWell Pro: Lifetime License" or "SyncWell Pro: Subscription renews on [Date]"). For subscribers, a "Manage Subscription" button will deep-link to the native OS subscription management screen.
+*   **Settings:** The "Manage Account" screen shows the user's current status (e.g., "SyncWell Pro: Subscription renews on [Date]"). A "Manage Subscription" button will deep-link to the native OS subscription management screen.
 
 ## 4. Paywall Design & Copy
 
@@ -63,29 +62,23 @@ The paywall is a critical conversion surface. Its design must be clear and persu
 *   **Value Propositions (Bulleted List with Icons):**
     *   ✅ **Unlimited Syncing:** Keep all your apps in sync, automatically.
     *   ✅ **Historical Sync:** Import your complete health data history.
-    *   ✅ **All Future Updates:** Get access to all new features and integrations.
+    *   ✅ **Smart Conflict Resolution:** Intelligently merge duplicate activities.
     *   ✅ **Support a Solo Developer:** Help keep SyncWell running and improving.
-*   **Purchase Options (Side-by-side):**
-    *   **Left Box (Highlighted as "Best Value"):** **Lifetime License**. Price: `$7.99`. Subtext: "Pay once, use forever."
-    *   **Right Box:** **6-Month Plan**. Price: `$3.49`. Subtext: "Billed every 6 months."
-*   **Call to Action:** A single "Continue" or "Unlock All Features" button.
+*   **Purchase Options:**
+    *   **SyncWell Pro:** A single, clear option for the yearly subscription. Price: `$24.99 / year`.
+*   **Call to Action:** A single "Upgrade to Pro" button.
 *   **Footer:** Small text links to "Restore Purchases", the Privacy Policy, and Terms of Service.
 
 ## 5. A/B Testing Strategy
 
 To optimize conversion, we will use Firebase A/B Testing in conjunction with RevenueCat to test key variables.
 
-*   **Test 1: Price Point Elasticity:**
-    *   **Variable:** `price`
-    *   **Hypothesis:** A lower price point will increase conversion rate enough to offset the lower price, maximizing total revenue.
-    *   **Groups:** Group A sees `$7.99` (Lifetime). Group B sees `$5.99`.
-    *   **Metric:** Total revenue after 14 days for each user cohort.
-*   **Test 2: Trial Length:**
+*   **Test 1: Trial Length:**
     *   **Variable:** `trial_duration`
     *   **Hypothesis:** A longer, 14-day trial may give users more time to see the value, leading to a higher conversion rate.
     *   **Groups:** Group A gets a 7-day trial. Group B gets a 14-day trial.
     *   **Metric:** Trial-to-paid conversion rate.
-*   **Test 3: Paywall Copy:**
+*   **Test 2: Paywall Copy:**
     *   **Variable:** `paywall_headline`
     *   **Hypothesis:** A benefit-oriented headline ("Unlock Your Health Data") will convert better than a feature-oriented one ("Unlock All Features").
     *   **Groups:** Group A sees Headline A. Group B sees Headline B.
@@ -102,7 +95,7 @@ To optimize conversion, we will use Firebase A/B Testing in conjunction with Rev
 | **R-36** | The paywall is not persuasive enough, leading to a low conversion rate. | Medium | High | The A/B testing strategy defined in Section 5 is the primary mitigation. Continuously iterate on the design and copy based on data. |
 
 ## 7. Optional Visuals / Diagram Placeholders
-*   **[Diagram] User Entitlement State Machine:** A formal state diagram showing the `ANONYMOUS`, `TRIALING`, `TRIAL_EXPIRED`, `SUBSCRIBED`, and `LIFETIME` states and the transitions between them.
+*   **[Diagram] User Entitlement State Machine:** A formal state diagram showing the `ANONYMOUS`, `TRIALING`, `TRIAL_EXPIRED`, and `SUBSCRIBED` states and the transitions between them.
 *   **[Mockup] In-App Banners:** Mockups of the "X days left" banner and the "Trial Expired" banner.
 *   **[Mockup] High-Fidelity Paywall Screen:** A detailed mockup of the paywall as described in Section 4.
 *   **[Diagram] A/B Testing Plan:** A table visually laying out the A/B tests, their variables, and their primary success metrics.

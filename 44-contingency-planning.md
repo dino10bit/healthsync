@@ -114,7 +114,7 @@ The purpose of this document is to enable a calm, rational, and rapid response u
 *   **Objective:** To restore the `SyncWellMetadata` table to a known good state just before the incident began, minimizing data loss and restoring service for all users.
 *   **Strategy:** This plan leverages the **Point-in-Time Recovery (PITR)** feature of Amazon DynamoDB, which must be enabled on the table from day one.
 *   **Action Plan (Manual Runbook):**
-    1.  **Confirm & Halt:** Confirm the issue is widespread data corruption. Immediately halt any processes that write to the DynamoDB table (e.g., by scaling down the Fargate worker service to zero tasks) to prevent further damage.
+    1.  **Confirm & Halt:** Confirm the issue is widespread data corruption. Immediately halt any processes that write to the DynamoDB table (e.g., by setting the Lambda worker's SQS trigger concurrency to 0) to prevent further damage.
     2.  **Identify Recovery Point:** Analyze logs and deployment timestamps to identify the exact time the faulty code was deployed. The recovery point will be the timestamp immediately preceding the deployment.
     3.  **Initiate PITR:** Use the AWS Management Console or CLI to start the PITR process. This will create a *new* DynamoDB table (`SyncWellMetadata-restored`) with the data from the specified recovery point. This process can take several hours depending on the table size.
     4.  **Data Validation (Spot-Check):** Once the new table is created, perform a manual spot-check on a few known-good user accounts to verify that their data has been restored correctly.
@@ -122,7 +122,7 @@ The purpose of this document is to enable a calm, rational, and rapid response u
         *   This is the most critical and sensitive step. The application code needs to be pointed to the new, restored table.
         *   **This process is critically dependent on the DynamoDB table name being managed externally in AWS AppConfig, as specified in `06-technical-architecture.md`.** Hardcoding the table name in the application code is not acceptable as it would make this recovery process too slow and error-prone.
         *   The recovery process is to update the `DynamoDBTableName` parameter in AppConfig to the name of the new, restored table (e.g., `SyncWellMetadata-restored`).
-        *   A rolling deployment of the Fargate worker service and relevant Lambda functions is then initiated to force the services to pick up the new configuration parameter.
+        *   A rolling deployment of the worker Lambda function is then initiated to force the service to pick up the new configuration parameter.
     6.  **Re-enable Services:** Once traffic is successfully pointed to the restored table, re-enable the services that were halted in step 1.
     7.  **User Communication:**
         *   **Initial:** Post a message to the status page acknowledging a major issue and that the service is in maintenance mode.

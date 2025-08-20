@@ -1,3 +1,15 @@
+# PRD Section 2: Product Scope, Personas & MVP Definition
+
+## 0. Document Management
+
+### Version History
+| Version | Date       | Author(s) | Summary of Changes |
+| :--- | :--- | :--- | :--- |
+| 1.0     | 2025-08-11 | J. Doe    | Initial draft. |
+| 1.1     | 2025-08-20 | J. Doe    | Clarified that "Pro-Tier subscription" is the definitive monetization model, resolving conflict with other documents. |
+
+---
+
 ## Dependencies
 
 ### Core Dependencies

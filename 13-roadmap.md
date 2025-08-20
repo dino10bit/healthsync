@@ -74,7 +74,26 @@ This roadmap strategically rolls out the 10 core features to build a market-lead
 *   **Business Outcome:** Accelerate user growth and ensure the platform is robust and scalable for years to come.
 *   **KPIs:** Number of Active Family Plan subscriptions, Reduction in Average Sync Latency, Improvement in key Onboarding funnel metrics.
 
-## 4. Resource Allocation (Time Management)
+## 4. High-Level MVP Timeline (Estimate)
+
+While the roadmap is theme-based, the following provides a high-level, estimated sprint-based timeline for delivering the "Must-Have" features of the MVP. This is based on the sprint plan outlined in `04-user-stories.md`.
+
+*   **Sprint 1: Foundation & Onboarding (2 weeks)**
+    *   *Focus:* Project setup, CI/CD, core app shell, and the welcome/onboarding flow (US-01, US-03).
+*   **Sprint 2: Core Connections (2 weeks)**
+    *   *Focus:* Implementing the OAuth flows for the first 2-3 key platforms (e.g., Fitbit, Google) and the permission priming logic (US-02).
+*   **Sprint 3: Sync Configuration & Dashboard (2 weeks)**
+    *   *Focus:* Building the main dashboard UI and the multi-step flow for creating, viewing, and deleting sync configurations (US-04, US-07, US-08, US-16).
+*   **Sprint 4: Backend Sync Engine (2 weeks)**
+    *   *Focus:* Implementing the core background processing logic on the backend for the "Hot Path" (US-05).
+*   **Sprint 5: Monetization & Support (2 weeks)**
+    *   *Focus:* Implementing the full In-App Purchase flow (trial, subscription, restore), the paywall, and the help center (US-09, US-11, US-12, US-13).
+*   **Sprint 6: Integration & Hardening (1-2 weeks)**
+    *   *Focus:* End-to-end testing, bug fixing, performance polishing, and preparation for app store submission.
+
+**Total Estimated MVP Timeline:** 11-12 weeks.
+
+## 5. Resource Allocation (Time Management)
 
 As a solo developer, disciplined time allocation is crucial for balancing competing priorities. The target allocation of development time is:
 

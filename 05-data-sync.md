@@ -23,113 +23,59 @@ This document provides the detailed technical and functional specification for S
 
 This document serves as a blueprint for the **product and engineering teams**, detailing the specific architecture, algorithms, and policies required. A well-defined sync engine is the most critical and complex component of the project; this specification aims to de-risk its development by providing a clear and comprehensive plan.
 
-## 2. Sync Engine Architecture
+## 2. Sync Engine Architecture (MVP)
 
-The data synchronization engine is a server-side, event-driven system built on AWS, as defined in `06-technical-architecture.md`. This architecture is designed for massive scale and reliability, separating syncs into two distinct paths:
+The data synchronization engine for the MVP is a server-side, event-driven system built on AWS, as defined in `06-technical-architecture.md`. The architecture is designed for reliability and is focused exclusively on the **"Hot Path"** for handling syncs of recent data.
 
 *   **Hot Path (for Real-time Syncs):** This path is optimized for low-latency, high-volume, short-lived sync jobs. It uses an SQS queue to reliably buffer requests and decouple the API from the workers.
-*   **Cold Path (for Historical Syncs):** This path is designed for long-running, complex, and potentially error-prone historical data backfills. It uses AWS Step Functions to orchestrate the entire workflow, providing state management, error handling, and observability.
+*   **Post-MVP (Cold Path):** The architecture for long-running historical data backfills (the "Cold Path") is a post-MVP feature. The detailed design, which uses AWS Step Functions, is captured in `45-future-enhancements.md`.
 
-The core components are:
-*   **`API Gateway`:** The public-facing entry point. It uses **direct service integrations** to validate requests and route them to the appropriate path, enhancing performance and reducing cost by removing the need for an intermediate Lambda function.
-*   **`EventBridge Event Bus`:** The central nervous system for the hot path. It receives `RealtimeSyncRequested` events directly from API Gateway and routes them to the SQS queue.
-*   **`SQS Queue (Hot Path)`:** A primary, durable SQS queue that acts as a critical buffer for real-time sync jobs, absorbing traffic spikes and ensuring no jobs are lost.
-*   **`SQS Dead-Letter Queue (DLQ)`:** A secondary SQS queue configured as the DLQ for the primary queue. If a `WorkerLambda` fails to process a message after multiple retries, SQS automatically moves the message here for analysis, preventing it from blocking the main queue.
-*   **`AWS Step Functions (Cold Path)`:** A managed workflow orchestrator that manages the entire lifecycle of a historical sync, with executions started directly by API Gateway.
-*   **`Worker Service (AWS Lambda)`:** The heart of the engine. A serverless function running on AWS Lambda that contains the core sync logic. It's invoked either in response to SQS messages (for hot path jobs) or by the Step Functions orchestrator (for cold path jobs).
+The core components for the MVP are:
+*   **`API Gateway`:** The public-facing entry point. It uses **direct service integrations** to validate requests and publish events, enhancing performance and reducing cost.
+*   **`EventBridge Event Bus`:** The central nervous system. It receives `RealtimeSyncRequested` events directly from API Gateway and routes them to the SQS queue.
+*   **`SQS Queue`:** A primary, durable SQS queue that acts as a critical buffer for real-time sync jobs, absorbing traffic spikes and ensuring no jobs are lost.
+*   **`SQS Dead-Letter Queue (DLQ)`:** A secondary SQS queue configured as the DLQ for the primary queue. If a `WorkerLambda` fails to process a message after multiple retries, SQS automatically moves the message here for analysis.
+*   **`Worker Service (AWS Lambda)`:** The heart of the engine. A serverless function running on AWS Lambda that contains the core sync logic, invoked by SQS messages.
 *   **`DataProvider` (Interface):** A standardized interface within the worker code that each third-party integration must implement.
-*   **`Smart Conflict Resolution Engine`:** A core component within the worker that intelligently resolves data conflicts before writing.
+*   **`Conflict Resolution Engine`:** A component within the worker that resolves data conflicts using simple, deterministic rules.
 *   **`DynamoDB`:** The `SyncWellMetadata` table stores all essential state for the sync process.
 
-## 3. The Synchronization Algorithm (Server-Side Delta Sync)
+## 3. The Synchronization Algorithm (Server-Side Delta Sync for MVP)
 
 The `Worker Lambda` will follow this algorithm for each job pulled from the SQS queue:
 
-1.  **Job Dequeue:** The Lambda function receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit"). (Note: A sync *from* a provider is a "read" operation, which is consistent with that provider's capabilities).
-2.  **Get State from DynamoDB:** The worker task performs a `GetItem` call on the `SyncWellMetadata` table to retrieve the `SyncConfig` item.
-    *   **PK:** `USER#{userId}`
-    *   **SK:** `SYNCCONFIG#{sourceId}#to#{destId}#{dataType}`
-    *   This single read provides the `lastSyncTime` and the user's chosen `conflictResolutionStrategy`.
-3.  **Fetch New Data:** It calls the `fetchData(since: lastSyncTime)` method on the source `DataProvider` (e.g., `FitbitProvider`). If new data is found, the algorithm proceeds.
-4.  **Fetch Destination Data for Conflict Resolution:** To enable conflict resolution, the worker fetches potentially overlapping data from the destination `DataProvider`. The time range for this query should be the exact time range of the new data fetched from the source (i.e., from the minimum to the maximum timestamp of the new records). Any tolerance for clock skew will be applied by the `ConflictResolutionEngine` during the comparison logic, not during the data fetch.
-5.  **Smart Conflict Resolution:** The `Smart Conflict Resolution Engine` is invoked. It compares the source and destination data and applies the user's chosen strategy. If the strategy is `AI-Powered Merge`, it calls the **AI Insights Service**. It outputs a final, clean list of data points to be written.
-6.  **Write Data:** The worker calls the `pushData()` method on the destination provider with the conflict-free data.
-7.  **Handle Partial Failures:** The worker **must** inspect the `PushResult` returned from the `pushData` call.
-    *   If `success` is `true` and `failedItemIds` is empty, the entire job was successful.
-    *   If `success` is `false` or `failedItemIds` is not empty, it indicates a partial failure. For the MVP, the entire job will be considered failed. The worker will throw an error, allowing SQS to retry the job. This is a safe-by-default strategy. A more granular recovery mechanism for partial failures is a potential future enhancement.
-8.  **Update State in DynamoDB:** Only upon full successful completion, the worker performs an `UpdateItem` call on the `SyncConfig` item in `SyncWellMetadata` to set the new `lastSyncTime` for the connection.
+1.  **Job Dequeue:** The Lambda function receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
+2.  **Get State from DynamoDB:** The worker task performs a `GetItem` call on the `SyncWellMetadata` table to retrieve the `SyncConfig` item. This read provides the `lastSyncTime` and the user's chosen `conflictResolutionStrategy`.
+3.  **Fetch New Data:** It calls the `fetchData(since: lastSyncTime, dataType: job.dataType)` method on the source `DataProvider`. The `dataType` (e.g., "steps", "workouts") is retrieved from the job payload.
+4.  **Fetch Destination Data for Conflict Resolution:** To enable conflict resolution, the worker fetches potentially overlapping data from the destination `DataProvider`, again specifying the `dataType`. The time range for this query will be the exact time range of the new data fetched from the source.
+5.  **Conflict Resolution:** The `Conflict Resolution Engine` is invoked. It compares the source and destination data and applies the user's chosen strategy (e.g., "Prioritize Source").
+6.  **Write Data:** The worker calls the generic `pushData(data: conflictFreeData)` method on the destination provider.
+7.  **Handle Partial Failures:** The worker **must** inspect the `PushResult` returned from the `pushData` call. For the MVP, if the push is not completely successful, the entire job will be considered failed. The worker will throw an error, allowing SQS to retry the job. This is a safe-by-default strategy.
+8.  **Update State in DynamoDB:** Only upon full successful completion, the worker performs an `UpdateItem` call on the `SyncConfig` item in `SyncWellMetadata` to set the new `lastSyncTime`.
 9.  **Delete Job Message:** The worker deletes the job message from the SQS queue to mark it as complete.
 
-## 4. Smart Conflict Resolution Engine
+## 4. Conflict Resolution Engine (MVP)
 
-This engine is a core feature of SyncWell, designed to eliminate data duplication and loss. It offers several strategies that Pro users can choose from, catering to our key user personas. For "Sarah," who values simplicity, the default `Prioritize Source` is a "set it and forget it" solution. For "Alex," who wants ultimate control, the ability to choose a strategy, especially the `AI-Powered Merge`, is a key differentiator.
+For the MVP, the engine is designed to be simple, reliable, and deterministic. It offers a limited set of rules-based strategies. The advanced "AI-Powered Merge" feature is a post-MVP enhancement, with its design captured in `45-future-enhancements.md`.
 
 ### 4.1. Conflict Detection Algorithm
 
-Before the engine can resolve a conflict, it must first detect one. A conflict that is eligible for the `AI-Powered Merge` strategy is detected using the following algorithm:
+A conflict is detected if a `source` activity and a `destination` activity have time ranges that overlap by more than a configured threshold (defaulting to **60 seconds**).
 
-1.  **Candidate Selection:** The algorithm considers new activities fetched from the `source` and potentially overlapping activities from the `destination`.
-2.  **Time Overlap Check:** A conflict is identified if a `source` activity and a `destination` activity have time ranges that overlap by more than a configured threshold (defaulting to **60 seconds** to account for minor recording discrepancies). This value will be tuned based on provider-specific behavior.
-3.  **Activity Type Match:** The overlapping activities must be of a compatible type. For example, a "Run" can be compared with another "Run", but a "Run" and a "Swim" at the same time are considered two distinct valid activities, not a conflict.
-4.  **Exclusion of Exact Duplicates:** If the two overlapping activities have the same `sourceId` and `sourceProvider`, they are considered an exact technical duplicate (e.g., from a re-sync of the same data) and are not sent for AI resolution. The duplicate is simply ignored.
+### 4.2. Resolution Strategies (MVP)
 
-Only if all these conditions are met are the two activity records sent to the AI Insights Service for an intelligent merge.
-
-### 4.2. Resolution Strategies
-
-*   **`Prioritize Source`:** The default behavior. New data from the source platform will always overwrite any existing data in the destination for the same time period.
+*   **`Prioritize Source` (Default):** New data from the source platform will always overwrite any existing data in the destination for the same time period.
 *   **`Prioritize Destination`:** Never overwrite existing data. If a conflicting entry is found in the destination, the source entry is ignored.
-*   **`AI-Powered Merge` (Activities Only - Pro Feature):** This advanced strategy uses a machine learning model to create the best possible "superset" of the data. Instead of fixed rules, it makes an intelligent prediction.
-    *   **Data Privacy & Anonymization:** To protect user privacy, all data sent to the AI service for merging **must** be anonymized in real-time. The detailed technical implementation of this critical privacy feature, including the real-time anonymization proxy, latency considerations, and PII stripping strategy, is specified in `06-technical-architecture.md`, Section "Real-Time Anonymization for Operational AI".
-    *   **API Contract:** The request from the worker to the Anonymizer Proxy will conform to the following contract:
-        ```
-        // POST /v1/merge-activities
-        {
-          "sourceActivity": { ... }, // CanonicalWorkout model
-          "destinationActivity": { ... } // CanonicalWorkout model
-        }
-        ```
-        The expected success response will be:
-        ```
-        // 200 OK
-        {
-          "mergedActivity": { ... } // CanonicalWorkout model
-        }
-        ```
-    *   **Intelligence:** The service's ML model, trained on thousands of examples of merged activities, analyzes the data. It might learn, for example, that a user's Garmin device provides more reliable GPS data, while their Wahoo chest strap provides more accurate heart rate data.
-    *   **Output:** The AI service returns a single, merged activity record that combines the best attributes of both sources. For example, it could take the GPS track from a Garmin device and combine it with Heart Rate data from a Wahoo chest strap for the same activity, creating a single, more complete workout file. This is far more flexible and powerful than hard-coded rules.
-    *   **Fallback Mechanism:** **Reliability of the core sync is paramount.** If the `AI Insights Service` is unavailable, times out, or returns an error, this is treated as a special case. The Conflict Resolution Engine **must not fail the sync job**. Instead, it must log the error and automatically fall back to the default `Prioritize Source` strategy for the conflicting items. This ensures that a failure in a non-essential enhancement service does not prevent the user's core data from syncing.
-    *   **User Transparency:** To ensure transparency for this premium feature, the result of the sync job will be stored in a `SyncHistory` record. This record will be a new item type in the main `SyncWellMetadata` DynamoDB table, created by the Worker Lambda upon job completion. It will include the `jobId`, a `timestamp`, and a `resolution` attribute set to either `AI_MERGE` or `FALLBACK_PRIORITIZE_SOURCE`. The mobile client will read this history and display an informational icon (the specific icon and tooltip text will be defined in the UX Design Specification) next to any sync that used the fallback. This maintains a high level of trust with our paying users.
 
 ## 5. Data Integrity
 
-*   **Durable Queueing & Idempotency:** The combination of SQS and Lambda guarantees that a real-time sync job will be processed "at-least-once". To prevent duplicate processing in the rare case of a message being delivered more than once, the system uses a robust, end-to-end idempotency strategy. As defined in `06-technical-architecture.md`, a unique `Idempotency-Key` generated by the client is passed through the entire system. The worker task checks for this key in a central store before processing to ensure the job has not already been completed, guaranteeing at-most-once processing.
+*   **Durable Queueing & Idempotency:** The combination of SQS and Lambda guarantees that a real-time sync job will be processed "at-least-once". To prevent duplicate processing, the system uses a robust, end-to-end idempotency strategy based on a client-generated `Idempotency-Key`, as defined in `06-technical-architecture.md`.
 *   **Transactional State:** State updates in DynamoDB are atomic. The `lastSyncTime` is only updated if the entire write operation to the destination platform succeeds.
-*   **Dead Letter Queue (DLQ):** If a job fails repeatedly (e.g., due to a persistent third-party API error or a problem with the AI service), SQS will automatically move it to a DLQ. This allows for manual inspection and debugging without blocking the main queue.
+*   **Dead Letter Queue (DLQ):** If a job fails repeatedly (e.g., due to a persistent third-party API error), SQS will automatically move it to a DLQ. This allows for manual inspection and debugging without blocking the main queue.
 
-## 5a. Historical Data Sync (`cold-path`)
+## 5a. Historical Data Sync (Post-MVP)
 
-Handling a user's request to sync several years of historical data (User Story **US-10**) presents a significant challenge. A single, long-running job is brittle and prone to failure. To address this, we will use **AWS Step Functions**, a managed workflow orchestrator that aligns with our serverless-first architecture.
-
-1.  **Workflow Orchestration with AWS Step Functions:** When a user requests a historical sync via the API, a direct integration between **API Gateway and AWS Step Functions** initiates a new execution of a pre-defined state machine. This approach provides superior reliability, state management, and observability compared to a manual orchestration solution, while reducing cost and latency by removing an unnecessary Lambda invocation.
-
-2.  **State Machine Logic:** The state machine, as detailed in `06-technical-architecture.md`, will perform the following steps:
-    *   **Initiate and Chunk Sync Job:** A Lambda function prepares the sync. To avoid timeouts and handle providers that don't support record counts, a **time-based, dynamic splitting algorithm** must be used.
-        1.  The function starts with a large time window (e.g., one month).
-        2.  It fetches the first page of data for that window from the source provider.
-        3.  It checks if the number of records on that page exceeds the per-chunk processing limit (e.g., 5,000 records).
-        4.  **If the limit is exceeded**, the algorithm does not proceed. Instead, it splits the current time window into a smaller range (e.g., from one month to one week) and repeats the process. This dynamic splitting continues until a time window is found that contains a manageable number of records.
-        5.  This approach is more robust as it does not rely on a "total count" feature and adapts to varying data density for different users and time periods. The output of this initial step is a list of manageable time-based chunks for the state machine to process.
-    *   **Map State for Parallel Processing:** The state machine will use a `Map` state to iterate over the array of chunks. This allows for parallel execution of the sync task for each chunk, dramatically improving performance.
-    *   **Process One Chunk:** For each chunk, a dedicated `Worker Lambda` function is invoked. It fetches the data from the source, transforms it, and writes it to the destination. This use of Lambda is ideal for the highly parallel, on-demand nature of this task.
-    *   **Built-in Error Handling & Retries:** Step Functions provides robust, configurable retry logic for transient errors. If a chunk fails repeatedly, it can be caught and logged to a Dead-Letter Queue without halting the entire workflow.
-    *   **Finalize Sync:** Once all chunks are processed, a final Lambda function updates the overall job status to `COMPLETED`.
-
-3.  **Progress Tracking:** The Step Functions execution itself serves as the progress record. The mobile app can query a backend API that uses the `DescribeExecution` API call to get the current status, number of completed chunks, and overall progress of the historical sync.
-
-4.  **Rate Limiting & Throttling:** The `Cold-Path Worker Tasks` invoked by Step Functions are subject to the same third-party API rate limits. The rate-limiting service will prioritize `hot-path` (real-time) syncs over these `cold-path` jobs.
-
-*(Note: This section directly impacts `31-historical-data.md` and `16-performance-optimization.md`, which will be updated to reflect this AWS Step Functions-based strategy.)*
+Handling a user's request to sync several years of historical data is a key feature planned for a post-MVP release. It requires a more complex "Cold Path" architecture using AWS Step Functions to ensure reliability over long-running jobs. The detailed specification for this feature is deferred and captured in `45-future-enhancements.md`.
 
 ## 6. Functional & Non-Functional Requirements
 *(Unchanged)*
@@ -139,7 +85,7 @@ Handling a user's request to sync several years of historical data (User Story *
 
 ## 8. Visual Diagrams
 
-### Sync Engine Architecture
+### Sync Engine Architecture (MVP)
 ```mermaid
 graph TD
     subgraph User Device
@@ -149,18 +95,13 @@ graph TD
         APIGateway[API Gateway]
         EventBridge[EventBridge Bus]
 
-        subgraph "Hot Path"
+        subgraph "Hot Path (MVP)"
             HotQueue[SQS for Real-time Jobs]
             DLQ_SQS[SQS DLQ]
         end
 
-        subgraph "Cold Path"
-            HistoricalOrchestrator[AWS Step Functions]
-        end
-
         WorkerLambda["Worker Service (Lambda)"]
         DynamoDB[DynamoDB]
-        AI_Service[AI Insights Service]
     end
     subgraph External
         ThirdPartyAPIs[3rd Party Health APIs]
@@ -168,27 +109,22 @@ graph TD
 
     MobileApp -- Sync Request --> APIGateway
 
-    APIGateway -- "Direct Integration<br>Publishes 'RealtimeSyncRequested' event" --> EventBridge
-    EventBridge -- "Rule for real-time jobs" --> HotQueue
+    APIGateway -- "Publishes 'RealtimeSyncRequested' event" --> EventBridge
+    EventBridge -- "Routes to" --> HotQueue
     HotQueue -- Triggers --> WorkerLambda
     HotQueue -- "On Failure, redrives to" --> DLQ_SQS
 
-    APIGateway -- "Direct Integration<br>Starts execution for historical sync" --> HistoricalOrchestrator
-    HistoricalOrchestrator -- Orchestrates & Invokes --> WorkerLambda
-
     WorkerLambda -- Read/Write --> DynamoDB
     WorkerLambda -- Syncs Data --> ThirdPartyAPIs
-    WorkerLambda -- Calls for intelligence --> AI_Service
 ```
 
-### Sequence Diagram for Delta Sync (with AI-Powered Merge)
+### Sequence Diagram for Delta Sync (MVP)
 ```mermaid
 sequenceDiagram
     participant Worker as Worker Lambda
     participant DynamoDB as DynamoDB
     participant SourceAPI as Source API
     participant DestAPI as Destination API
-    participant AIService as AI Insights Service
     participant SQS as SQS Queue
 
     Worker->>DynamoDB: Get lastSyncTime & strategy
@@ -199,12 +135,7 @@ sequenceDiagram
     Worker->>DestAPI: Fetch overlapping data
     DestAPI-->>Worker: Return destination data
 
-    alt User has chosen AI-Powered Merge
-        Worker->>AIService: Send conflicting data
-        AIService-->>Worker: Return intelligently merged data
-    else Rule-based Resolution
-        Worker->>Worker: Run local conflict resolution
-    end
+    Worker->>Worker: Run local conflict resolution
 
     Worker->>DestAPI: Write final data
     DestAPI-->>Worker: Success

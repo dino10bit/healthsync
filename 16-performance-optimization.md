@@ -77,13 +77,9 @@ The projection of up to 45,000 concurrent executions is a critical threat to the
 4.  **Architectural Assessment:** Alternatives that could lower concurrency for the same throughput (e.g., batching jobs in a single Lambda, exploring Fargate) should be assessed for future cost optimization.
 5.  **Provisioning:** Based on the results of the above, DynamoDB will be configured in a hybrid capacity model, and Lambda Provisioned Concurrency will be enabled for the worker fleet.
 
-### 3.3. Resilient Historical Syncs with Job Chunking
+### 3.3. Post-MVP: Historical Sync Performance
 
-Syncing years of historical data (User Story **US-10**) is a performance and reliability challenge. A single, long-running process is brittle. As defined in `05-data-sync.md`, we will implement a **job chunking and orchestration strategy**.
-
-1.  **Chunking:** A request for a multi-year sync is broken down into smaller, discrete jobs (e.g., one-month chunks).
-2.  **Independent Execution:** Each chunk is processed independently by a **worker Lambda function**. The failure of one chunk does not affect others.
-3.  **Performance Benefit:** This approach allows for massive parallelization of historical syncs, significantly reducing the total time to completion for the user. It also isolates failures and prevents a single problematic data point from halting the entire sync.
+The performance and reliability of the post-MVP "Historical Sync" feature (User Story **US-10**) will require a dedicated architecture. The current design, captured in `45-future-enhancements.md`, specifies a job chunking and orchestration strategy using AWS Step Functions to ensure resilience and performance for long-running backfill operations. This is out of scope for the MVP.
 
 ## 4. Key Optimization Techniques
 

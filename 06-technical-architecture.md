@@ -9,13 +9,10 @@
 | 1.1 | 2025-08-19 | J. Doe | Incorporated feedback from `f-20.md` review. Addressed over 150 points of ambiguity, inconsistency, and risk. |
 
 ### Consolidated Assumptions
-This document relies on the following key assumptions:
-1.  **User Base Growth:** The user base is expected to grow to 1M DAU within 24 months of launch.
-2.  **Third-Party API Stability:** The APIs of our third-party partners (Fitbit, Garmin, etc.) will remain reasonably stable and will not introduce breaking changes without a standard deprecation notice period.
-3.  **MVP Scope:** The feature set defined in `02-product-scope.md` is stable for the MVP launch.
+A consolidated list of all key project assumptions is maintained in the root `README.md` file.
 
 ### Cross-Cutting Concerns
-*   **Traceability to User Stories:** While this document is technically focused, key architectural decisions should trace back to user stories in `04-user-stories.md`. For example, the AI Insights service is justified by US-15. A full traceability matrix is outside the scope of this document but should be maintained by the product team.
+*   **Traceability to User Stories:** While this document is technically focused, key architectural decisions should trace back to user stories in `04-user-stories.md`. A formal Requirements Traceability Matrix is maintained in **`TRACEABILITY_MATRIX.md`** to ensure all requirements are met and tested.
 *   **Accessibility (A11y):** All user-facing components, including API error messages and push notifications, must adhere to WCAG 2.1 AA standards.
 *   **Internationalization (i18n) & Localization (L10n):** All user-facing strings (error messages, notifications) must be stored in resource files and not hard-coded, to support future localization efforts.
 
@@ -54,7 +51,7 @@ This document relies on the following key assumptions:
 
 This document specifies the complete technical architecture for the SyncWell application. The architecture is designed for **high availability (defined as >99.9% uptime)**, **massive scalability (to support 1 million Daily Active Users and a peak load of 3,000 requests per second)**, and robust security. It adheres to modern cloud-native principles and is engineered for developer velocity and operational excellence.
 
-We will use the **C4 Model** as a framework to describe the architecture. The core architectural principles are **modularity**, **security by design**, and **privacy by default**. A key feature is its **hybrid sync model**, which is necessitated by platform constraints. It combines a serverless backend for cloud-to-cloud syncs with on-device processing for integrations that require native SDKs (e.g., Apple HealthKit), maximizing reliability and performance. To further enhance the user experience in a **future phase (post-MVP)**, the architecture makes provisions for an **AI Insights Service** to power intelligent features. The initial focus, however, will be on a **robust sync engine**, made reliable through a unified idempotency strategy and resilient error handling, that is **deterministic** in its behavior.
+We will use the **C4 Model** as a framework to describe the architecture. The core architectural principles are **modularity**, **security by design**, and **privacy by default**. A key feature is its **hybrid sync model**, which is necessitated by platform constraints. It combines a serverless backend for cloud-to-cloud syncs with on-device processing for integrations that require native SDKs (e.g., Apple HealthKit), maximizing reliability and performance. Post-MVP, the architecture can be extended to include more advanced features like historical data backfills and an AI Insights Service. The design concepts for these are captured in `45-future-enhancements.md`. The initial focus for the MVP, however, will be on a **robust sync engine** for recent data, made reliable through a unified idempotency strategy and resilient error handling.
 
 ## 2. Architectural Model (C4)
 
@@ -96,13 +93,15 @@ graph TD
 
 ### Level 2: Containers
 
-This level zooms into the system boundary to show the high-level technical containers. The architecture is composed of two primary workflows: a low-latency "hot path" for real-time syncs, and a robust "cold path" for long-running historical syncs. While the system uses multiple serverless services like Step Functions and EventBridge, the core business logic resides in a **unified AWS Lambda worker fleet**, promoting code reuse. A core technology used is **Kotlin Multiplatform (KMP)**, which allows for sharing this worker logic between the mobile application and the backend.
+This level zooms into the system boundary to show the high-level technical containers for the MVP. The architecture is focused on a low-latency **"hot path"** for handling real-time syncs of recent data. While the system uses multiple serverless services like EventBridge, the core business logic resides in a **unified AWS Lambda worker fleet**, promoting code reuse. A core technology used is **Kotlin Multiplatform (KMP)**, which allows for sharing this worker logic between the mobile application and the backend.
 
-**Note on Diagram Clarity:** The following diagram is a high-level overview. To improve clarity, it simplifies some complex interactions (e.g., the chunking logic within the Step Functions orchestrator) and omits secondary components like the S3 bucket for archiving. More detailed diagrams for specific workflows are provided in the relevant sections below.
+Designs for post-MVP features like the "cold path" for historical syncs have been deferred and are captured in `45-future-enhancements.md`.
+
+**Note on Diagram Clarity:** The following diagram is a high-level overview for the MVP. It omits secondary components like the S3 bucket for archiving DLQ messages and post-MVP components like the AI Insights Service. The S3 bucket will be configured with a standard lifecycle policy to transition objects to Glacier after 90 days and delete them after 1 year.
 
 ```mermaid
 ---
-title: "Container Diagram for SyncWell (Single Region MVP)"
+title: "Container Diagram for SyncWell (MVP)"
 ---
 graph TD
     subgraph "User's Device"
@@ -122,19 +121,16 @@ graph TD
         APIGateway[API Gateway]
         AuthorizerLambda[Authorizer Lambda]
         HotPathEventBus[EventBridge Event Bus]
-        HistoricalOrchestrator["Step Functions Orchestrator<br>(breaks jobs into chunks)"]
         DynamoDB[DynamoDB Table]
         SecretsManager[Secrets Manager]
         Observability["CloudWatch Suite"]
         AppConfig[AWS AppConfig]
-        FutureAIService["(Future) AI Insights Service"]
 
         subgraph "VPC"
             style VPC fill:#f5f5f5,stroke:#333
             NetworkFirewall[AWS Network Firewall]
             subgraph "Private Subnets"
                 WorkerLambda["Worker Lambda"]
-                AnonymizerProxy["Anonymizer Proxy (Lambda)"]
                 ElastiCache[ElastiCache for Redis]
             end
         end
@@ -152,13 +148,10 @@ graph TD
     APIGateway -- "Validates JWT with" --> AuthorizerLambda
     AuthorizerLambda -- "Fetches public keys from" --> FirebaseAuth
     APIGateway -- "Publishes 'HotPathSyncRequested' event" --> HotPathEventBus
-    APIGateway -- "Starts execution for historical sync" --> HistoricalOrchestrator
 
     HotPathEventBus -- "Rule routes to" --> HotPathSyncQueue
     HotPathSyncQueue -- "Target for" --> WorkerLambda
     HotPathSyncQueue -- "On failure, redrives to" --> HotPathSyncDLQ
-
-    HistoricalOrchestrator -- "Invokes for each chunk" --> WorkerLambda
 
     WorkerLambda -- "Reads/writes user state" --> DynamoDB
     WorkerLambda -- "Gets credentials" --> SecretsManager
@@ -166,12 +159,7 @@ graph TD
     WorkerLambda -- "Logs & Metrics" --> Observability
     WorkerLambda -- "Fetches runtime config from" --> AppConfig
     WorkerLambda -- "Makes outbound API calls via" --> NetworkFirewall
-
-    AnonymizerProxy -- "Forwards anonymized data to" --> FutureAIService
-    FutureAIService -- "via" --> NetworkFirewall
     NetworkFirewall -- "Allow-listed traffic to" --> ThirdPartyAPIs
-
-    WorkerLambda -- "Calls for real-time merge" --> AnonymizerProxy
 ```
 
 1.  **Mobile Application (Kotlin Multiplatform & Native UI)**
@@ -187,28 +175,23 @@ graph TD
 3.  **Scalable Serverless Backend (AWS)**
     *   **Description:** A decoupled, event-driven backend on AWS that uses a unified AWS Lambda compute model for its core business logic to orchestrate all syncs. This serverless-first approach maximizes developer velocity and minimizes operational overhead.
     *   The backend **must not** persist any raw user health data; this critical security requirement will be enforced via a dedicated test case in the QA plan. Any temporary diagnostic metadata containing user identifiers is stored in a secure, audited, time-limited index, as detailed in `19-security-privacy.md`. Data is otherwise only processed ephemerally in memory during active sync jobs.
-    *   **Technology:** AWS Lambda, API Gateway, **Amazon EventBridge**, **Amazon SQS**, **AWS Step Functions**, DynamoDB.
+    *   **Technology:** AWS Lambda, API Gateway, **Amazon EventBridge**, **Amazon SQS**, DynamoDB.
     *   **Responsibilities:** The API Layer (**API Gateway**) is responsible for initial request validation (e.g., format), authorization via the `AuthorizerLambda`, and routing requests to the appropriate backend service. It does not handle business-level validation like idempotency checks. To ensure maximum performance and cost-effectiveness, it will leverage **API Gateway's built-in caching for the Lambda Authorizer**. The authorizer's response (the IAM policy) will be cached based on the user's identity token for a **5-minute TTL**. For subsequent requests within this TTL, API Gateway will use the cached policy and will not invoke the `AuthorizerLambda`, dramatically reducing latency and cost.
     *   **Risk:** This caching strategy introduces a known risk: if a user's permissions are revoked, they may retain access for up to the 5-minute TTL of the cached policy. This trade-off is accepted to achieve the required API performance.
 
 4.  **Distributed Cache (Amazon ElastiCache for Redis)**
-    *   **Description:** An in-memory caching layer to improve performance and reduce load on downstream services. The cluster must be **sized to handle 10,000 RPS with a P99 latency of < 10ms**, which is a safety threshold above the peak NFR.
+    *   **Description:** An in-memory caching layer to improve performance and reduce load on downstream services. The cluster must be **sized to handle 5,000 RPS with a P99 latency of < 10ms**, which is a significant safety threshold above the MVP's peak NFR of 3,000 RPS.
     *   **Technology:** Amazon ElastiCache for Redis.
     *   **Responsibilities:**
         *   Caches frequently accessed, non-sensitive data (e.g., user sync configurations).
         *   Powers the rate-limiting engine to manage calls to third-party APIs.
 
-5.  **(Future) AI Insights Service (AWS)**
-    *   **Description:** A service planned for a future release to provide intelligence to the platform. It will encapsulate machine learning models and LLM integrations, allowing the core sync engine to remain deterministic and focused.
-    *   **Technology:** Amazon SageMaker, Amazon Bedrock, AWS Lambda.
-    *   **Responsibilities:** The initial design considers providing "intelligent conflict resolution" to address user story US-15 ("As a Pro user, I want the system to intelligently merge conflicting entries to avoid data loss"). Other potential features include an LLM-based troubleshooter and personalized summaries.
-
-6.  **Monitoring & Observability (AWS CloudWatch)**
+5.  **Monitoring & Observability (AWS CloudWatch)**
     *   **Description:** A centralized system for collecting logs, metrics, and traces from all backend services.
     *   **Technology:** AWS CloudWatch (Logs, Metrics, Alarms), AWS X-Ray.
     *   **Responsibilities:** Provides insights into system health, performance, and error rates. Triggers alarms for critical issues.
 
-7.  **Data Governance & Schema Registry (AWS Glue Schema Registry)**
+6.  **Data Governance & Schema Registry (AWS Glue Schema Registry)**
     *   **Description:** To manage the evolution of our canonical data models (e.g., `CanonicalWorkout`), we will use the AWS Glue Schema Registry. It acts as a central, versioned repository for our data schemas.
     *   **Technology:** AWS Glue Schema Registry.
     *   **Responsibilities:**
@@ -216,25 +199,25 @@ graph TD
         *   **Must** enforce schema evolution rules (e.g., backward compatibility) within the CI/CD pipeline, preventing the deployment of breaking changes.
         *   Provides schemas to the worker service (AWS Lambda) for serialization and deserialization tasks, ensuring data conforms to the expected structure.
 
-8.  **Centralized Configuration Management (AWS AppConfig)**
+7.  **Centralized Configuration Management (AWS AppConfig)**
     *   **Description:** To manage dynamic operational configurations and feature flags, we will adopt AWS AppConfig. This allows for safe, audited changes without requiring a full code deployment.
     *   **Technology:** AWS AppConfig.
     *   **Responsibilities:**
-        *   Stores and serves feature flags (e.g., enabling the `AI-Powered Merge` for Pro users).
+        *   Stores and serves feature flags (e.g., enabling a feature for Pro users).
         *   Manages operational parameters such as API timeouts, logging levels, and rate-limiting thresholds.
         *   **Manages critical resource identifiers (e.g., the DynamoDB table name). This is a crucial element of the disaster recovery strategy, allowing the application to be repointed to a restored database table without a code deployment.**
-    *   **Risk:** Storing critical configuration like the database table name in AppConfig creates a dependency. A failure to access AppConfig at application startup could prevent the service from running. This risk is mitigated by AppConfig's own high availability and our use of client-side caching within the Lambda functions.
+    *   **Risk:** Storing critical configuration like the database table name in AppConfig creates a dependency. A failure to access AppConfig at application startup could prevent the service from running. This risk is mitigated by AppConfig's own high availability and our use of aggressive client-side caching within the Lambda functions. However, a prolonged, widespread AppConfig outage remains a low-probability, high-impact risk.
 
 ### Level 3: Components (Inside the KMP Shared Module)
 
 The KMP module contains the core, shareable business logic. The architectural strategy is to use **KMP for portable business logic** and **platform-native runtimes for performance-critical infrastructure code**.
 
-For the backend, this means the general strategy is to compile the KMP module to a JAR and run it on a standard JVM-based AWS Lambda runtime. However, security-critical, latency-sensitive functions like the `AuthorizerLambda` **must** be implemented in a faster-starting runtime like TypeScript or Python to ensure they meet strict performance SLOs. This is a deliberate trade-off, optimizing for performance where it matters most, while maximizing code reuse for the complex sync logic.
+For the backend, this means the general strategy is to compile the KMP module to a JAR and run it on a standard JVM-based AWS Lambda runtime. However, security-critical, latency-sensitive functions like the `AuthorizerLambda` **must** be implemented in a faster-starting runtime like TypeScript or Python. This is a deliberate, non-negotiable trade-off. The P99 latency SLO of <500ms for the entire API Gateway request cannot be reliably met if the authorizer suffers from a multi-second JVM cold start. This technology split is justified because the authorizer is a simple, self-contained function whose performance is critical to the entire user experience.
 
 *   **`SyncManager`:** Orchestrates the sync process.
     *   **Inputs:** `SyncConfig` object, `DataProvider` instances for source and destination.
     *   **Outputs:** A `SyncResult` object (success or failure).
-*   **`ConflictResolutionEngine`:** Detects and resolves data conflicts.
+*   **`ConflictResolutionEngine`:** Detects and resolves data conflicts. For the MVP, this will be a simple, rules-based engine (e.g., "newest wins").
     *   **Inputs:** Two `CanonicalData` objects.
     *   **Outputs:** A single, merged `CanonicalData` object.
 *   **`ProviderManager`:** Manages and provides instances of `DataProvider` modules.
@@ -295,13 +278,6 @@ A secure and scalable strategy is essential for managing provider-specific confi
     *   **Secure ARN Mapping:** The mapping from this UUID to the full AWS Secrets Manager ARN **must** be stored securely. This mapping will be managed as a secure JSON object within **AWS AppConfig**. This approach provides a central, auditable, and securely managed location for this critical mapping data.
     *   **Dynamic IAM Policies for Least Privilege:** When a Worker Lambda processes a job, it must be granted permission to retrieve *only* the specific secret for the connection it is working on. This is a critical security control. This will be achieved by having the orchestrating service (e.g., Step Functions) generate a **dynamic, narrowly-scoped IAM session policy** that grants temporary access only to the specific secret ARN required for the job. This policy is then passed to the `WorkerLambda`, ensuring it operates under the principle of least privilege for every execution.
 
-### Level 3: Components (Future AI Insights Service)
-
-When implemented, the AI Insights Service will be composed of several components. The exact implementation details will be defined closer to the feature's development phase and will undergo a rigorous security and privacy review. The initial high-level concepts include:
-
-*   **`Conflict Resolution Model`:** A potential machine learning model that could take two conflicting data entries and return a suggested merged version.
-*   **`LLM-based Services`:** Lambda functions that could leverage foundational models (e.g., via Amazon Bedrock) to power features like an interactive troubleshooter or human-readable data summaries.
-
 ## 3. Sync Models: A Hybrid Architecture
 
 To ensure reliability and accommodate platform constraints, SyncWell uses a hybrid architecture. This means some integrations are handled entirely in the cloud ("Cloud-to-Cloud"), while others require on-device processing using native SDKs.
@@ -316,9 +292,9 @@ The following table clarifies the integration model for each provider supported 
 | **Garmin** | Cloud-to-Cloud | Garmin provides a cloud-based API. No on-device component is needed. |
 | **Strava** | Cloud-to-Cloud | Strava provides a cloud-based API. No on-device component is needed. |
 
-### Model 1: Cloud-to-Cloud Sync
+### Model 1: Cloud-to-Cloud Sync (MVP Focus)
 
-Cloud-to-cloud syncs are handled by two distinct architectural patterns depending on the use case.
+For the MVP, cloud-to-cloud syncs are handled by a single, reliable architectural pattern: the **"Hot Path"**.
 
 #### **Hot Path Sync**
 *   **Use Case:** Handling frequent, automatic, and user-initiated manual syncs for recent data.
@@ -328,7 +304,7 @@ Cloud-to-cloud syncs are handled by two distinct architectural patterns dependin
     3.  An EventBridge rule filters for these events and sends them to the `HotPathSyncQueue` **Amazon SQS queue**. This queue acts as a buffer, protecting the system from load spikes.
     4.  The SQS queue triggers the `Worker Lambda`, which processes the job.
     5.  **Failure Handling:** The primary SQS queue is configured with a **Dead-Letter Queue (DLQ)**. On a **non-transient processing error** (e.g., an invalid credentials error `401`, a permanent API change `404`, or an internal code bug), the worker throws an exception. After a configured number of retries (`maxReceiveCount`), SQS automatically moves the failed message to the DLQ for out-of-band analysis.
-        *   **`maxReceiveCount` Rationale:** This will be set to **5**. This value is chosen to balance allowing recovery from intermittent, transient network or third-party API errors against not waiting too long to detect a persistent failure that requires manual intervention.
+        *   **`maxReceiveCount` Rationale:** This will be set to **5**. This value is chosen to balance allowing recovery from intermittent, transient network or third-party API errors against not waiting too long to detect a persistent failure. A message that fails 5 times over approximately 1-2 minutes indicates a persistent issue that requires manual intervention and aligns with our goal of identifying and fixing broken integrations quickly.
     6.  Upon successful completion, the `Worker Lambda` publishes a `SyncSucceeded` event back to the EventBridge bus. This event is consumed by other services, primarily to trigger a push notification to the user and for analytics.
 *   **Advantage:** This is a highly reliable and extensible model. Leveraging the native SQS DLQ feature simplifies the worker logic, increases reliability, and improves observability.
 
@@ -344,16 +320,8 @@ graph TD
     end
 ```
 
-#### **Historical Sync (Cold Path)**
-*   **Terminology Note:** A "Historical Sync" is a long-running *workflow*. The individual tasks processed by this workflow are assigned a **low priority**. This priority is enforced by the distributed rate-limiter, which uses a separate, more restrictive token bucket for jobs flagged as `historical`.
-*   **Use Case:** Handling user-initiated requests to backfill months or years of historical data.
-*   **Flow:**
-    1.  The Mobile App sends a request to a dedicated API Gateway endpoint to start a historical sync.
-    2.  **API Gateway** uses a direct service integration to start an execution of the **AWS Step Functions** state machine.
-    3.  The state machine orchestrates the entire workflow, breaking the job into chunks, processing them in parallel with `WorkerLambda` invocations, and handling errors.
-*   **Advantages & Trade-offs:** Step Functions is the ideal choice for this workflow due to its rich, native observability and state management features. However, there are trade-offs:
-    *   **Advantages:** Visual workflow monitoring, detailed execution history for auditing, and native X-Ray integration make operating and debugging these complex jobs highly transparent.
-    *   **Potential Downsides:** At extreme scale, Step Functions can become costly. Additionally, the state payload passed between steps has a size limit (256KB), which requires careful management to ensure large job definitions do not exceed this limit.
+#### **Post-MVP: Historical Sync (Cold Path)**
+The ability for users to backfill months or years of historical data is a key feature planned for a post-MVP release. The detailed architecture for this "Cold Path," which will use AWS Step Functions to orchestrate the complex workflow, is captured in `45-future-enhancements.md`.
 
 ### Model 2: Device-to-Cloud Sync
 *(Unchanged)*
@@ -369,23 +337,19 @@ In a distributed, event-driven system, operations can be retried, making a robus
 
 *   **Locking Mechanism:** Before starting any processing, the asynchronous worker (Lambda) will attempt to acquire an exclusive lock using an atomic **`SET-if-not-exists`** operation against the central cache (Redis). This ensures that a job is processed at most once and handles race conditions where multiple workers attempt to process the same job simultaneously.
 
-#### Idempotency for Historical Syncs (Step Functions)
-For long-running historical syncs, an additional layer of idempotency is applied at the orchestration level:
-*   **Execution Naming:** The API Gateway integration **must** be configured to use the client-provided `Idempotency-Key` as the `name` for the Step Function's execution.
-*   **Handling Existing Executions:** If API Gateway's attempt to start an execution fails with an `ExecutionAlreadyExists` error, the system **must not** assume success. Instead, the integration logic will call `DescribeExecution` to check the status of the existing execution.
-    *   If the existing execution is `SUCCEEDED` or `RUNNING`, the API can safely return a `202 Accepted` to the client.
-    *   If the existing execution `FAILED`, the API must return a `409 Conflict` (or similar error), indicating that the original request failed and a new request with a new `Idempotency-Key` is required.
+#### Post-MVP: Idempotency for Historical Syncs (Step Functions)
+For long-running historical syncs, an additional layer of idempotency will be required at the orchestration level. The design for this is captured alongside the Historical Sync architecture in `45-future-enhancements.md`.
 
 #### Idempotency Store Implementation
 
-To ensure a single, consistent, and highly-available locking mechanism suitable for a multi-region architecture, the idempotency check **must** be implemented using **DynamoDB's conditional write functionality**. This approach avoids potential race conditions from cache replication lag and consolidates our locking strategy.
+To ensure a single, consistent, and highly-available locking mechanism, the idempotency check **must** be implemented using **DynamoDB's conditional write functionality**. While Redis is used for caching, DynamoDB is superior for this critical locking mechanism as it provides stronger consistency guarantees and durability, which is essential for preventing duplicate processing. This avoids potential race conditions from cache replication lag and consolidates our locking strategy on a durable database.
 
 *   **Item Schema (in `SyncWellMetadata` table):**
     *   **PK:** `IDEM##{idempotencyKey}`
     *   **SK:** `IDEM##{idempotencyKey}`
     *   **status:** A string indicating the status: `INPROGRESS` or `COMPLETED`.
     *   **ttl:** A standard DynamoDB TTL attribute to ensure automatic cleanup of old records.
-*   **TTL Rationale:** A **24-hour TTL** is used on `COMPLETED` keys. This is a conservative product decision to serve as a safe upper bound for offline clients. The `INPROGRESS` lock will have a much shorter TTL (5 minutes) to prevent deadlocks if a worker crashes.
+*   **TTL Rationale:** A **24-hour TTL** is used on `COMPLETED` keys. This is a specific requirement to support clients that may be offline for up to a day. If an offline client retries an operation after coming back online, this TTL ensures the operation is not duplicated. The `INPROGRESS` lock will have a much shorter TTL (5 minutes) to prevent deadlocks if a worker crashes.
 
 The following sequence diagram illustrates the robust end-to-end flow using DynamoDB.
 
@@ -449,6 +413,7 @@ The architecture is designed with a future multi-region deployment in mind. Key 
 ### Resilience Testing (Chaos Engineering)
 
 The practice of chaos engineering is critical. We will use the **AWS Fault Injection Simulator (FIS)** to validate our high availability.
+
 *   **Ownership and Frequency:** Experiments will be owned by the Core Backend team and executed on a **bi-weekly basis** in the `staging` environment as part of the standard release cycle.
 *   **MVP Experiment Catalog:**
     *   **Worker Failure:** Terminate a random percentage (10-50%) of Lambda instances to ensure SQS retries and the remaining fleet can handle the load.
@@ -457,6 +422,7 @@ The practice of chaos engineering is critical. We will use the **AWS Fault Injec
     *   **Secrets Manager Unavailability:** Block access to AWS Secrets Manager to verify graceful failure and retry.
     *   **Availability Zone Failure:** Simulate the failure of a single AZ to validate Multi-AZ configurations.
     *   **Cache Cluster Failure:** Simulate a full failure of the ElastiCache cluster to verify that the system enters a safe, degraded mode.
+*   **Results & Action:** The results of each experiment (e.g., observed impact on latency, error rates) **must** be documented in a central location (e.g., a Confluence page). Any discovered regressions or unexpected failures must be logged as high-priority bugs in the issue tracker and addressed before the next release.
 
 ### Performance & Scalability
 
@@ -496,6 +462,8 @@ sequenceDiagram
 ```
 
 #### Load Projections & Concurrency Risk Mitigation
+**NOTICE: The following risk analysis is the most critical finding in this document and requires immediate attention before any implementation begins.**
+
 *   **Governing NFR:** The system must be designed and load-tested to handle a peak load of **3,000 requests per second (RPS)**.
 *   **Concurrency Calculation:** Based on the P90 SLO for job duration (15 seconds), this implies a worst-case requirement of **~45,000 concurrent Lambda executions**.
 *   **Feasibility & Risk Mitigation (CRITICAL PROJECT BLOCKER):**
@@ -537,10 +505,9 @@ Our primary data table will be named **`SyncWellMetadata`**. It will use a compo
 | **User Profile** | `USER#{userId}` | `PROFILE` | `SubscriptionLevel`: `FREE`, `PRO`<br>`CreatedAt`, `version` |
 | **Connection** | `USER#{userId}` | `CONN#{connectionId}` | `Status`: `active`, `needs_reauth`, `revoked`<br>`CredentialArn`, `ReAuthStatus` |
 | **Sync Config** | `USER#{userId}` | `SYNCCONFIG#{sourceId}##{dataType}` | `ConflictStrategy`: `source_wins`, `dest_wins`, `newest_wins`<br>`IsEnabled`, `version` |
-| **Hist. Sync Job** | `USER#{userId}` | `HISTORICAL##{jobId}` | `ExecutionArn`, `Status`: `PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED` |
 | **Idempotency Lock** | `IDEM##{key}` | `IDEM##{key}` | `status`: `INPROGRESS`, `COMPLETED`<br>`ttl` |
 
-**Note on Historical Sync Job Items:** Storing a potentially large number of `HISTORICAL` items in the main user item collection can degrade performance. The primary API for fetching a user's profile **must not** return these items by default. They should only be returned via a dedicated API endpoint (e.g., `GET /v1/users/me/historical-syncs`).
+**Note on Historical Sync Job Items:** Storing a potentially large number of `HISTORICAL` items for a post-MVP feature can degrade performance of core user profile lookups. The design for this is deferred to `45-future-enhancements.md`.
 
 ### Supporting Operational Access Patterns
 
@@ -555,50 +522,12 @@ Finding all connections that need re-authentication is a key operational require
 
 ### Mitigating "Viral User" Hot Partitions
 
-A "hot partition" for a viral user is a significant risk. The primary mitigation strategy is to automate the migration of that user to a dedicated table.
-*   **Automated Identification:** A CloudWatch Alarm on the `ThrottledRequests` metric will trigger this process. This alarm **must** be configured to use high-cardinality custom metrics generated via **CloudWatch Embedded Metric Format (EMF)** to pinpoint the specific `userId` causing the throttling.
-*   **Automated Migration Workflow:** The alarm will trigger a Step Functions workflow to orchestrate the migration.
-    *   **Error Handling & Rollback:** The workflow will have a comprehensive `Catch` block. If any step (e.g., data copy, verification) fails, the workflow will automatically roll back by deleting any partially copied data and removing the `migrationStatus` flag from the user's profile in the main table. A critical alert will be sent to the engineering team.
-*   **Automated De-Migration:** A user can be de-migrated (moved back to the main table) if their traffic patterns return to normal for a sustained period (e.g., 7 consecutive days). This will be triggered by a separate scheduled process that analyzes traffic on the hot-user table.
-*   **Secondary Strategy (Write Sharding):** If a single user's write traffic becomes too extreme for one partition, write sharding is a possible secondary strategy. This involves appending a shard number to the partition key (e.g., `USER#{userId}-1`). This adds significant read-side complexity (requiring a scatter-gather query) and is considered a major architectural project, out of scope for the MVP.
+A "hot partition" for a viral user is a significant risk. This is considered a post-MVP concern, but the high-level strategy is to automate the migration of that user to a dedicated table. The design is captured in `45-future-enhancements.md`.
 
 ### Degraded Mode and Cache Resilience
 The strategy for handling a full failure of the ElastiCache cluster is detailed in section 3b. The key impacts on DynamoDB are:
 *   **Increased Read Load:** All reads will miss the cache and hit DynamoDB directly. The hybrid capacity model is designed to absorb this, but latency will increase.
 *   **Disabled Rate Limiting:** The most critical function of the cache is rate limiting. As noted in 3b, if the cache is down, workers will not call third-party APIs. This introduces a risk: if distributed locking were also Redis-based, multiple workers could make concurrent calls for the same job when the cache comes back online, violating API rate limits. By consolidating locking in DynamoDB, we mitigate this specific risk.
-
-### Level 4: Historical Sync Workflow
-
-To handle long-running historical data syncs, we will use **AWS Step Functions**.
-
-The following diagram illustrates the state machine, reflecting the parallel processing of data chunks.
-
-```mermaid
-graph TD
-    A[Start] --> B(Calculate Chunks);
-    B --> C{Map State: Process Chunks in Parallel};
-    C -- For Each Chunk --> D(Process Chunk Worker);
-    D --> E{Did Chunk Succeed?};
-    E -- Yes --> C;
-    E -- No --> F(Log Chunk Failure);
-    F --> C;
-    C -- All Chunks Done --> G(Finalize Sync);
-    G --> H[End];
-
-    subgraph Error Handling
-        D -- On Error --> I{Catch & Retry};
-        I -- Retryable Error --> D;
-        I -- Terminal Error --> F;
-    end
-```
-
-*   **State Machine Logic:**
-    1.  **Initiate & Calculate Chunks:** The workflow is triggered by an API call. A Lambda function calculates the total date range and breaks it into an array of smaller, logical chunks (e.g., 7-day periods).
-    2.  **Process in Parallel (`Map` State):** The state machine uses a `Map` state to iterate over the array of chunks, invoking a `WorkerLambda` for each chunk in parallel. The `Map` state has a configurable concurrency limit (which will be monitored and can be increased) to avoid overwhelming downstream APIs.
-    3.  **Error Handling:**
-        *   **`Retry` Policy:** Each worker invocation will have a declarative `Retry` policy for transient errors, with a configuration of **3 max attempts** and an **exponential backoff rate of 2.0**.
-        *   **`Catch` Logic:** If retries fail, a `Catch` block will route the failure to a logging step. This step records the failed chunk's details for later analysis, and the `Map` state continues processing the remaining chunks.
-    4.  **Finalize Sync & Notify User:** After the `Map` state completes, a final Lambda function aggregates the results. It then publishes a `HistoricalSyncCompleted` event, which triggers a push notification to the user. The notification sent will be `N-05` ("Your historical sync is complete.") or `N-06` ("Your historical sync finished with some errors.") depending on whether any chunk failures were logged.
 
 ## 3d. Core API Contracts
 
@@ -721,7 +650,7 @@ To handle data from various third-party sources, we must first transform it into
 @Serializable
 data class CanonicalWorkout(
     // ...
-    // The IANA timezone identifier (e.g., "America/New_York"). If null, the system will process the event assuming UTC but will flag it for monitoring, as a null timezone can indicate a data quality issue from the source.
+// The IANA timezone identifier (e.g., "America/New_York"). If null, the system will process the event assuming UTC. It will also publish a custom CloudWatch metric (`InvalidTimezoneData_Omitted`) with the provider's name as a dimension. This allows for automated monitoring and alerting on data quality issues from specific sources.
     val timezone: String? = null,
     // ...
     // Optional free-text notes. High-risk for PII. This field MUST be scrubbed by the AnonymizerProxy before being sent to any AI service.
@@ -951,6 +880,7 @@ This section defines the key non-functional requirements for the SyncWell platfo
 | | API Gateway Latency | P99 Latency | < 500ms | For all synchronous API endpoints, measured at the gateway. |
 | | Concurrent Users | Peak RPS | 3,000 RPS | The system must handle a peak load of 3,000 requests per second. The worst-case projection of ~45,000 concurrent workers is a risk to be mitigated per Section 3b. |
 | **Security** | Vulnerability Patching | Time to Patch Critical CVE | < 72 hours | This policy applies 24/7, including weekends and holidays, and is managed by the on-call security team. |
+| | Secure Data Handling | `ProviderTokens` must not be serializable | Pass/Fail | The `ProviderTokens` data class must not be serializable and must redact secrets in its `toString()` method. A custom linter rule must enforce this at build time. |
 | **Scalability** | User Capacity | Daily Active Users (DAU) | 1,000,000 | The architecture must be able to support 1 million daily active users. |
 | **Usability** | App Onboarding | Time to First Sync | < 3 minutes | This is a key product KPI, tracked via our analytics pipeline by measuring the median time from the `UserSignedUp` event to the first `SyncSucceeded` event for that user. |
 
@@ -975,7 +905,7 @@ To ensure high development velocity and code quality, we will establish a stream
 
 This section documents known limitations of the architecture and explicit trade-offs that have been made.
 
-*   **Feature Tiering:** The current architecture does not explicitly support feature tiering (e.g., higher rate limits for Pro users). This is a known gap that will need to be addressed in a future iteration by integrating subscription status into the rate-limiting and configuration services.
+*   **Feature Tiering:** The current architecture does not explicitly support feature tiering (e.g., higher rate limits for Pro users). This is a known gap that will be addressed in a future iteration. The high-level strategy will be to have the `AuthorizerLambda` attach the user's subscription tier (`FREE` or `PRO`) to the request context. Downstream services, like the rate-limiting engine, can then inspect this context and apply the appropriate limits.
 *   **Account Merging:** The data model does not support account merging. **User-facing consequence:** Users who create multiple accounts will have siloed data and must contact support for a manual, best-effort resolution. This is a known product issue.
 *   **Firebase Authentication Dependency:** The use of Firebase Authentication creates a hard dependency on a non-AWS service for a critical function. This is a **High** strategic risk.
     *   **Risk:** An outage in Firebase Auth would render the application unusable for all users.
@@ -1039,14 +969,4 @@ This appendix details critical operational policies that must be implemented.
 
 ## 11. Glossary
 
-To ensure a shared understanding of key concepts, this glossary defines the core entities of the SyncWell ecosystem.
-
-| Term | Definition |
-| :--- | :--- |
-| **Connection** | Represents a user's authenticated link to a third-party health platform (e.g., their Fitbit account). It is uniquely identified by a `connectionId` and stores the necessary credentials (or a pointer to them) to interact with the provider on the user's behalf. |
-| **Provider** | A specific third-party health platform that SyncWell can integrate with, such as Strava, Garmin, or Fitbit. |
-| **DataProvider** | The software component (a class implementing the `DataProvider` interface) that encapsulates all the logic for interacting with a specific Provider's API, including authentication, data fetching, and data pushing. |
-| **Sync Job** | A single, discrete unit of work processed by a Worker Lambda. For example, "sync steps from Fitbit to Google Fit for user X on date Y". |
-| **Historical Sync** | A long-running, user-initiated *workflow* (orchestrated by AWS Step Functions) that is composed of many individual Sync Jobs to backfill a large period of data. |
-| **Hot Path Sync** | A near real-time, low-latency sync for recent data, typically triggered automatically or manually by the user. These are processed as individual Sync Jobs via an SQS queue. |
-| **Canonical Data Model** | A standardized, internal data structure (e.g., `CanonicalWorkout`) that represents a piece of health data. Data from all Providers is transformed into a canonical model before being processed by the sync engine. |
+A project-wide glossary of all business and technical terms is maintained in the root `GLOSSARY.md` file to ensure a single source of truth for terminology.
