@@ -286,3 +286,33 @@ By heavily leveraging local emulation, we can provide a powerful development exp
 
 ## 13. Future Cost Optimization
 *(This section was previously section 9 and remains valid.)*
+
+## 14. Implemented Cost Optimizations (August 2025)
+
+As part of a cost optimization initiative, several changes were implemented to reduce operational expenditure. This section documents the changes and their expected impact.
+
+### 14.1. Refactored Logging in the Authorizer Lambda
+
+The logging mechanism within the primary AWS Lambda Authorizer (`src/authorizer/handler.js`) was refactored to align with cost optimization best practices. The key changes are:
+
+1.  **Structured JSON Logging:** All log outputs have been converted from plain text strings to structured JSON objects. While this may slightly increase the size of individual log entries, it is a critical prerequisite for advanced log analysis, filtering, and cost-effective querying in CloudWatch Logs Insights. It directly enables Proposal #6 ("Optimize Structured Log Fields").
+
+2.  **Dynamic Log Levels:** A `LOG_LEVEL` environment variable has been introduced to control the verbosity of the Lambda function's logging. By default, the log level is `INFO`. Setting this to `WARN` or `ERROR` in production can significantly reduce the volume of logs ingested by CloudWatch.
+
+**Estimated Cost Impact:**
+
+The direct cost savings from this change on the authorizer alone are modest but demonstrate a powerful pattern. The authorizer lambda accounts for approximately 38 million invocations per month. By setting the `LOG_LEVEL` to `WARN`, two informational log entries per invocation are suppressed.
+
+*   **Log Volume Reduction:** ~76 million log entries per month.
+*   **Estimated Data Reduction:** ~15.2 GB per month.
+*   **Estimated Monthly Savings (Authorizer Only):** 15.2 GB * $0.50/GB = **~$7.60/month**.
+
+While this specific change has a small impact, it establishes a pattern that, if applied to the high-volume Fargate workers, would lead to substantial savings and help achieve the cost reductions outlined in the proposals. This change partially implements Proposal #1 ("Aggressive Dynamic Log Levels") and Proposal #19 ("Introduce a 'Request Context' Log").
+
+### 14.2. Analysis of DynamoDB Standard-IA
+
+Proposal #16 suggested using the DynamoDB Standard-Infrequent Access (Standard-IA) table class for long-term, infrequently accessed data. An investigation was conducted to apply this to the `SyncWellBreakGlassIndex` table as part of this optimization effort.
+
+*   **Finding:** The `SyncWellBreakGlassIndex` table has a Time-to-Live (TTL) of 24 hours, meaning its data is short-lived and frequently written.
+*   **Analysis:** The Standard-IA table class has higher per-request costs for reads and writes compared to the Standard class. For a short-lived, write-heavy table, switching to Standard-IA would likely *increase* overall costs, as the 20% higher write cost would outweigh the negligible storage savings.
+*   **Action & Recommendation:** The change was initially implemented but then **reverted** after this analysis concluded it would be detrimental to costs. Proposal #16 remains a valid and valuable recommendation, but it should be applied to a different table that fits the intended profile (long-term, infrequently accessed data), such as one containing historical job records or audit trails.
