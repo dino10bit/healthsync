@@ -89,20 +89,22 @@ To minimize the risk of production incidents, all backend services are deployed 
 *   **Monitoring:** The canary is closely monitored for any increase in error rates or latency.
 *   **Rollout/Rollback:** If the canary is stable, traffic is gradually shifted until it serves 100% of requests. If issues are detected, traffic is immediately routed back to the stable version.
 
-### 4b. Canary Releases for Event-Driven Lambda Workers
+### 4b. Canary Releases for the Fargate Worker Service
 
-Canary releasing for a synchronous, user-facing service like an API is straightforward. For our asynchronous, event-driven Lambda worker that consumes jobs from an SQS queue, we will use **Lambda's built-in support for weighted aliases**.
+Canary releasing for a synchronous, user-facing service like an API is straightforward. For our asynchronous, SQS-driven worker fleet running on **AWS Fargate**, we will use **AWS CodeDeploy with a blue/green deployment strategy**.
 
-This approach provides a clean, infrastructure-level solution for traffic shifting without requiring complex feature-flag logic in the application code.
+This approach provides a clean, infrastructure-level solution for safely releasing updates to the containerized service.
 
 **Deployment & Canary Process:**
 
-1.  **Deploy New Version:** The CI/CD pipeline deploys a new version of the Lambda function. This creates a new, numbered version (e.g., `v2`).
-2.  **Create Alias:** A Lambda alias (e.g., `live`) is used as the event source for the SQS trigger. This alias initially points 100% to the stable, existing version (e.g., `v1`).
-3.  **Shift Traffic:** To begin the canary release, the `live` alias is reconfigured to route a small percentage of traffic (e.g., 10%) to the new version (`v2`), while the remaining 90% continues to go to the stable version (`v1`).
-4.  **Monitoring:** We monitor the CloudWatch metrics for the specific new version (`v2`), checking its error rate and duration. Alarms will be configured to automatically trigger a rollback if the canary's error rate exceeds a defined threshold.
-5.  **Gradual Rollout:** If the canary version is stable, we gradually update the alias weights, shifting more traffic to the new version (e.g., 10% -> 25% -> 50% -> 100%) over a period of time.
-6.  **Rollback:** If issues are detected, the alias is immediately reconfigured to send 100% of traffic back to the stable version (`v1`), providing an instant and safe rollback.
+1.  **Deploy New Version:** The CI/CD pipeline builds a new Docker image for the worker application and pushes it to Amazon ECR. It then creates a new task definition revision pointing to this new image.
+2.  **Initiate Blue/Green Deployment:** The pipeline triggers a new deployment in AWS CodeDeploy, configured for a `Blue/Green` deployment type. CodeDeploy provisions a new "green" Fargate fleet with the new task definition. The original, stable fleet is the "blue" environment.
+3.  **Test Listener:** A separate, temporary "test listener" is configured on the Application Load Balancer to route test traffic to the green environment. Automated tests are run against this test listener to verify the health of the new green fleet.
+4.  **Shift Traffic (Canary):** Once the green fleet is healthy, CodeDeploy begins shifting a small percentage of live traffic (e.g., 10%) from the blue fleet to the green fleet.
+5.  **Monitoring:** We monitor the CloudWatch metrics for the new green fleet, checking its CPU/Memory utilization, error rate, and processing latency. Alarms will be configured to automatically trigger a rollback if the canary's error rate exceeds a defined threshold.
+6.  **Gradual Rollout:** If the canary version is stable, CodeDeploy is configured to gradually shift the remaining traffic over a period of time (e.g., 10% every 5 minutes).
+7.  **Finalize & Terminate:** Once 100% of traffic is routed to the green fleet, the old blue fleet is de-registered and terminated after a "bake-in" period.
+8.  **Rollback:** If issues are detected at any point, CodeDeploy automatically and immediately rolls back by shifting 100% of traffic back to the original blue fleet.
 
 This approach provides a high degree of safety and control for releasing changes to our most critical asynchronous service.
 
