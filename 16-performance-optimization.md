@@ -71,7 +71,7 @@ To ensure the system can handle the load from 1M DAU, we have projected the requ
 
 **Mandatory Feasibility Actions:**
 The projection of up to 45,000 concurrent executions is a critical threat to the project's viability. To ensure the system is financially viable and operationally stable at this scale, the following actions are **mandatory, blocking prerequisites** before any significant implementation work proceeds:
-1.  **Create Detailed Cost Model:** A full cost analysis for **45,000** provisioned concurrency Lambda instances must be completed and approved.
+1.  **[C-023] Create Detailed Cost Model:** A full cost analysis for **45,000** provisioned concurrency Lambda instances must be completed and approved. **[NEEDS_CLARIFICATION: Q-01]** This model must be reviewed against the business's maximum acceptable monthly AWS bill. **[TODO: A detailed cost model document needs to be created and linked here.]**
 2.  **Conduct Downstream Load Tests:** A proof-of-concept load test must be performed, specifically targeting the validation of downstream dependencies (third-party APIs, ElastiCache, etc.) under the projected parallel load.
 3.  **Secure Service Limit Increases:** The AWS account limits for Lambda concurrency and other relevant services must be formally increased.
 4.  **Architectural Assessment:** Alternatives that could lower concurrency for the same throughput (e.g., batching jobs in a single Lambda, exploring Fargate) should be assessed for future cost optimization.
@@ -96,6 +96,7 @@ The performance and reliability of the post-MVP "Historical Sync" feature (User 
     *   **Smart Key Design:** Use appropriate partition and sort keys in DynamoDB to ensure efficient queries.
     *   **Caching:** Utilize **Amazon ElastiCache for Redis** as the primary caching layer, as described above. This is preferred over DynamoDB Accelerator (DAX) because it provides more flexibility for our varied caching needs (e.g., counters for rate limiting, distributed locks).
     *   **Hot Partition Mitigation:** To handle the "viral user" scenario, the primary strategy will be to isolate the user's data into a dedicated DynamoDB table. This "hot table" approach is preferred over more complex solutions like write-sharding because it avoids significant read-side complexity and provides complete performance isolation.
+        *   **[C-021] Trigger:** A user will be automatically migrated to a dedicated "hot table" when their sync frequency consistently exceeds a defined threshold. This will be monitored by a CloudWatch alarm on a custom metric. The threshold is **> 100 sync jobs per hour for a sustained period of 6 hours**.
 *   **VPC Networking Optimization:** To improve security and reduce costs, all communication from the `WorkerLambda` functions (which run in a VPC to access ElastiCache) to other AWS services now uses **VPC Endpoints**. This keeps traffic on the private AWS network instead of routing through a NAT Gateway. This not only enhances security but also provides a performance boost by reducing network latency for calls to services like DynamoDB, SQS, and EventBridge.
 
 ## 5. Scalability
@@ -134,5 +135,5 @@ The SyncWell architecture is designed from the ground up for massive, automatic 
         end
         Worker->>Worker: Continue processing with config...
     ```
-*   **Job Chunking Flow:**
-    *   *A visual representation of how a large historical sync request is broken into multiple jobs. [Note: To be created in the Design Specification document.]*
+*   **[C-022] Job Chunking Flow:**
+    *   *[TODO: A visual representation of how a large historical sync request is broken into multiple jobs needs to be created and inserted here. This diagram is critical for understanding the historical sync design.]*

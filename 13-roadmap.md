@@ -51,6 +51,7 @@ This roadmap strategically rolls out the 10 core features to build a market-lead
     *   **Smart Conflict Resolution Engine:** Intelligently merge duplicate activities (Should-Have). This will be the flagship "Pro" feature for the quarter.
     *   **The Recovery Sync:** Allow Pro users to import their complete history (Should-Have).
     *   **Top Voted Integration:** Add the #1 most-requested new service from user feedback.
+        *   **[C-018] Process Definition:** The "Top Voted Integration" will be selected from our public feedback board, hosted on **Canny.io**. The selection criteria will be the integration with the highest number of upvotes at the start of the quarter, provided it has a stable, documented, public API.
 *   **Business Outcome:** Drive conversion to the "Pro" tier by delivering features that provide immense and obvious value.
 *   **KPIs:** Free-to-Pro Conversion Rate, Adoption Rate of Conflict Resolution Feature, User CSAT.
 
@@ -69,29 +70,17 @@ This roadmap strategically rolls out the 10 core features to build a market-lead
 *   **Theme:** **Grow the User Base and Optimize for the Future.** With a mature and feature-rich product, the focus shifts to expanding the user base and ensuring long-term technical health.
 *   **Key Features / Epics:**
     *   **Family Health Plan:** Introduce the family subscription model to grow the user base and revenue (Could-Have).
+        *   **[B-003] [TODO: Monetization details for the Family Plan, including pricing, feature set, and target market, need to be defined in a separate document and linked here.]**
     *   **Architectural Polish:** Dedicate a "hardening" sprint to pay down tech debt and conduct rigorous load testing to ensure the platform is ready for the next 10 million users.
+        *   **[C-019] Hardening Sprint Scope:** The primary goals are to improve non-functional requirements. The definition of done includes: 1) Increase E2E test coverage by 20%, 2) Reduce P99 API latency by 15%, 3) Eliminate all high-priority static analysis warnings.
+        *   **[B-002] Business Value (ROI):** This work is framed as an investment to **reduce future operational costs** and **increase developer velocity**. By improving reliability and performance, we reduce the time spent on reactive bug-fixing and allow for faster, more predictable feature development in subsequent quarters.
     *   **A/B Testing the Onboarding:** Run tests to optimize the flow for converting new free users into happy Pro customers.
 *   **Business Outcome:** Accelerate user growth and ensure the platform is robust and scalable for years to come.
 *   **KPIs:** Number of Active Family Plan subscriptions, Reduction in Average Sync Latency, Improvement in key Onboarding funnel metrics.
 
 ## 4. High-Level MVP Timeline (Estimate)
 
-While the roadmap is theme-based, the following provides a high-level, estimated sprint-based timeline for delivering the "Must-Have" features of the MVP. This is based on the sprint plan outlined in `04-user-stories.md`.
-
-*   **Sprint 1: Foundation & Onboarding (2 weeks)**
-    *   *Focus:* Project setup, CI/CD, core app shell, and the welcome/onboarding flow (US-01, US-03).
-*   **Sprint 2: Core Connections (2 weeks)**
-    *   *Focus:* Implementing the OAuth flows for the first 2-3 key platforms (e.g., Fitbit, Google) and the permission priming logic (US-02).
-*   **Sprint 3: Sync Configuration & Dashboard (2 weeks)**
-    *   *Focus:* Building the main dashboard UI and the multi-step flow for creating, viewing, and deleting sync configurations (US-04, US-07, US-08, US-16).
-*   **Sprint 4: Backend Sync Engine (2 weeks)**
-    *   *Focus:* Implementing the core background processing logic on the backend for the "Hot Path" (US-05).
-*   **Sprint 5: Monetization & Support (2 weeks)**
-    *   *Focus:* Implementing the full In-App Purchase flow (trial, subscription, restore), the paywall, and the help center (US-09, US-11, US-12, US-13).
-*   **Sprint 6: Integration & Hardening (1-2 weeks)**
-    *   *Focus:* End-to-end testing, bug fixing, performance polishing, and preparation for app store submission.
-
-**Total Estimated MVP Timeline:** 11-12 weeks.
+**[C-013]** While the roadmap is theme-based, an estimated sprint-based timeline for delivering the "Must-Have" features of the MVP is maintained as the single source of truth in **`04-user-stories.md`, Section 4**. This ensures that as user stories are refined, the timeline document does not become stale. The total estimated MVP timeline is **11-12 weeks**.
 
 ## 5. Resource Allocation (Time Management)
 

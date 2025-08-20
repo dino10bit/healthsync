@@ -109,8 +109,17 @@ interface DataProvider {
  */
 data class PushResult(
     val success: Boolean,
-    // This list should contain the `sourceId` from the canonical model for each item that failed to push.
+    // [C-015] This list should contain the `sourceId` from the canonical model for each item that failed to push.
+    // The DataProvider implementation is responsible for catching errors on a per-item basis and populating this list.
     val failedItemIds: List<String> = emptyList()
+)
+
+/**
+ * [C-017] Defines a simple date range.
+ */
+data class DateRange(
+    val startDate: String, // ISO 8601 format
+    val endDate: String    // ISO 8601 format
 )
 ```
 
@@ -147,8 +156,8 @@ A robust sync engine must intelligently handle the wide variety of errors that c
 
 | HTTP Status Code | Error Type | System Action | User Impact |
 | :--- | :--- | :--- | :--- |
-| `401 Unauthorized` / `403 Forbidden` | **Permanent Auth Error** | The sync job is immediately failed. The connection is marked as `needs_reauth`. Crucially, the worker **must** also publish a `ReAuthenticationNeeded` event, which triggers an immediate push notification to the user. Waiting for a DLQ to process is too slow. | User is notified **immediately** that they need to reconnect the service. |
-| `429 Too Many Requests` | **Rate Limit Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff). The global rate limiter is notified to slow down requests for this provider. | Syncs for this provider may be delayed. This is handled automatically. |
+| `401 Unauthorized` / `403 Forbidden` | **Permanent Auth Error** | The sync job is immediately failed. The connection is marked as `needs_reauth`. Crucially, the worker **must** also publish a `ReAuthenticationNeeded` event, which triggers an immediate push notification to the user. Waiting for a DLQ to process is too slow. | User is notified **immediately** that they need to reconnect the service. **[U-003]** When the user taps this notification, the app must deep-link directly to the "Connected Apps" screen, where the affected connection is highlighted in an error state with a "Reconnect" button. |
+| `429 Too Many Requests` | **Rate Limit Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff). The global rate limiter is notified to slow down requests for this provider. | Syncs for this provider may be delayed. This is handled automatically. **[U-002]** If a user's syncs are delayed by more than a configurable threshold (e.g., 1 hour) due to persistent rate limiting, a low-priority notification should be sent to the user to inform them of the delay. |
 | `500`, `502`, `503`, `504` | **Transient Server Error** | The job is returned to the SQS queue with an increasing visibility timeout (exponential backoff). | Syncs may be delayed. The system will automatically retry. |
 | `400 Bad Request` | **Permanent Request Error** | The job is failed and moved to the Dead-Letter Queue (DLQ) for manual inspection. An alarm is triggered. | The specific sync fails. An engineer is alerted to a potential bug in our `DataProvider` or an unexpected API change. |
 
@@ -161,7 +170,8 @@ With 1M DAU, we will make millions of API calls per day. Proactively managing th
     1.  **Centralized Ledger:** The **Amazon ElastiCache for Redis** cluster (defined in `06-technical-architecture.md`) will serve as the high-speed, centralized ledger for tracking our current usage against each provider's rate limit.
     2.  **Pre-flight Check:** Before a `DataProvider` makes an API call, it must request a "token" from our Redis-based rate limit service.
     3.  **Throttling & Queuing:** If the service determines that making a call would exceed the rate limit, it will deny the request. The `DataProvider` will then return the job to the SQS queue with a delay, effectively pausing execution until the rate limit window resets.
-*   **Prioritization:** The rate limiting service will be aware of job priority. When the available API budget is low, it will deny requests from low-priority workers (e.g., historical syncs) before denying requests from high-priority workers (e.g., hot path syncs). This ensures that a user's large historical sync does not prevent their most recent activities from syncing quickly. The mechanism for this is simple: the event payload for every sync job **must** include a `priority` field (e.g., `"high"` or `"low"`). The worker passes this priority to the rate limiting service when requesting a token. This terminology avoids confusion with the "Cold Path" workflow name.
+*   **Prioritization:** The rate limiting service will be aware of job priority. When the available API budget is low, it will deny requests from low-priority workers (e.g., historical syncs) before denying requests from high-priority workers (e.g., hot path syncs). This ensures that a user's large historical sync does not prevent their most recent activities from syncing quickly. The mechanism for this is simple: the event payload for every sync job **must** include a `priority` field. The worker passes this priority to the rate limiting service when requesting a token. This terminology avoids confusion with the "Cold Path" workflow name.
+    *   **[C-014] `priority` Enum:** The `priority` field is a required, case-sensitive string enum with the following possible values: `"high"`, `"medium"`, `"low"`.
 
 *(Note: This section directly impacts `21-risks.md` and `32-platform-limitations.md`. The rate limits for each provider must be documented.)*
 
@@ -172,7 +182,7 @@ With 1M DAU, we will make millions of API calls per day. Proactively managing th
 | **Google Fit** | Steps | `users/me/dataset:aggregate` | `users/me/dataSources/.../datasets:patch` | Hybrid | Requires Health Connect SDK on device. |
 | **Apple Health** | Steps | `HKSampleQuery` | `HKHealthStore.save()` | Device-to-Cloud / Cloud-to-Device | Uses the native HealthKit SDK on device. |
 | **Fitbit** | Steps | `1/user/-/activities/steps/date/[date]/1d.json` | `N/A` | Cloud-to-Cloud | Read-only for activity data. The granular `capabilities` enum clarifies this. |
-| **Garmin** | Steps | `daily-summary-service/daily-summary/...` | `N/A` | Cloud-to-Cloud | **High Risk.** This appears to be an unofficial, reverse-engineered API. It could change or be shut down without notice. This integration must be considered unstable. |
+| **Garmin** | Steps | `daily-summary-service/daily-summary/...` | `N/A` | Cloud-to-Cloud | **[B-001] [RISK-HIGH-02] High Risk.** This appears to be an unofficial, reverse-engineered API. It could change or be shut down without notice. This integration must be considered unstable and directly contradicts the Q1 roadmap theme of reliability. **[NEEDS_CLARIFICATION: Q-02]** The business stakeholder who formally accepted this risk must be documented here. |
 | **Strava** | Activities | `athlete/activities` | `activities` | Cloud-to-Cloud | Does not provide daily step data. |
 
 ## 6. Risk Analysis & Mitigation
@@ -237,9 +247,12 @@ While the `DataProvider` architecture provides a solid foundation, a key risk is
 *   **Circuit Breaker Pattern:** For notoriously unstable APIs, a Circuit Breaker pattern will be implemented within the `DataProvider` SDK.
     *   **Mechanism:** The circuit breaker monitors for failures. If the failure rate for a specific provider's API calls exceeds a configured threshold, the circuit "trips" or "opens".
     *   **Action:** Once the circuit is open, all subsequent calls to that provider's API will fail fast for a "cooldown" period, without making a network call. This prevents the system from wasting resources on an API that is clearly down and reduces the load on the failing service. After the cooldown, the circuit moves to a "half-open" state, allowing a single request to test if the service has recovered.
-    *   **Configuration:** The thresholds for the circuit breaker **must be configurable per-provider** via AWS AppConfig. This allows for fine-tuning based on the known stability of each third-party API. The default values below are placeholders and must be tuned for each provider based on observed stability during testing.
-        *   **Failure Threshold:** 25% of requests failing over a 5-minute window.
-        *   **Cooldown Period:** 5 minutes.
+    *   **[C-016] Configuration:** The thresholds for the circuit breaker **must be configurable per-provider** via AWS AppConfig. This allows for fine-tuning based on the known stability of each third-party API. The full set of configurable parameters includes:
+        *   `failureRateThreshold`: (Percentage) The failure rate to trip the circuit.
+        *   `slowCallRateThreshold`: (Percentage) The percentage of calls that are considered "slow" to trip the circuit.
+        *   `slowCallDurationThreshold`: (Milliseconds) The duration above which a call is considered "slow".
+        *   `permittedNumberOfCallsInHalfOpenState`: (Integer) The number of trial requests to make when the circuit is half-open.
+        *   `waitDurationInOpenState`: (Milliseconds) The time the circuit remains open before transitioning to half-open.
 *   **Graceful Degradation via Feature Flags:** If a provider's API is causing persistent, critical problems, a remote feature flag will be used to gracefully degrade the integration.
     *   **Level 1 (Read-Only Mode):** If writing data to a provider is failing, but reading is stable, the integration can be temporarily put into a read-only mode.
     *   **Level 2 (Full Disable):** If the entire API is unstable, the integration can be temporarily disabled in the app's UI, with a message explaining that the service is experiencing issues.
