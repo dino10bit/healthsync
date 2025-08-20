@@ -290,8 +290,45 @@ The development environment is optimized for developer velocity and minimal cost
 
 By heavily leveraging local emulation, we can provide a powerful development experience while keeping cloud spending for development to an absolute minimum.
 
-## 13. Future Cost Optimization
-*(This section was previously section 9 and remains valid.)*
+## 13. Advanced Cost-Optimization Strategies
+
+This section details three high-impact, innovative strategies that have been incorporated into the architecture to further enhance cost-effectiveness. These optimizations target second-order inefficiencies in the application's operational logic.
+
+### 13.1. Algorithmic Sync Optimization via "Sync Confidence"
+
+*   **Strategy:** This optimization introduces a "Sync Confidence" caching layer in Redis to intelligently skip redundant API calls to destination providers during the conflict resolution phase of a sync. The sync worker avoids fetching data from the destination if the user's conflict strategy makes it irrelevant (e.g., `Prioritize Source`) or if a cached counter shows the destination has been empty for many consecutive, recent syncs.
+*   **Cost Impact Analysis:** This change primarily reduces Fargate compute time and, consequently, log volume. While the dollar savings are modest, it represents a "no-regret" algorithmic improvement that also reduces latency and pressure on third-party APIs.
+    *   **Fargate Compute:** A destination API call can add significant latency. We estimate that skipping this call for a large percentage of polling-based syncs could reduce the compute duration for those jobs by 10-15%. This translates to an estimated **5-8% reduction** in the Fargate worker fleet's variable cost.
+    *   **CloudWatch Logs:** Shorter job durations produce less log data. This would lead to a corresponding **5-8% reduction** in log ingestion costs from the worker fleet.
+    *   **Estimated Monthly Savings:** **$15 - $25**.
+*   **Qualitative Benefits:**
+    *   **Reduced Latency:** Syncs will complete faster, improving the user experience.
+    *   **Reduced Third-Party Risk:** Lowers the number of API calls made to partner services, reducing the risk of hitting rate limits.
+
+### 13.2. Event Coalescing to Reduce Chatter
+
+*   **Strategy:** This strategy directly targets the "event-driven chatter" identified in the Sensitivity Analysis as a key cost driver. It introduces a short-term caching layer to buffer and merge multiple, rapid-fire webhook events for the same user into a single, consolidated sync job. Instead of 10 events triggering 10 jobs, they trigger one job.
+*   **Cost Impact Analysis:** This is a high-impact optimization. The primary savings come from a significant reduction in the volume of high-cost events and messages.
+    *   **EventBridge & SQS Reduction:** We assume that webhook-driven providers account for 50% of the event volume (`~114M` events/month) and that a 60% coalescing rate is achievable.
+        *   Events Reduced: `114M * 0.60 = ~68.4M`
+        *   EventBridge Savings (`$1.00/M`): `68.4 * $1.00 = $68.40`
+        *   SQS Savings (`$0.50/M`): `68.4 * $0.50 = $34.20`
+        *   **Gross Monthly Savings:** **~$102.60**
+    *   **New Component Costs:** The solution introduces a new SQS delay queue and a `CoalescingTriggerLambda`.
+        *   New SQS Messages: `114M * (1 - 0.60) = ~45.6M` messages. At `$0.40/M` (standard queue), this costs **~$18.24**.
+        *   New Lambda Invocations: `45.6M` invocations. This is a very lightweight lambda, so the cost is estimated at **~$5.00**.
+        *   **Total New Costs:** **~$23.24**
+*   **Estimated Net Monthly Savings:** `$102.60 (Gross Savings) - $23.24 (New Costs) =` **~$79.36**. This is a direct, recurring saving on the platform's highest-velocity components.
+
+### 13.3. Just-in-Time (JIT) Credential Caching
+
+*   **Strategy:** This involves implementing a local, in-memory LRU cache within each `WorkerFargateTask` to store user credentials (OAuth tokens). Instead of fetching from AWS Secrets Manager for every new user a worker encounters, it fetches once and caches the credentials for a short period (e.g., 5 minutes).
+*   **Cost Impact Analysis:** The primary benefit of this strategy is improved latency and resilience, with a secondary benefit of minor cost savings.
+    *   **Secrets Manager API Calls:** The current model already assumes some level of client-side caching by the AWS SDK, with an estimated `~600,000` API calls per month, costing ~$3.00. An explicit in-memory cache is far more effective, likely reducing these calls by **~95%**.
+    *   **Estimated Monthly Savings:** `$3.00 * 0.95 =` **~$2.85**.
+*   **Qualitative Benefits (Primary Driver):**
+    *   **Improved Latency:** Eliminates a network call for the vast majority of jobs, speeding up processing.
+    *   **Increased Resilience:** Allows "warm" workers to continue processing jobs for cached users even if Secrets Manager is temporarily unavailable, making the entire system more robust.
 
 ## 14. Implemented Cost Optimizations (August 2025)
 
