@@ -30,6 +30,7 @@ A consolidated list of all key project assumptions is maintained in the root `RE
 - `34-data-export.md` - Data Export
 - `35-data-import.md` - Data Import
 - `39-performance-metrics.md` - Performance & Metrics
+- `66-costs-model.md` - Costs Model
 
 ### Strategic / Indirect Dependencies
 - `01-context-vision.md` - Context & Vision
