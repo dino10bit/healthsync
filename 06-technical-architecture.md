@@ -673,14 +673,18 @@ A dedicated **Anonymizer Proxy Lambda** will be used for real-time operational f
 *   **PII Stripping Strategy:** The following table defines the PII stripping strategy. **[C-006]** This list is explicitly not exhaustive and represents a critical security gap. It **must be updated** with a comprehensive list of all fields across all canonical models before any user data is processed by an AI service. **[TODO: Complete this table for all canonical models.]**
 | Field (from any Canonical Model) | Action | Rationale |
 | :--- | :--- | :--- |
-| `sourceId` | **Hash** | Hashed with a per-user salt to prevent reverse-engineering while maintaining referential integrity for a given user. |
+| `userId` | **Remove** | The internal user ID is a direct identifier and must be removed. The AI service should operate on data from a single user at a time, without needing to know their ID. |
+| `sourceId` | **Hash** | Hashed with a per-user salt to prevent reverse-engineering while maintaining referential integrity for a given user's data. |
 | `title` | **Remove** | High-risk for free-text PII (e.g., "Run with Jane Doe"). |
 | `notes` | **Remove** | High-risk for free-text PII. |
-| `latitude`, `longitude` (and all other location data) | **Generalize** | Convert specific GPS coordinates to a general region (e.g., "San Francisco, CA") or remove entirely. |
-| `heartRateSamples` | **Aggregate** | Replace detailed timeseries data with summary statistics (e.g., `avg`, `min`, `max`). |
-| `calories` | **Keep** | Generally not considered PII. |
-| `steps` | **Keep** | Generally not considered PII. |
-| `distance` | **Keep** | Generally not considered PII. |
+| `latitude`, `longitude` (and all other location data) | **Generalize** | Convert specific GPS coordinates to a general region (e.g., "San Francisco, CA") or remove entirely. Start and end points of a workout are especially sensitive. |
+| `heartRateSamples` | **Aggregate** | Replace detailed timeseries data with summary statistics (e.g., `avg`, `min`, `max`). The raw series could potentially be used to identify a user. |
+| `sleepStages` | **Aggregate** | Replace detailed sleep stage data (e.g., timestamps of REM, deep, light) with total durations for each stage. |
+| `calories` | **Keep** | Generally not considered PII in isolation. |
+| `steps` | **Keep** | Generally not considered PII in isolation. |
+| `distance` | **Keep** | Generally not considered PII in isolation. |
+| `deviceName` | **Remove** | Can contain user's name (e.g., "John's iPhone"). |
+| `weatherInfo` | **Generalize** | Keep general weather (e.g., "Cloudy"), but remove specific temperature or location details that could narrow down the user's location. |
 *   **Privacy Guarantee:** This proxy-based architecture provides a strong guarantee that no raw user PII is ever processed by the AI models.
 
 #### Batch Anonymization for Analytics
@@ -772,8 +776,7 @@ This section documents known limitations of the architecture and explicit trade-
 *   **Account Merging:** The data model does not support account merging. **User-facing consequence:** Users who create multiple accounts will have siloed data and must contact support for a manual, best-effort resolution. This is a known product issue.
 *   **Firebase Authentication Dependency:** The use of Firebase Authentication creates a hard dependency on a non-AWS service for a critical function. This is a **High** strategic risk.
     *   **Risk:** An outage in Firebase Auth would render the application unusable for all users.
-    *   **[RISK-HIGH-03] Mitigation:** While accepted for the MVP to prioritize launch speed, a high-level exit strategy (e.g., a phased migration to Amazon Cognito) **must be drafted** and included in the project's risk register before launch. **[NEEDS_CLARIFICATION: Q-05]** The business must formally accept the risk that the entire application will be unavailable during a Firebase Authentication outage.
-    *   **[TODO: A concrete, detailed exit strategy document for migrating from Firebase Authentication to Amazon Cognito needs to be created and linked here.]**
+    *   **[RISK-HIGH-03] Mitigation:** While accepted for the MVP to prioritize launch speed, a high-level exit strategy has been drafted. See **[`33a-firebase-exit-strategy.md`](./33a-firebase-exit-strategy.md)** for the detailed technical plan. **[NEEDS_CLARIFICATION: Q-05]** The business must formally accept the risk that the entire application will be unavailable during a Firebase Authentication outage.
 
 ## Appendix A: Technology Radar
 
