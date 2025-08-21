@@ -238,6 +238,29 @@ sequenceDiagram
     deactivate Backend
 ```
 
+<details>
+<summary>Diagram Source Code</summary>
+
+```mermaid
+sequenceDiagram
+    participant MobileApp as Mobile App
+    participant ExtProvider as External Provider
+    participant Backend as SyncWell Backend
+    participant SecretsManager as AWS Secrets Manager
+
+    MobileApp->>ExtProvider: 1. Request Auth Code (with PKCE challenge)
+    ExtProvider-->>MobileApp: 2. Redirect with Auth Code
+    MobileApp->>Backend: 3. Send Auth Code & Verifier
+    activate Backend
+    Backend->>ExtProvider: 4. Exchange Auth Code for Tokens
+    ExtProvider-->>Backend: 5. Return Access & Refresh Tokens
+    Backend->>SecretsManager: 6. Store Tokens securely
+    SecretsManager-->>Backend: 7. Confirm Storage
+    Backend-->>MobileApp: 8. Auth Success
+    deactivate Backend
+```
+</details>
+
 ## 8. Managing Unstable & Poorly Documented APIs
 
 A key risk is the varying quality and stability of third-party APIs. This section outlines a proactive strategy for managing this risk. All engineers must follow the standards outlined in our `ENGINEERING_STANDARDS.md` document in the root of the repository.

@@ -114,3 +114,36 @@ graph TD
     J -- via FCM/APNS --> I
     I -- Uses Pre-signed URL --> H
 ```
+
+<details>
+<summary>Diagram Source Code</summary>
+
+```mermaid
+graph TD
+    subgraph Mobile App
+        A[Initiate Export]
+        I[Download File]
+    end
+    subgraph AWS Backend
+        B[API Gateway]
+        C[Step Functions<br>DataExport State Machine]
+        D[Fetch Data Chunks (Fargate)]
+        E[Consolidate & Format (Fargate)]
+        F[Compress & Store (Lambda)]
+        G[Finalize & Notify (Lambda)]
+        H[S3 for Exports]
+        J[SNS]
+    end
+
+    A -- Triggers --> B
+    B -- Starts Execution --> C
+    C -- Invokes --> D
+    C -- Invokes --> E
+    C -- Invokes --> F
+    C -- Invokes --> G
+    F -- Uploads .zip to --> H
+    G -- Publishes event to --> J
+    J -- via FCM/APNS --> I
+    I -- Uses Pre-signed URL --> H
+```
+</details>
