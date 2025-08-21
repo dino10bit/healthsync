@@ -5,11 +5,11 @@ migrated: true
 ## Dependencies
 
 ### Core Dependencies
-- `./06-technical-architecture.md` - Technical Architecture, Security & Compliance
+- `./06-technical-architecture.md` - **[Authoritative]** Technical Architecture
 - `../security/19-security-privacy.md` - Data Security & Privacy Policies
 - `../security/20-compliance-regulatory.md` - Legal & Regulatory Compliance
 - `./32-platform-limitations.md` - Platform-Specific Limitations
-- `./33-third-party-integration.md` - Third-Party Integration Strategy
+- `../prd/33-third-party-integration.md` - Third-Party Integration Strategy
 
 ### Strategic / Indirect Dependencies
 - `./05-data-sync.md` - Data Synchronization & Reliability
@@ -37,9 +37,9 @@ The shared module provides a set of abstract classes and utilities that every pr
 
 | Exception | Properties | Description |
 | :--- | :--- | :--- |
-| `PermanentAuthError`| `message: String` | Thrown for non-recoverable authentication errors (e.g., 401 Unauthorized), indicating the user must re-authenticate. |
-| `TransientAPIError` | `message: String` | Thrown for temporary server-side errors (e.g., 5xx status codes) that can be retried by the sync engine. |
-| `RateLimitError` | `retryAfterSeconds: Int?`| Thrown when a rate limit is hit (e.g., 429 Too Many Requests), signaling the worker to back off. Includes optional provider-supplied delay. |
+| `PermanentAuthError`| `message: String` | Thrown for non-recoverable authentication errors (e.g., 401 Unauthorized), indicating the user must re-authenticate. The `message` is for internal logging and not for the user. |
+| `TransientAPIError` | `message: String` | Thrown for temporary server-side errors (e.g., 5xx status codes) that can be retried by the sync engine. The `message` is for internal logging. |
+| `RateLimitError` | `retryAfterSeconds: Int?`| Thrown when a rate limit is hit (e.g., 429 Too Many Requests), signaling the worker to back off. Includes optional provider-supplied delay. The `message` is for internal logging. |
 
 *   **Automatic Metrics & Logging:** The framework will automatically capture and publish key metrics (e.g., API call latency, success/failure rates) and structured logs for any actions performed through the shared `ApiClient`.
 
@@ -48,7 +48,7 @@ The shared module provides a set of abstract classes and utilities that every pr
 Each `DataProvider` implementation will focus purely on the provider-specific business logic:
 *   **Authentication:** Providing the provider-specific URLs and parameters for the OAuth flow.
 *   **Data Mapping:** Transforming the provider's unique data model into SyncWell's canonical data model, and vice-versa.
-*   **Endpoint Logic:** Knowing which specific API endpoints to call to `fetchMetadata`, `fetchPayloads`, and `pushData`.
+*   **Endpoint Logic:** Knowing which specific API endpoints to call to perform data sync operations.
 
 To enforce this separation of concerns, every provider must implement the `DataProvider` interface defined in the KMP shared module.
 
@@ -116,21 +116,20 @@ interface DataProvider {
     /**
      * Pushes a list of canonical data models to the provider's API. The implementation
      * is responsible for casting the `CanonicalData` objects to the correct concrete type.
-     * If a cast fails, it should be logged as a critical error and the item should be included in the `failedItemIds` of the result.
+     * If a cast fails, it should be logged as a critical error and the item should be included in the `failedItemIds` of the result, ensuring the job doesn't fail due to a single malformed item.
      */
     suspend fun pushData(tokens: ProviderTokens, data: List<CanonicalData>): PushResult
 
     /**
      * Optional: Performs a lightweight pre-flight check to see if there is any new data available.
-     * If `null` is returned, the calling worker will assume `true` (new data might exist). This is a safe default
+     * If `null` is returned, the calling worker will **assume `true`** (new data might exist). This is a safe default
      * that prevents missed syncs at the cost of a potentially unnecessary worker invocation.
      */
     suspend fun hasNewData(tokens: ProviderTokens, dateRange: DateRange): Boolean? = null
 
     /**
      * Handles an incoming webhook event. The implementation is responsible for
-     * verifying the webhook's authenticity. The specific authentication mechanism (e.g., verifying an
-     * `X-Hub-Signature-256` header) is provider-dependent and must be documented in the implementation.
+     * verifying the webhook's authenticity (e.g., by verifying an `X-Hub-Signature-256` header). The specific authentication mechanism is provider-dependent and must be documented in the implementation.
      */
     suspend fun handleWebhook(requestHeaders: Map<String, String>, requestBody: String): WebhookPayload?
 }
@@ -168,7 +167,7 @@ The primary authentication flow assumes **OAuth 2.0 Authorization Code Flow with
 1.  **Initiate (Mobile):** The mobile app generates a `code_verifier` and `code_challenge`.
 2.  **Open WebView (Mobile):** The app opens a secure in-app browser with the provider's authorization URL.
 3.  **User Consent (Mobile):** The user logs in and grants consent on the provider's web page.
-4.  **Redirect with Auth Code (Mobile):** The provider redirects to SyncWell's redirect URI (e.g., `syncwell://oauth-callback`) with a one-time `authorization_code`. The `state` parameter will be a JWT containing the `providerId` and a CSRF token, signed by the SyncWell backend.
+4.  **Redirect with Auth Code (Mobile):** The provider redirects to SyncWell's redirect URI (e.g., `syncwell://oauth-callback`) with a one-time `authorization_code`. The `state` parameter is a short-lived, signed JWT created by the SyncWell backend, containing the `providerId` and a CSRF token.
 5.  **Secure Hand-off to Backend (Mobile -> Backend):** The mobile app sends the `authorization_code` and `code_verifier` to a secure endpoint on the SyncWell backend.
 6.  **Token Exchange (Backend):** A dedicated backend function receives the `authorization_code` and invokes the correct `DataProvider` to perform the token exchange.
 7.  **Secure Storage (Backend):** Upon receiving the tokens, the backend stores them securely in **AWS Secrets Manager**.
@@ -179,19 +178,20 @@ The primary authentication flow assumes **OAuth 2.0 Authorization Code Flow with
 Token management is a purely backend process. The shared module will automatically perform a pre-flight check for token validity and handle the refresh flow if necessary. If a refresh fails, it will throw a `PermanentAuthError`.
 
 ### 4.2. API Error Handling Strategy
-A robust sync engine must intelligently handle the wide variety of errors that can occur. The canonical error handling policies, retry strategies, and user-facing messages are defined in **`../ops/17-error-handling.md`**. This document serves as the single source of truth.
+A robust sync engine must intelligently handle the wide variety of errors that can occur. The canonical error handling policies, retry strategies, and user-facing notifications are defined in **`../ops/17-error-handling.md`**, which serves as the single source of truth. The user-facing content is specified below.
 
 *   **`PermanentAuthError` Notification:**
-    *   **Content:** The push notification content will be: `Your connection to [Provider Name] has expired. Please tap here to reconnect.`
+    *   **Content:** `Your connection to [Provider Name] has expired. Please tap here to reconnect.`
     *   **Deep-link:** The deep-link will follow the schema `syncwell://reconnect?connectionId={connectionId}`.
 *   **Rate-Limiting Delay Notification:**
-    *   If a sync is delayed by more than a configurable threshold (default: **15 minutes**, key: `ratelimit.notification.delay_minutes` in AppConfig), a notification will be sent: `Syncs with [Provider Name] are temporarily delayed due to high volume. We are working on it.`
+    *   If a sync is delayed by more than a configurable threshold (default: **15 minutes**, key: `ratelimit.notification.delay_minutes` in AppConfig), a notification will be sent.
+    *   **Content:** `Syncs with [Provider Name] are temporarily delayed due to high volume. We are working on it.`
 
 ## 4a. API Rate Limit Management
 
 Proactively managing third-party rate limits is a core architectural requirement. The strategy is to use a **distributed, global rate limiting** system using the **token bucket algorithm**, implemented in Redis.
 
-*   **Prioritization:** The rate limiting service will be aware of job priority. The event payload for every sync job **must** include a `priority` field. If omitted from a request, the `priority` field defaults to `medium`. The definition for this enum is maintained in `06-technical-architecture.md` as the single source of truth.
+*   **Prioritization:** The rate limiting service will be aware of job priority. The event payload for every sync job **must** include a `priority` field. If omitted from a request, the `priority` field defaults to `medium`. The enum (`high`, `medium`, `low`) is authoritatively defined in `06-technical-architecture.md`.
 
 ## 5. MVP API Endpoint Mapping
 
@@ -201,7 +201,7 @@ Proactively managing third-party rate limits is a core architectural requirement
 | **Apple Health** | Steps | `HKSampleQuery` | `HKHealthStore.save()` | Device-to-Cloud / Cloud-to-Device | N/A (On-device) |
 | **Fitbit** | Steps | `1/user/-/activities/steps/date/[date]/1d.json` | `N/A` | Cloud-to-Cloud (Webhook-First) | Read-only for activity data. Supports webhooks. |
 | **Strava** | Activities | `athlete/activities` | `activities` | Cloud-to-Cloud (Webhook-First) | Does not provide daily step data. Supports webhooks. |
-| **Garmin** | Steps | `daily-summary-service/daily-summary/...` | `N/A` | Cloud-to-Cloud (Polling) | **Deferred Post-MVP.** Unofficial API. Re-evaluation tracked in ticket `PROD-1234`. |
+| **Garmin** | Steps | `daily-summary-service/daily-summary/...` | `N/A` | Cloud-to-Cloud (Polling) | **Deferred Post-MVP.** Unofficial API presents high maintenance risk. Re-evaluation tracked in ticket `PROD-1234`. |
 
 ## 6. Risk Analysis & Mitigation
 
@@ -210,7 +210,7 @@ Proactively managing third-party rate limits is a core architectural requirement
 | **R-19** | An API provider makes a breaking change, disabling a key integration. | High | High | Implement contract testing and versioned `DataProviders`. Have robust monitoring to detect API errors quickly. | Core Backend Lead |
 | **R-21** | The complexity of implementing and maintaining numerous providers becomes a significant engineering burden. | Medium | High | Strictly adhere to the provider architecture. Automate testing for each provider. Allocate dedicated engineering resources for maintenance. | Core Backend Lead |
 | **R-22** | A vulnerability in the backend leads to a leak of user OAuth tokens from Secrets Manager. | Low | Critical | Enforce strict IAM policies with the principle of least privilege. Encrypt all secrets. Conduct regular security audits and penetration testing. | Security Lead |
-| **R-24** | A bug in a single `DataProvider` implementation leaks user tokens. | Low | Critical | Rigorous code reviews, static analysis for security hotspots, and principle of least privilege for the Fargate task's IAM role. | Security Lead |
+| **R-24** | A bug in a single `DataProvider` implementation leaks user tokens. | Low | Critical | Rigorous code reviews, static analysis for security hotspots, and principle of least privilege for the worker's IAM role. | Security Lead |
 | **R-25** | Inconsistent `DataProvider` implementations lead to varied quality and behavior. | Medium | Medium | The shared module mitigates this, but a strict, automated QA certification suite for new providers is essential. | QA Lead |
 
 ## 7. Visual Diagrams
@@ -263,12 +263,12 @@ sequenceDiagram
 
 ## 8. Managing Unstable & Poorly Documented APIs
 
-A key risk is the varying quality and stability of third-party APIs. This section outlines a proactive strategy for managing this risk. All engineers must follow the standards outlined in our `ENGINEERING_STANDARDS.md` document in the root of the repository.
+A key risk is the varying quality and stability of third-party APIs. This section outlines a proactive strategy for managing this risk, which all engineers must follow as per [`ENGINEERING_STANDARDS.md`](../../../ENGINEERING_STANDARDS.md).
 
 *   **Provider-Specific Monitoring:** Each `DataProvider` will have its own dedicated set of CloudWatch Alarms monitoring error rate and P95 latency.
 *   **Circuit Breaker Pattern:** For notoriously unstable APIs, a Circuit Breaker pattern will be implemented within the shared module.
     *   **Mechanism:** If the failure rate for a specific provider's API calls exceeds a configured threshold, the circuit "opens," and all subsequent calls will fail fast for a cooldown period.
-    *   **Configuration:** The thresholds for the circuit breaker **must be configurable per-provider** via AWS AppConfig. The default configuration is: `failureRateThreshold` = 50%, `slowCallRateThreshold` = 100%, `slowCallDurationThreshold` = 5s, `minimumNumberOfCalls` = 20. These are configured under the path `features/circuit_breaker/{providerKey}`.
+    *   **Configuration:** The thresholds for the circuit breaker **must be configurable per-provider** via AWS AppConfig under the path `features/circuit_breaker/{providerKey}`. The default configuration is: `failureRateThreshold` = 50%, `slowCallRateThreshold` = 100%, `slowCallDurationThreshold` = 5s, `minimumNumberOfCalls` = 20.
 *   **Graceful Degradation via Feature Flags:** If a provider's API is causing persistent problems, a remote feature flag will be used to gracefully degrade or disable the integration.
     *   **Flags:** `integrations.{providerKey}.enabled` (boolean) and `integrations.{providerKey}.readOnly` (boolean).
     *   **User-Facing Text (Read-Only):** If an integration is in read-only mode, the user will see a banner in the integration's settings screen: `Data can only be synced from [Provider Name], not to it.`

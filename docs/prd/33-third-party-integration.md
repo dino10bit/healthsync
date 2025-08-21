@@ -5,6 +5,7 @@ migrated: true
 ## Dependencies
 
 ### Core Dependencies
+- `./01-context-vision.md` - Context & Vision
 - `./03-competitive-analysis.md` - Competitive & SWOT Analysis
 - `./13-roadmap.md` - Roadmap, Milestones & Timeline
 - `../ux/42-customer-feedback.md` - Customer Feedback Loop
@@ -23,18 +24,18 @@ migrated: true
 
 This document provides the strategic framework for the lifecycle of third-party integrations within SyncWell. As integrations are our core product feature, a disciplined and strategic approach to selecting, developing, and maintaining them is critical for long-term success.
 
-The framework is designed to be data-driven and objective, using a quantitative scorecard to prioritize opportunities. This process provides a crucial defense against misallocating precious engineering resources.
+The framework is designed to be data-driven and objective, using a quantitative scorecard to prioritize opportunities. This process provides a crucial defense against misallocating precious engineering resources by ensuring we only work on integrations that provide maximum value to our users and align with our business goals, as defined in `01-context-vision.md`.
 
 ## 2. The Integration Opportunity Scorecard
 
-The decision to pursue a new integration will be based on the outcome of this scorecard. Each potential integration is scored, and opportunities are ranked. An opportunity is pursued if its final score is **above 3.5**. Scores are translated to product backlog priority: **>4.5 = P0 (Critical)**, **4.0-4.5 = P1 (High)**, **3.5-3.9 = P2 (Medium)**.
+The decision to pursue a new integration will be based on the outcome of this scorecard. Each potential integration is scored, and opportunities are ranked. An opportunity is pursued if its final score is **above 75**. The final score maps to a priority on the main product roadmap (`13-roadmap.md`).
 
 | Category (Weight) | Criteria | Scoring (0-5) | Notes |
 | :--- | :--- | :--- | :--- |
 | **User Demand (40%)** | Votes on the public feedback portal: `https://feedback.syncwell.com` | 0 = <10 votes<br>5 = >500 votes | The most important factor. |
-| **Strategic Value (30%)**| Expands our total addressable market. | 0 = No new segment<br>5 = Opens a **high-value, untapped user segment** (e.g., the CrossFit community). | Directly tied to company OKRs like 'Expand into New User Segments'. |
+| **Strategic Value (30%)**| Expands our total addressable market. | 0 = No new segment<br>5 = Opens a **high-value, untapped user segment**. | Directly tied to company OKRs. <br> - *High-value segment: A user group with high willingness to pay (e.g., dedicated athletes).* <br> - *Untapped segment: A large user base (>1M DAU) for which we have no current integration.* |
 | **Technical Feasibility (20%)** | Quality of the provider's API and documentation. | 0 = Poorly documented, no SDK<br>5 = Excellent docs, modern API, official SDK | Can our engineers build and maintain this efficiently? |
-| **Competitive Landscape (10%)**| Achieves parity with a key competitor. | 0 = No parity gain<br>5 = Fills a **major competitive gap** (e.g., offered by our top 3 competitors). | Is this a "must-have" to compete? |
+| **Competitive Landscape (10%)**| Achieves parity with a key competitor. | 0 = No parity gain<br>5 = Fills a **major competitive gap**. | *Major gap: An integration offered by at least 2 of our top 3 competitors.* |
 
 ## 3. The Gated Integration Lifecycle
 
@@ -42,7 +43,7 @@ Each integration proceeds through a formal, gated lifecycle.
 
 ### Stage 1: Evaluation
 *   **Activities:** Complete the Opportunity Scorecard. Perform a preliminary investigation of the API documentation.
-*   **Gate Review:** Is the final score above the 3.5 threshold?
+*   **Gate Review:** Is the final score above the 75 threshold?
 *   **Outcome:** "Go/No-Go" decision.
 
 ### Stage 2: Pre-Development
@@ -65,7 +66,7 @@ Each integration proceeds through a formal, gated lifecycle.
 
 ## 4. Partner Relationship Management
 
-*   **Centralized Record:** A private repository (`https://github.com/syncwell/internal-partner-relations`) will be maintained with key information for each partner (contacts, API keys, etc.).
+*   **Centralized Record:** A private repository (`https://github.com/SyncWell/internal-partner-relations`) will be maintained with key information for each partner (contacts, API keys, etc.).
 *   **Proactive Monitoring:** We will subscribe to the developer blog/newsletter for each key partner to stay informed about upcoming API changes.
 
 ## 5. Deprecation Plan
@@ -76,7 +77,7 @@ If an API provider discontinues their service or we decide to end an integration
 3.  **1-Month Notice:** Send a final push notification reminder: `Heads up: Your connection to [Provider Name] will be removed in 30 days.`
 4.  **Deprecation Day:** Remove the integration.
 
-## 6. Risk Analysis
+## 6. Process Risk Analysis
 
 | Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
 | :--- | :--- | :--- | :--- | :--- |
@@ -89,7 +90,7 @@ If an API provider discontinues their service or we decide to end an integration
 ### Gated Integration Lifecycle
 ```mermaid
 graph TD
-    A[Stage 1: Evaluation] --> B(Gate 1: Go/No-Go);
+    A[Stage 1: Evaluation] --> B(Gate 1: Score > 75?);
     B -- Go --> C[Stage 2: Pre-Development];
     C --> D(Gate 2: API Keys Received?);
     D -- Yes --> E[Stage 3: Development & Testing];
@@ -104,7 +105,7 @@ graph TD
 
 ```mermaid
 graph TD
-    A[Stage 1: Evaluation] --> B(Gate 1: Go/No-Go);
+    A[Stage 1: Evaluation] --> B(Gate 1: Score > 75?);
     B -- Go --> C[Stage 2: Pre-Development];
     C --> D(Gate 2: API Keys Received?);
     D -- Yes --> E[Stage 3: Development & Testing];
