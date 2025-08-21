@@ -17,10 +17,10 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install linter (placeholder)
-        run: pip install markdownlint-cli
+      - name: Install markdownlint-cli
+        run: npm install -g markdownlint-cli
 
-      - name: Run PRD Linter (placeholder)
+      - name: Run PRD Linter
         run: |
           echo "Linting all modified PRD files..."
           # In a real workflow, you would target only the changed files.
