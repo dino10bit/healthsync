@@ -98,3 +98,19 @@ graph TD
     G --> H(Gate 4: No Blocking Bugs?);
     H -- Yes --> I[Stage 5: Maintenance & Monitoring];
 ```
+
+<details>
+<summary>Diagram Source Code</summary>
+
+```mermaid
+graph TD
+    A[Stage 1: Evaluation] --> B(Gate 1: Go/No-Go);
+    B -- Go --> C[Stage 2: Pre-Development];
+    C --> D(Gate 2: API Keys Received?);
+    D -- Yes --> E[Stage 3: Development & Testing];
+    E --> F(Gate 3: CI/CD Pipeline Passes?);
+    F -- Yes --> G[Stage 4: Beta & Release];
+    G --> H(Gate 4: No Blocking Bugs?);
+    H -- Yes --> I[Stage 5: Maintenance & Monitoring];
+```
+</details>

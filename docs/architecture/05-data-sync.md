@@ -183,6 +183,42 @@ graph TD
     WorkerFargateTask -- "4. Syncs Data" --> ThirdPartyAPIs
 ```
 
+<details>
+<summary>Diagram Source Code</summary>
+
+```mermaid
+graph TD
+    subgraph User Device
+        MobileApp
+    end
+    subgraph AWS
+        APIGateway[API Gateway]
+
+        subgraph "Hot Path (MVP)"
+            HotPathSyncQueue["SQS FIFO Queue<br>(HotPathSyncQueue)"]
+            DLQ_SQS[SQS DLQ]
+        end
+
+        WorkerFargateTask["Worker Service (Fargate)"]
+        DynamoDB[DynamoDB]
+        Redis[ElastiCache for Redis]
+    end
+    subgraph External
+        ThirdPartyAPIs[3rd Party Health APIs]
+    end
+
+    MobileApp -- "1. Sync Request (with Idempotency-Key)" --> APIGateway
+
+    APIGateway -- "2. Sends message with Deduplication ID" --> HotPathSyncQueue
+    HotPathSyncQueue -- "3. Drives" --> WorkerFargateTask
+    HotPathSyncQueue -- "5. On Failure, redrives to" --> DLQ_SQS
+
+    WorkerFargateTask -- "4. Read/Write State" --> DynamoDB
+    WorkerFargateTask -- "4. Check Sync Confidence" --> Redis
+    WorkerFargateTask -- "4. Syncs Data" --> ThirdPartyAPIs
+```
+</details>
+
 ### Sequence Diagram for Delta Sync (MVP)
 
 This diagram details the step-by-step interaction between the `Worker Fargate Task` and other services during a single, successful delta sync job, including the "Sync Confidence" optimization.
@@ -227,6 +263,47 @@ sequenceDiagram
     deactivate Worker
 ```
 
+<details>
+<summary>Diagram Source Code</summary>
+
+```mermaid
+sequenceDiagram
+    participant Worker as Worker Fargate Task
+    participant DynamoDB as DynamoDB
+    participant Redis as Redis Cache
+    participant SourceAPI as Source API
+    participant DestAPI as Destination API
+    participant SQS as SQS Queue
+
+    Worker->>DynamoDB: 1. Get lastSyncTime & strategy
+    activate Worker
+    DynamoDB-->>Worker: Return state
+    Worker->>SourceAPI: 2. Fetch data since lastSyncTime
+    SourceAPI-->>Worker: Return new data
+
+    Worker->>Redis: 3. Check Sync Confidence
+    Redis-->>Worker: Return counter
+
+    alt Destination fetch is NOT skipped
+        Worker->>DestAPI: 4. Fetch overlapping data
+        DestAPI-->>Worker: Return destination data
+    end
+
+    Worker->>Worker: 5. Run local conflict resolution
+
+    Worker->>DestAPI: 6. Write final data
+    DestAPI-->>Worker: Success
+    Worker->>DynamoDB: 7. Update lastSyncTime
+    DynamoDB-->>Worker: Success
+
+    Worker->>Redis: 8. Update Sync Confidence counter
+    Redis-->>Worker: Success
+
+    Worker->>SQS: 9. Delete Job Message
+    deactivate Worker
+```
+</details>
+
 ### Lifecycle of a Hot Path Sync Job Message
 *(This diagram illustrates the lifecycle of a single message in the SQS queue, not an AWS Step Functions state machine)*
 
@@ -243,6 +320,19 @@ graph TD
     D -- "Attempt < maxReceiveCount" --> B;
     D -- "Attempt >= maxReceiveCount" --> E[Moved to DLQ];
 ```
+
+<details>
+<summary>Diagram Source Code</summary>
+
+```mermaid
+graph TD
+    A[Queued] --> B{In Progress};
+    B -- On Success --> C[Succeeded];
+    B -- On Failure --> D{Retrying...};
+    D -- "Attempt < maxReceiveCount" --> B;
+    D -- "Attempt >= maxReceiveCount" --> E[Moved to DLQ];
+```
+</details>
 
 ## 9. Research & Recommendations on AI/Agentic Workflows
 
@@ -311,3 +401,53 @@ stateDiagram-v2
     EndEscalated: End (Escalated)
     EndEscalated --> [*]
 ```
+
+<details>
+<summary>Diagram Source Code</summary>
+
+```mermaid
+stateDiagram-v2
+    [*] --> GreetUser
+    GreetUser: Greet & Gather Initial Info
+    GreetUser --> AnalyzeProblem
+
+    AnalyzeProblem: Analyze Problem Description
+    AnalyzeProblem --> CheckKB
+
+    CheckKB: Check Knowledge Base
+    CheckKB --> FoundInKB
+
+    state FoundInKB <<choice>>
+    FoundInKB --> ProposeSolution : Yes
+    FoundInKB --> AskClarifyingQuestion : No
+
+    AskClarifyingQuestion: Ask Clarifying Questions
+    AskClarifyingQuestion --> AnalyzeUserResponse
+
+    AnalyzeUserResponse: Analyze User's Response
+    AnalyzeUserResponse --> SufficientInfo
+
+    state SufficientInfo <<choice>>
+    SufficientInfo --> CheckKB : Yes
+    SufficientInfo --> AskClarifyingQuestion : No
+
+    ProposeSolution: Propose Solution
+    ProposeSolution --> GetUserFeedback
+
+    GetUserFeedback: Get User Feedback on Solution
+    GetUserFeedback --> Resolved
+
+    state Resolved <<choice>>
+    Resolved --> EndSuccess : Yes
+    Resolved --> EscalateToHuman : No
+
+    EscalateToHuman: Escalate to Human Support
+    EscalateToHuman --> EndEscalated
+
+    EndSuccess: End (Success)
+    EndSuccess --> [*]
+
+    EndEscalated: End (Escalated)
+    EndEscalated --> [*]
+```
+</details>
