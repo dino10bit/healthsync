@@ -94,6 +94,19 @@ The following proposals represent new, innovative strategies to further reduce o
     *   Assume 90% of this cost is from successful jobs (~$51) and 80% of users are `FREE` tier.
     *   The log volume from `FREE` users is `$51 * 0.8 = ~$41`.
     *   A 90% reduction in this volume (from 1/1,000 to 1/10,000 sampling) yields savings of `$41 * 0.9 = **~$37**`.
+*   **Visual Impact:** The following diagrams illustrate the dramatic shift in log volume contribution from `FREE` tier users for successful jobs. Before tiering, `FREE` users generate the vast majority of log data due to their user base size. After tiering, their contribution becomes negligible, driving the cost savings.
+    ```mermaid
+    pie
+        title Log Volume Contribution (Before Tiering)
+        "PRO Tier Users (20%)" : 20
+        "FREE Tier Users (80%)" : 80
+    ```
+    ```mermaid
+    pie
+        title Log Volume Contribution (After Tiering)
+        "PRO Tier Users" : 20
+        "FREE Tier Users" : 8
+    ```
 
 #### Proposal 2: Pre-flight Check for Polling Syncs (Est. Savings: ~$47/month)
 *   **Opportunity:** For polling-based integrations, a large percentage of sync jobs are triggered by the scheduler only to find no new data at the source. This wastes a full, expensive Fargate task invocation.

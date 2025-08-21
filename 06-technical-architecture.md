@@ -833,6 +833,19 @@ For analytics, **Amazon Kinesis Data Firehose** will be used.
         *   **`FREE` Tier:** Non-paying users receive a lower-fidelity experience. The sampling rate is aggressive (e.g., 1 in 10,000 successful jobs are logged) to minimize costs.
     *   **Dynamic Configuration:** The specific sampling rates for each tier (`pro`, `free`) **must** be managed via AWS AppConfig, allowing for dynamic tuning without a code deployment.
     *   **Benefit:** This tiered approach provides the greatest cost reduction by targeting the highest volume of events (successful jobs from free users) while retaining full observability for failures and for paying customers. It treats observability as a feature with distinct service levels, not just a fixed operational cost.
+    *   **Logic Flow:** The following diagram illustrates the decision-making process within a worker for each completed job.
+        ```mermaid
+        graph TD
+            A[Sync Job Completes] --> B{Job Succeeded?};
+            B -- No --> C[Ingest 100% of<br>Buffered Logs to CloudWatch];
+            B -- Yes --> D{User is PRO Tier?};
+            D -- Yes --> E[Get PRO Sampling Rate<br>e.g., 1/100];
+            D -- No --> F[Get FREE Sampling Rate<br>e.g., 1/10,000];
+            E --> G{Apply Sampling Logic<br>hash(jobId) % rate == 0?};
+            F --> G;
+            G -- Yes --> H[Ingest Buffered Logs<br>to CloudWatch];
+            G -- No --> I[Discard Logs];
+        ```
 *   **Dynamic X-Ray Trace Sampling:** By default, AWS X-Ray traces every request, which can be costly at scale. To manage this, the system will implement dynamic sampling. A low default sampling rate (e.g., 1 request per second and 5% of all requests) will be configured for the main API Gateway stage. This captures a baseline for performance monitoring. Additionally, specific, higher-volume sampling rules will be applied to critical user flows (e.g., new user sign-up, payment processing) to ensure full visibility into key interactions. This approach significantly reduces cost while retaining deep observability where it is most needed.
 *   **Key Metrics & Alerting:**
     *   **Idempotency Key Collisions:** This will be tracked via a custom CloudWatch metric published using the **Embedded Metric Format (EMF)** from the worker Fargate task. An alarm will trigger on any anomalous spike.
