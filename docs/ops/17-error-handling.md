@@ -5,7 +5,7 @@ migrated: true
 ## Dependencies
 
 ### Core Dependencies
-- `../architecture/06-technical-architecture.md` - Technical Architecture, Security & Compliance
+- `../architecture/06-technical-architecture.md` - **[Authoritative]** Technical Architecture
 - `../ux/40-error-recovery.md` - Error Recovery & Troubleshooting
 - `../security/19-security-privacy.md` - Security & Privacy
 
@@ -32,13 +32,13 @@ A centralized `ErrorHandler` service, implemented as a singleton in the KMP shar
 ### 2.2. Backend Error Handling
 The backend's error handling strategy is designed for maximum resilience and message durability.
 
-1.  **Guaranteed Delivery & Message Durability:** Jobs are published to a durable **Amazon SQS FIFO queue**. SQS guarantees that the message is stored redundantly until a worker successfully processes it.
+1.  **Guaranteed Delivery & Message Durability:** Jobs are published to a durable **Amazon SQS** queue. SQS guarantees that the message is stored redundantly until a worker successfully processes it.
 
 2.  **Handling Transient Failures with Retries:**
-    *   **Infrastructure-Level Retries:** The primary retry mechanism is the SQS queue itself. If a `Worker Fargate Task` fails to process a message, the message becomes visible again in the queue after the `VisibilityTimeout` expires and is picked up by another worker.
-    *   **Application-Level Retries:** Within the worker, specific critical API calls (like `ChangeMessageVisibility`) that must not fail will have their own internal retry loop (3 attempts with exponential backoff).
-    *   **Advanced Resilience Patterns:** For predictable transient errors from third-party APIs, the application uses more advanced patterns like the **Circuit Breaker** and **Rate Limit Backoff**. These are canonically defined in `../architecture/07-apis-integration.md` and are not duplicated here.
-    *   **Post-MVP (Cold Path):** For historical syncs, the Step Functions state machine provides its own declarative, automated retry logic. This is out of scope for the MVP.
+    *   **Infrastructure-Level Retries:** The primary retry mechanism is the SQS queue itself. If a `WorkerLambda` execution fails, the message remains in the queue and is retried according to the Lambda event source mapping configuration.
+    *   **Application-Level Retries:** Within the worker, specific critical API calls (like `ChangeMessageVisibility`) that must not fail will have their own internal retry loop (**3 attempts with exponential backoff**).
+    *   **Advanced Resilience Patterns:** For predictable transient errors from third-party APIs, the application uses more advanced patterns like the **Circuit Breaker** and **Rate Limit Backoff**. These are authoritatively defined in `../architecture/07-apis-integration.md` and are not duplicated here.
+    *   **Post-MVP (Cold Path):** For historical syncs, the Step Functions state machine provides its own declarative, automated retry logic, as detailed in `../prd/45-future-enhancements.md`.
 
 3.  **Isolating Persistent Failures with a Dead-Letter Queue (DLQ):**
     *   If a job fails all retry attempts, SQS automatically moves it to a pre-configured **Dead-Letter Queue (DLQ)**. The `maxReceiveCount` is set to **5** and is configured in the IaC (Terraform) definition for the queue, as referenced in `../architecture/05-data-sync.md`.
@@ -54,7 +54,7 @@ The backend's error handling strategy is designed for maximum resilience and mes
 The mobile app will maintain a local, rotating log file with structured JSON entries. The log file will rotate when it reaches **5MB**, and a maximum of **3 rotated files** will be kept.
 
 #### Backend Logging
-All backend services will output structured JSON logs to **AWS CloudWatch Logs**. A common logging library, based on the patterns from AWS Powertools, will be used across the backend (including in Fargate tasks and Lambda functions) to enforce this standard.
+All backend services will output structured JSON logs to **AWS CloudWatch Logs**. A common logging library, based on the patterns from AWS Powertools, will be used across the backend to enforce this standard.
 
 **Example Log Entry:**
 ```json
@@ -62,12 +62,12 @@ All backend services will output structured JSON logs to **AWS CloudWatch Logs**
   "timestamp": "2023-10-27T14:30:00.123Z",
   "level": "ERROR",
   "message": "Sync job failed: Unhandled exception from provider.",
-  "service": "WorkerFargateTask",
-  "traceId": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+  "service": "WorkerLambda",
+  "correlationId": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
   ...
 }
 ```
-*   **Log Correlation:** The `traceId` is the primary key for tracing a request through the system. Ensuring its propagation across all services, especially async boundaries, is technically challenging. We will leverage AWS X-Ray for automatic propagation where possible and enforce manual propagation in our KMP logging library for other cases.
+*   **Log Correlation:** The `correlationId` (from AWS X-Ray) is the primary key for tracing a request through the system. We will leverage AWS X-Ray for automatic propagation where possible and enforce manual propagation in our KMP logging library for other cases.
 *   **PII Scrubbing & Traceability:** `userId` **must not be written to logs**. For rare cases requiring user-specific debugging, the secure "break-glass" procedure must be used. This is a strictly audited, high-privilege procedure for support engineers to access raw user data for critical debugging, requiring multi-person approval. The full procedure is documented in `../security/19-security-privacy.md`.
 
 ### 3.2. Log Management at Scale
@@ -87,18 +87,18 @@ A tiered and sampled logging strategy will be used to manage costs, as defined i
 *   **Critical Alerts:** A newly detected crash type or a significant regression in the **99.8%** crash-free user rate SLO for a release.
 
 #### Backend-Side Monitoring
-*   **Tooling:** AWS CloudWatch, AWS X-Ray, and Grafana. Live dashboards will be available at `https://grafana.syncwell.com/d/primary-dashboard`.
+*   **Tooling:** AWS CloudWatch, AWS X-Ray, and Grafana. Live dashboards will be available at `https://grafana.syncwell.com/d/primary-dashboard`, as defined in [`./41-metrics-dashboards.md`](./41-metrics-dashboards.md).
 *   **Alerting Flow:** CloudWatch Alarms → SNS → PagerDuty. The PagerDuty integration key and escalation policies are managed as secure secrets in the operations team's password manager.
 *   **High-Priority Alert Triggers:**
     *   **Dead-Letter Queue (DLQ):** Any message arriving in a DLQ.
     *   **Idempotency Key Collisions:** A custom CloudWatch metric (`Namespace: "SyncWell/Backend", MetricName: "IdempotencyKeyCollision", Unit: "Count", Dimensions: [service, operation]`) monitoring for a spike in suppressed duplicate requests.
-    *   **Function & API Errors:** Spike in Fargate task errors or 5xx API Gateway errors.
+    *   **Function & API Errors:** Spike in Lambda errors or 5xx API Gateway errors.
     *   **Queue Health:** `ApproximateAgeOfOldestMessage` for the main SQS queue exceeds 5 minutes.
 
 ## 4. Operational Runbooks & Procedures
 
 ### 4.1. Error Code Dictionary
-A version-controlled dictionary, located at `/shared/src/commonMain/resources/errors/error_codes.json` in the application monorepo, is the single source of truth for error definitions.
+A version-controlled dictionary, located at `/shared/src/commonMain/resources/errors/error_codes.json` in the application monorepo, is the single source of truth for error definitions. The example below is illustrative; the file itself is the complete source of truth.
 
 **Example Entries:**
 ```json

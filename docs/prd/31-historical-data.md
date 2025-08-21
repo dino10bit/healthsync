@@ -24,7 +24,7 @@ migrated: true
 
 This document specifies the requirements for the **Historical Data Sync** feature. This is a core premium offering that allows users to perform a one-time, large-scale backfill of their historical health data from a connected provider. This feature is a key driver for monetization, providing a powerful incentive for users to upgrade to the **Pro subscription tier**, as defined in `11-monetization.md`.
 
-The "Cold Path" architecture, detailed in `../architecture/06-technical-architecture.md`, uses AWS Step Functions to handle these long-running, asynchronous jobs reliably and cost-effectively.
+The "Cold Path" architecture for this feature is authoritatively defined in `../prd/45-future-enhancements.md`. It uses AWS Step Functions and AWS Fargate to handle these long-running, asynchronous jobs reliably and cost-effectively.
 
 *   **Target Audience:** New users who want to import their complete history, and data-conscious users who want a complete, unified record of their health data in one place.
 *   **Business Goal:** Increase Pro tier conversion rate by **15%** within 6 months of launch.
