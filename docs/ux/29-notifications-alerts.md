@@ -38,7 +38,7 @@ The notification architecture is designed to be robust, scalable, and decoupled 
     *   Registering the device token with our backend.
     *   Scheduling and canceling purely local notifications (e.g., for trial expiration).
 
-*   **Backend (AWS):** The core backend (e.g., a `WorkerLambda`) is responsible for *initiating* a notification by publishing an event to a dedicated **Amazon SNS (Simple Notification Service) topic** called `PushNotificationEvents`. The event payload contains the recipient's `userId`, the notification type (e.g., `SYNC_ERROR`), and any necessary metadata (e.g., `source: "fitbit"`).
+*   **Backend (AWS):** The core backend (e.g., a `Worker Fargate Task` or a Lambda function in a Step Functions workflow) is responsible for *initiating* a notification by publishing an event to a dedicated **Amazon SNS (Simple Notification Service) topic** called `PushNotificationEvents`. The event payload contains the recipient's `userId`, the notification type (e.g., `SYNC_ERROR`), and any necessary metadata (e.g., `source: "fitbit"`).
 
 *   **Notification Dispatcher (Firebase Cloud Functions):** A dedicated serverless function, deployed in the Google Cloud ecosystem, subscribes to the AWS SNS topic. Its sole responsibility is to act as a dispatcher:
     1.  It receives the event from SNS.

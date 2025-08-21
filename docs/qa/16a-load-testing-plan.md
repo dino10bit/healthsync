@@ -46,8 +46,8 @@ The following metrics will be monitored closely from AWS CloudWatch during the t
 | :--- | :--- | :--- |
 | **API Gateway Latency (P95)** | < 500 ms | P95 latency remains below 500ms. |
 | **API Gateway Error Rate (5xx)**| < 0.1% | 5xx error rate remains below 0.1%. |
-| **Lambda Worker Errors** | < 0.5% | Invocation error rate remains below 0.5%. |
-| **Lambda Worker Throttles** | 0 | There are zero throttle events. |
+| **Fargate Task Errors** | < 0.5% | The percentage of Fargate tasks that stop due to an application error remains below 0.5%. |
+| **Fargate Task CPU/Memory** | < 80% | The average CPU and Memory utilization across the Fargate service remains below 80%. |
 | **DynamoDB Throttled Requests**| 0 | There are zero read or write throttle events. |
 | **SQS Hot Path Queue Depth** | < 1,000 (sustained) | The number of visible messages in the main SQS queue does not grow uncontrollably. |
 | **ElastiCache CPU Utilization**| < 80% | CPU utilization on the Redis cluster remains at a safe level. |

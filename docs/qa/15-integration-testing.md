@@ -100,7 +100,7 @@ The manual test plan will use a formal test case format.
 
 While the strategies above focus on testing the `DataProvider` modules, it is equally critical to test the integrations *between our own backend services*. This section outlines the strategy for testing the serverless backend itself.
 
-*   **Objective:** To verify that the different components of the serverless backend (API Gateway, Lambda, SQS, DynamoDB, Step Functions) interact correctly and that data flows through the system as expected.
+*   **Objective:** To verify that the different components of the serverless backend (API Gateway, Fargate, SQS, DynamoDB, Step Functions) interact correctly and that data flows through the system as expected.
 *   **Local Testing with LocalStack & Docker Compose:**
     *   **Framework:** The primary tool for local backend testing will be a combination of **LocalStack** and **Docker Compose**. This allows the entire AWS cloud stack to be emulated locally, while the Fargate worker task runs as a standard Docker container.
     *   **Process:** Developers will write integration tests (e.g., using JUnit for the JVM backend code) that run against this local environment. These tests will be executed locally during development to provide rapid feedback.
@@ -119,5 +119,5 @@ While the strategies above focus on testing the `DataProvider` modules, it is eq
     *   The "hot path" real-time sync (API Gateway -> SQS -> Fargate).
     *   The "cold path" historical sync (Step Functions orchestration).
     *   The data import and export flows (Step Functions orchestration).
-    *   **Webhook Ingestion & Coalescing:** A dedicated test suite will verify the full webhook flow, including the `WebhookIngressLambda`, the `CoalescingBufferQueue`, and the `CoalescingTriggerLambda`.
+    *   **Webhook Ingestion & Coalescing:** A dedicated test suite will verify the full webhook flow, including the ingress Lambda, the `CoalescingBufferQueue`, and the `CoalescingTriggerLambda`.
     *   **Adaptive Polling:** Integration tests will be created to verify that the adaptive polling logic correctly sends messages to the SQS queue with the appropriate `DelaySeconds` value.

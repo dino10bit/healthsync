@@ -7,6 +7,7 @@ migrated: true
 ### Core Dependencies
 - `../architecture/06-technical-architecture.md` - Technical Architecture, Security & Compliance
 - `../ux/40-error-recovery.md` - Error Recovery & Troubleshooting
+- `../security/19-security-privacy.md` - Security & Privacy
 
 ### Strategic / Indirect Dependencies
 - `../architecture/05-data-sync.md` - Data Synchronization & Reliability
@@ -19,16 +20,14 @@ migrated: true
 
 # PRD Section 17: Error Handling, Logging & Monitoring
 
-## 1. Executive Summary
+## 1. Philosophy & Strategy
 
-This document specifies the comprehensive strategy for error handling, logging, and monitoring for the entire SyncWell ecosystem. The goal is to build a highly resilient and observable system that can gracefully handle unexpected issues, provide clear feedback to the user, and give the engineering team powerful tools to diagnose and resolve problems quickly.
-
-This enterprise-grade approach uses structured logging, centralized error handling, and targeted alerting to ensure high service quality.
+This document specifies the comprehensive strategy for error handling, logging, and monitoring for the entire SyncWell ecosystem. The goal is to build a highly resilient and observable system that can gracefully handle unexpected issues, provide clear feedback to the user, and give the engineering team powerful tools to diagnose and resolve problems quickly. This enterprise-grade approach uses structured logging, centralized error handling, and targeted alerting to ensure high service quality.
 
 ## 2. Error Handling Architecture
 
 ### 2.1. Client-Side Error Handling
-A centralized `ErrorHandler` service on the mobile client will be the single point through which all application-level errors flow. [NEEDS_CLARIFICATION: The interface and implementation details for this client-side service should be defined in the mobile-specific architecture documents.]
+A centralized `ErrorHandler` service, implemented as a singleton in the KMP shared module, will be the single point through which all application-level errors flow. Its primary interface is `handleError(error: Throwable, userContext: Map<String, String>)`.
 
 ### 2.2. Backend Error Handling
 The backend's error handling strategy is designed for maximum resilience and message durability.
@@ -37,69 +36,25 @@ The backend's error handling strategy is designed for maximum resilience and mes
 
 2.  **Handling Transient Failures with Retries:**
     *   **Infrastructure-Level Retries:** The primary retry mechanism is the SQS queue itself. If a `Worker Fargate Task` fails to process a message, the message becomes visible again in the queue after the `VisibilityTimeout` expires and is picked up by another worker.
-    *   **Application-Level Resilience:** For specific, predictable transient errors (like API rate limiting), the application uses more advanced patterns like the **Circuit Breaker** and **Rate Limit Backoff**, which are defined in `../architecture/07-apis-integration.md`.
-    *   **Cold Path (Step Functions):** For historical syncs, the Step Functions state machine provides its own declarative, automated retry logic (e.g., **3 max attempts** with an **exponential backoff rate of 2.0**).
+    *   **Application-Level Retries:** Within the worker, specific critical API calls (like `ChangeMessageVisibility`) that must not fail will have their own internal retry loop (3 attempts with exponential backoff).
+    *   **Advanced Resilience Patterns:** For predictable transient errors from third-party APIs, the application uses more advanced patterns like the **Circuit Breaker** and **Rate Limit Backoff**. These are canonically defined in `../architecture/07-apis-integration.md` and are not duplicated here.
+    *   **Post-MVP (Cold Path):** For historical syncs, the Step Functions state machine provides its own declarative, automated retry logic. This is out of scope for the MVP.
 
 3.  **Isolating Persistent Failures with a Dead-Letter Queue (DLQ):**
-    *   If a job fails all retry attempts, SQS automatically moves it to a pre-configured **Dead-Letter Queue (DLQ)** after the `maxReceiveCount` is exceeded.
-    *   **`maxReceiveCount` Configuration:** This value is definitively set to **5**. This provides a balance between recovering from transient errors and quickly isolating persistent failures.
+    *   If a job fails all retry attempts, SQS automatically moves it to a pre-configured **Dead-Letter Queue (DLQ)**. The `maxReceiveCount` is set to **5** and is configured in the IaC (Terraform) definition for the queue, as referenced in `../architecture/05-data-sync.md`.
     *   This isolates the problematic job, allowing healthy jobs to continue processing.
 
-4.  **EventBridge Durability:** The EventBridge rules that target SQS queues will also be configured with their own DLQs. This ensures that if an event fails to be delivered to SQS, the event is captured and can be reprocessed.
+4.  **EventBridge Durability:** The EventBridge rules that target SQS queues will also be configured with their own DLQs with a **14-day retention policy**. This ensures that if an event fails to be delivered to SQS, the event is captured and can be reprocessed.
 
-### 2.3. Advanced Error Handling Patterns
+## 3. Logging & Monitoring
 
-To build a truly resilient system, the backend will employ several advanced patterns. These patterns are canonically defined in `../architecture/07-apis-integration.md` and are summarized here for context.
+### 3.1. Structured Logging Strategy
 
-*   **API Rate Limit Backoff:** When a `429 Too Many Requests` error occurs, the worker uses the SQS `ChangeMessageVisibility` API to return the job to the queue with a calculated delay.
-*   **Circuit Breaker for Unstable APIs:** For unstable third-party APIs, a Circuit Breaker pattern is used to "fail fast" when a high failure rate is detected, preventing wasted resources.
-*   **Third-Party API Error Classification:** The `DataProvider` shared module classifies HTTP errors and applies the appropriate strategy. The full classification table is maintained in `../architecture/07-apis-integration.md`.
+#### Client-Side Logging
+The mobile app will maintain a local, rotating log file with structured JSON entries. The log file will rotate when it reaches **5MB**, and a maximum of **3 rotated files** will be kept.
 
-### 2.4. DLQ Management Strategy (Semi-Automated)
-
-A **semi-automated DLQ handling process** will be implemented to reduce operational load.
-
-*   **DLQ Analyzer Lambda:** A dedicated Lambda function, the `DLQAnalyzer`, is triggered whenever a message arrives in the main `HotPathSyncDLQ`.
-    *   **Event Source Mapping:** The `DLQAnalyzer` Lambda will be configured with the DLQ as its event source, with a `batchSize` of 1 to process messages individually.
-
-*   **Automated Triage Logic:** The `DLQAnalyzer` inspects the message's error metadata and attempts to identify specific, well-understood failure patterns from a configuration file.
-    *   **Known Transient Errors:** If an error matches a known pattern, the `DLQAnalyzer` will automatically redrive the message back to the main queue after a longer delay (e.g., 1 hour).
-    *   **Unrecoverable Errors:** If an error is known to be unrecoverable, the analyzer will archive the message to S3 and create a low-priority ticket.
-
-*   **Alerting for Unknown Failures:** If a message's error does not match any known patterns, the `DLQAnalyzer` triggers a high-priority alert (via PagerDuty) to the on-call engineer.
-
-#### Runbook for Manual Handling of Unknown DLQ Messages
-
-When an on-call engineer is paged for an unknown DLQ message, they must follow this runbook:
-1.  **Verify Archiving:** Confirm the message has been archived to the `s3://syncwell-prod-dlq-archive` bucket.
-2.  **Inspection & Diagnosis:** Use the `correlationId` from the message to query CloudWatch Logs Insights for all related logs.
-3.  **Decision and Action:**
-    *   **If transient:** Redrive the message from the DLQ.
-    *   **If bug:** Create a high-priority ticket. Add the new error pattern to the `DLQAnalyzer`'s configuration file in S3 to prevent future alerts. [NEEDS_CLARIFICATION: The exact S3 path and schema for this configuration file must be defined.]
-    *   **If unrecoverable:** Log the issue and purge the message from the DLQ.
-
-## 3. Unified Error Code Dictionary
-
-A version-controlled dictionary, located in the **KMP shared module**, will be the single source of truth for error definitions. The client reads an error code from the backend and uses this dictionary to find the appropriate user-facing message key and recommended action. The user-facing strings themselves are managed in standard localization files.
-
-**Example Entry:**
-```json
-{
-  "FITBIT_TOKEN_EXPIRED": {
-    "logLevel": "WARN",
-    "userMessageKey": "error_fitbit_token_expired",
-    "userAction": "NAVIGATE_TO_REAUTH_FITBIT"
-  }
-}
-```
-
-## 4. Structured Logging Strategy
-
-### 4.1. Client-Side Logging
-The mobile app will maintain a local, rotating log file with structured JSON entries. [NEEDS_CLARIFICATION: The rotation strategy (e.g., size-based, time-based) must be defined.]
-
-### 4.2. Backend Logging
-All backend services will output structured JSON logs to **AWS CloudWatch Logs** using a standardized library like **AWS Lambda Powertools**.
+#### Backend Logging
+All backend services will output structured JSON logs to **AWS CloudWatch Logs** using **AWS Lambda Powertools**.
 
 **Example Log Entry:**
 ```json
@@ -108,52 +63,90 @@ All backend services will output structured JSON logs to **AWS CloudWatch Logs**
   "level": "ERROR",
   "message": "Sync job failed: Unhandled exception from provider.",
   "service": "WorkerFargateTask",
-  "correlationId": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
-  "idempotencyKey": "client-generated-uuid-123",
+  "traceId": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
   ...
 }
 ```
-*   **PII Scrubbing & Traceability:** `userId` **must not be written to logs**. The `correlationId` is the primary ID for tracing. For rare cases requiring user-specific debugging, the secure "break-glass" procedure defined in `../security/19-security-privacy.md` must be used.
+*   **Log Correlation:** The `traceId` is the primary key for tracing a request through the system. Ensuring its propagation across all services, especially async boundaries, is technically challenging. We will leverage AWS X-Ray for automatic propagation where possible and enforce manual propagation in our KMP logging library for other cases.
+*   **PII Scrubbing & Traceability:** `userId` **must not be written to logs**. For rare cases requiring user-specific debugging, the secure "break-glass" procedure must be used. This is a strictly audited, high-privilege procedure for support engineers to access raw user data for critical debugging, requiring multi-person approval. The full procedure is documented in `../security/19-security-privacy.md`.
 
-## 5. Monitoring & Alerting Strategy
-
-The comprehensive observability strategy is defined in `../architecture/06-technical-architecture.md`. This section summarizes key alert triggers.
-
-### 5.1. Client-Side Monitoring
-*   **Tooling:** Firebase Crashlytics.
-*   **Critical Alerts:** A newly detected crash type or a significant regression in the **99.5%** crash-free user rate SLO.
-
-### 5.2. Backend-Side Monitoring
-*   **Tooling:** AWS CloudWatch, AWS X-Ray, and Grafana.
-*   **Alerting Flow:** CloudWatch Alarms → SNS → PagerDuty. [NEEDS_CLARIFICATION: The PagerDuty service integration key must be defined.]
-*   **High-Priority Alert Triggers:**
-    *   **Dead-Letter Queue (DLQ):** Any message arriving in a DLQ.
-    *   **Idempotency Key Collisions:** A custom CloudWatch metric monitoring a spike in suppressed duplicate requests.
-    *   **Function & API Errors:** Spike in Lambda/Fargate errors or 5xx API Gateway errors.
-    *   **Queue Health:** `ApproximateAgeOfOldestMessage` for the main SQS queue exceeds 5 minutes.
-    *   **Database Throttling:** Sustained throttling events on the DynamoDB table.
-
-## 6. Visual Diagrams
-
-### Backend Error Handling Flow (DLQ)
-```mermaid
-graph TD
-    A[SQS Job Queue] --> B{Worker Fargate Task};
-    B -- Success --> C[Delete Job];
-    B -- Failure --> D{Retry?};
-    D -- Yes --> B;
-    D -- No (Max Retries) --> E[Move to Dead-Letter Queue];
-    E --> F[CloudWatch Alarm];
-    F --> G[Alert Engineering Team];
-```
-
-## 7. Log Management at Scale
-
-A tiered and sampled logging strategy will be used to manage costs, as defined in `../architecture/06-technical-architecture.md`. This section specifies the retention policies.
+### 3.2. Log Management at Scale
+A tiered and sampled logging strategy will be used to manage costs, as defined in `../architecture/06-technical-architecture.md`.
 
 *   **Log Levels:** Default to `INFO` in production. Dynamically adjustable to `DEBUG` via AWS AppConfig for targeted issue diagnosis.
-*   **Log Retention and Archiving:**
+*   **Log Retention and Archiving:** The following are the final, approved policies:
     *   **CloudWatch:** **30-day** retention.
-    *   **S3 (Long-term Archive):** Logs are automatically exported from CloudWatch to S3.
+    *   **S3 (Long-term Archive):** Logs are automatically exported from CloudWatch to S3 via a **CloudWatch Logs Subscription Filter** pointing to a Kinesis Firehose delivery stream.
     *   **S3 Glacier:** S3 Lifecycle policies transition logs to S3 Glacier Deep Archive after **1 year**.
 *   **Log Analysis:** CloudWatch Logs Insights for recent logs, Amazon Athena for archived logs in S3.
+
+### 3.3. Monitoring & Alerting Strategy
+
+#### Client-Side Monitoring
+*   **Tooling:** Firebase Crashlytics.
+*   **Critical Alerts:** A newly detected crash type or a significant regression in the **99.8%** crash-free user rate SLO for a release.
+
+#### Backend-Side Monitoring
+*   **Tooling:** AWS CloudWatch, AWS X-Ray, and Grafana. Live dashboards will be available at `https://grafana.syncwell.com/d/primary-dashboard`.
+*   **Alerting Flow:** CloudWatch Alarms → SNS → PagerDuty. The PagerDuty integration key and escalation policies are managed as secure secrets in the operations team's password manager.
+*   **High-Priority Alert Triggers:**
+    *   **Dead-Letter Queue (DLQ):** Any message arriving in a DLQ.
+    *   **Idempotency Key Collisions:** A custom CloudWatch metric (`Namespace: "SyncWell/Backend", MetricName: "IdempotencyKeyCollision", Unit: "Count", Dimensions: [service, operation]`) monitoring for a spike in suppressed duplicate requests.
+    *   **Function & API Errors:** Spike in Fargate task errors or 5xx API Gateway errors.
+    *   **Queue Health:** `ApproximateAgeOfOldestMessage` for the main SQS queue exceeds 5 minutes.
+
+## 4. Operational Runbooks & Procedures
+
+### 4.1. Error Code Dictionary
+A version-controlled dictionary, located at `/shared/src/commonMain/resources/errors/error_codes.json` in the application monorepo, is the single source of truth for error definitions.
+
+**Example Entries:**
+```json
+{
+  "FITBIT_TOKEN_EXPIRED": {
+    "logLevel": "WARN",
+    "userMessageKey": "errors.fitbit.reconnect_needed",
+    "userAction": "NAVIGATE_TO_REAUTH_FITBIT"
+  },
+  "INTERNAL_SERVER_ERROR": {
+    "logLevel": "ERROR",
+    "userMessageKey": "errors.generic.internal_server_error",
+    "userAction": "SHOW_SUPPORT_CONTACT_INFO"
+  }
+}
+```
+
+A catalogue mapping these keys to user-facing, localized strings is maintained in the mobile application's resource files.
+
+### 4.2. DLQ Management Strategy (Semi-Automated)
+
+A **semi-automated DLQ handling process** will be implemented to reduce operational load.
+
+*   **DLQ Analyzer Lambda:** A dedicated Lambda function, the `DLQAnalyzer`, is triggered whenever a message arrives in the main `HotPathSyncDLQ`.
+    *   **Event Source Mapping:** The `DLQAnalyzer` Lambda will be configured with the DLQ as its event source, with a `batchSize` of 10 and a `MaximumBatchingWindowInSeconds` of 60.
+
+*   **Automated Triage Logic:** The `DLQAnalyzer` inspects the message's error metadata and attempts to identify specific, well-understood failure patterns from a configuration file stored at `s3://syncwell-prod-config/dlq_patterns.json`.
+    *   **Pattern Matching:** If an error matches a known regex pattern in the config file, the analyzer takes the configured action. For example, a known transient error will be automatically redriven back to the main queue after a **3600 second (1 hour)** delay.
+    *   **Archiving:** Unrecoverable errors are archived to `s3://syncwell-prod-dlq-archive/{YYYY}/{MM}/{DD}/`.
+    *   **Schema for `dlq_patterns.json`:**
+        ```json
+        {
+          "patterns": [
+            {
+              "patternName": "Third Party Timeout",
+              "log_regex": ".*ThirdPartyTimeoutException.*",
+              "action": "redrive",
+              "delaySeconds": 3600
+            }
+          ]
+        }
+        ```
+
+*   **Alerting for Unknown Failures:** If a message's error does not match any known patterns, the `DLQAnalyzer` triggers a high-priority alert by publishing a message to a dedicated SNS topic (`DLQ_UnknownError_Alert`), which then fans out to PagerDuty and Slack.
+
+## 5. Risk Analysis
+
+| Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
+| :--- | :--- | :--- | :--- | :--- |
+| **R-30** | A bug in the `DLQAnalyzer` causes it to misclassify errors (e.g., drop a critical error or endlessly retry a permanent one). | Medium | High | The `DLQAnalyzer` must have its own suite of unit tests covering all known patterns. Any new pattern added to the config file requires a corresponding test case. A CloudWatch alarm will monitor the Lambda's error rate. |
+| **R-31** | A bug in a service or a misconfiguration leads to excessive logging, causing a significant, unexpected cost increase. | Medium | Medium | AWS Cost Anomaly Detection will be configured for CloudWatch services. An alert will be triggered on any unexpected spike in logging costs, notifying the finance and engineering leads. |
