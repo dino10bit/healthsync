@@ -6,11 +6,11 @@
 ## 0. Document Management
 
 ### Version History
-| Version | Date       | Author(s) | Summary of Changes |
-| :--- | :--- | :--- | :--- |
-| 1.0 | 2025-08-12 | J. Doe | Initial Draft |
-| 1.1 | 2025-08-19 | J. Doe | Incorporated feedback from `f-20.md` review. Addressed over 150 points of ambiguity, inconsistency, and risk. |
-| 1.2 | 2025-08-21 | J. Doe (AI) | Resolved all contradictions (Lambda/Fargate, Idempotency). Addressed ~80 issues from `f-1.md` review, adding specificity to undefined values, resolving clarifications, and restructuring appendices into separate documents. |
+| Version | Date       | Author(s) | Summary of Changes                                                                                                                                                                                              |
+| :--- | :--- | :--- |:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0 | 2025-08-12 | J. Doe | Initial Draft                                                                                                                                                                                                   |
+| 1.1 | 2025-08-19 | J. Doe | Incorporated feedback review. Addressed over 150 points of ambiguity, inconsistency, and risk.                                                                                                   |
+| 1.2 | 2025-08-21 | J. Doe (AI) | Resolved all contradictions (Lambda/Fargate, Idempotency). Addressed ~80 issues review, adding specificity to undefined values, resolving clarifications, and restructuring appendices into separate documents. |
 
 ### Consolidated Assumptions
 A consolidated list of all key project assumptions is maintained in the root [`README.md`](../../../README.md) file.
