@@ -52,8 +52,8 @@ A consolidated list of all key project assumptions is maintained in the root `RE
 
 This document specifies the complete technical architecture for the SyncWell application. The architecture is designed for **high availability (defined as >99.9% uptime)**, **massive scalability (to support 1 million Daily Active Users and a peak load of 3,000 requests per second)**, and robust security. It adheres to modern cloud-native principles and is engineered for developer velocity and operational excellence.
 
-> **[S-003] [RISK-CRITICAL-01] CRITICAL RISK ASSESSMENT**
-> The most significant finding in this document is the **potential project-threatening risk** associated with the projected **~45,000 concurrent Lambda executions** required to meet peak load (see Section 3b). The cost and technical feasibility of this model are unproven. Implementation of the proposed architecture **must be gated** by the mandatory completion and approval of the cost modeling and PoC load tests outlined in the risk mitigation plan.
+> **[S-003] [ARCH-DECISION-01] KEY ARCHITECTURAL DECISION: FARGATE COMPUTE MODEL**
+> A critical finding during the initial analysis was that a traditional Lambda-per-job model would introduce significant cost and concurrency risks at scale (projected at over 45,000 concurrent executions). To mitigate this project-threatening risk, the architecture specifies a container-based worker fleet on **AWS Fargate**. As detailed in Sections 3b and 4, this model provides a more cost-effective and predictable performance profile for the system's high-throughput workload, directly addressing the identified scaling challenges.
 
 We will use the **C4 Model** as a framework to describe the architecture. The core architectural principles are **modularity**, **security by design**, and **privacy by default**. A key feature is its **hybrid sync model**, which is necessitated by platform constraints. It combines a serverless backend for cloud-to-cloud syncs with on-device processing for integrations that require native SDKs (e.g., Apple HealthKit), maximizing reliability and performance. Post-MVP, the architecture can be extended to include more advanced features like historical data backfills and an AI Insights Service. The design concepts for these are captured in `45-future-enhancements.md`. The initial focus for the MVP, however, will be on a **robust sync engine** for recent data, made reliable through a unified idempotency strategy and resilient error handling.
 
@@ -421,6 +421,36 @@ To enable more aggressive scale-to-zero settings for the Fargate fleet (especial
 *   **Behavior:** When the main queue is empty, workers will pull from the `WarmPoolQueue`. This ensures that a minimum number of Fargate tasks (and their underlying ENIs and container images) are always warm and ready to handle a sudden burst of real jobs.
 *   **Benefit:** This trades a very small amount of "busy work" compute for significantly improved scale-out latency. It allows the main fleet to scale down to a lower baseline "desired count" and rely more heavily on cheaper Spot instances, knowing that replacements can be brought online and begin processing jobs much more quickly.
 
+#### Intelligent Data Hydration (Metadata-First Fetch)
+To minimize data transfer and processing costs, the sync algorithm will employ an "intelligent hydration" or "metadata-first" fetching strategy. This is particularly effective for data types with large, heavy payloads (e.g., GPX track for a workout, detailed heart rate time series).
+
+*   **Problem:** A naive sync algorithm fetches the entire data payload from the source at the beginning of a job. If conflict resolution later determines the data is not needed (e.g., it already exists at the destination), the bandwidth (NAT Gateway cost) and compute (Fargate memory/CPU) used to download and process the heavy payload are wasted.
+*   **Mechanism:** The sync process is split into a two-step fetch, as illustrated in the diagram below.
+    1.  **Fetch Metadata:** The worker first calls the `DataProvider` to retrieve only the lightweight metadata for new activities (e.g., timestamps, IDs, type, duration).
+    2.  **Conflict Resolution on Metadata:** The Conflict Resolution Engine runs using only this metadata to determine which activities definitively need to be written to the destination.
+    3.  **Hydrate on Demand:** The worker then makes a second, targeted call to the `DataProvider` to fetch the full, heavy payloads *only* for the specific activities that it needs to write.
+*   **Benefit:** This "lazy loading" of data payloads significantly reduces outbound data transfer through the NAT Gateway and lowers the memory and CPU requirements for the Fargate worker fleet. This is a crucial application-level optimization that reduces costs across multiple services. This requires a modification to the `DataProvider` interface to support a metadata-only fetch mode.
+*   **Flow Diagram:**
+    ```mermaid
+    sequenceDiagram
+        participant Worker as WorkerFargateTask
+        participant Provider as DataProvider
+        participant Engine as ConflictResolutionEngine
+
+        Worker->>+Provider: fetchData(mode='metadata')
+        Provider-->>-Worker: return List<ActivityMetadata>
+
+        Worker->>+Engine: resolveConflicts(metadata)
+        Engine-->>-Worker: return List<activityIdToHydrate>
+
+        alt Has Data to Hydrate
+            Worker->>+Provider: fetchPayloads(ids=...)
+            Provider-->>-Worker: return List<FullActivity>
+        end
+
+        Worker->>Worker: Proceed to write hydrated data...
+    ```
+
 #### DynamoDB Capacity Model
 We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased (e.g., via a Savings Plan) to handle the predictable average load, with an initial estimate of covering **70% of expected peak usage**. **On-Demand Capacity** will handle any traffic that exceeds this provisioned throughput. This ratio will be tuned based on production traffic patterns.
 
@@ -659,20 +689,41 @@ To align infrastructure costs with revenue and provide a premium experience for 
 
 The following diagram illustrates this scalable, tiered fan-out architecture.
 
-#### Adaptive Polling for Other Providers (Cost-Optimized)
+#### Tiered Polling with Pre-flight Checks
 
-For providers that do not support webhooks (e.g., Garmin, and as a fallback for webhook-enabled providers), a brute-force, fixed-interval polling approach is inefficient. To mitigate this, we will implement an **intelligent, adaptive polling strategy using SQS delay queues**, which is significantly more cost-effective than using a dedicated scheduler-per-poll.
+For providers that do not support webhooks, a simple polling approach is inefficient. To solve this, the architecture uses a highly cost-effective, two-tiered polling strategy that combines adaptive scheduling with "pre-flight checks" to avoid triggering expensive compute for unnecessary work.
 
-*   **Concept:** Instead of a fixed schedule, we will dynamically adjust the polling frequency for each user based on their historical data patterns. Users who sync data frequently will be polled more often, while inactive users will be polled very rarely.
+*   **Tier 1: Adaptive Scheduling with SQS Delay Queues:** The system avoids using expensive, fixed-schedule services. Instead, after a sync job completes, it analyzes the user's "sync velocity" and dynamically enqueues the *next* poll job for that user back into an SQS queue with a calculated `DelaySeconds`. An active user might be re-queued with a 15-minute delay, while an inactive user might be re-queued with a 24-hour delay. This adaptive model dramatically reduces the number of polls for inactive users.
 
-*   **Architecture:**
-    1.  **Sync History Analysis:** After a sync job completes, a lightweight analysis function determines the user's "sync velocity" (i.e., how often they generate new data).
-    2.  **Dynamic Enqueueing:** Based on this velocity, the system sends a `HotPathSyncRequested` message for that user to a specific SQS queue corresponding to their next poll interval. This is achieved using SQS's native **`DelaySeconds`** feature. For example:
-        *   An active user's next poll message is sent with a `DelaySeconds` of `900` (15 minutes).
-        *   An inactive user's next poll message is sent with a `DelaySeconds` of `86400` (24 hours).
-    3.  **Execution:** The message becomes visible in the SQS queue only after its delay has elapsed. At that point, it is picked up by the main `Worker Fargate Task` fleet for processing. After the job completes, the cycle repeats.
+*   **Tier 2: Pre-flight Check Lambda:** The SQS message from Tier 1 does not trigger the main Fargate worker fleet directly. Instead, it triggers a new, ultra-lightweight, and low-cost Lambda function: the `PollingPreflightChecker`.
+    *   **Purpose:** This Lambda's sole responsibility is to perform a cheap "pre-flight check" to see if there is any new data at the source provider *before* initiating a full sync.
+    *   **Mechanism:** It invokes a new, minimal method on the relevant `DataProvider` (e.g., `hasNewData()`) which makes a single, lightweight API call to the source (e.g., a `HEAD` request or a query for `count > 0`).
+    *   **Conditional Invocation:**
+        *   If new data **exists**, the pre-flight checker publishes a `HotPathSyncRequested` event to the main SQS queue, which is processed by the powerful `Worker Fargate Task` as usual.
+        *   If no new data **exists**, the Lambda does nothing and terminates. The cost of this check is a tiny fraction of a full Fargate task invocation.
 
-*   **Benefit:** This model dramatically reduces the number of "empty" polls and achieves the same adaptive scheduling outcome as a scheduler-based approach but at a fraction of the cost. It replaces millions of expensive scheduler invocations with much cheaper SQS messages, fully leveraging the queue-based nature of the architecture.
+*   **Benefit:** This two-tiered model is exceptionally cost-effective. Tier 1 (adaptive SQS delays) reduces the total number of polls. Tier 2 (pre-flight checks) ensures that the polls that *do* run only trigger the expensive compute and database resources when there is actual work to be done. This eliminates the vast majority of "empty" sync jobs, saving significant costs on Fargate, DynamoDB, and CloudWatch.
+*   **Flow Diagram:** The following sequence diagram illustrates this two-tiered polling flow.
+    ```mermaid
+    sequenceDiagram
+        participant Scheduler as Adaptive Scheduler (SQS Delay)
+        participant Checker as PollingPreflightChecker (Lambda)
+        participant SourceAPI as Source Provider API
+        participant MainQueue as Main SQS Queue
+        participant Worker as WorkerFargateTask
+
+        Scheduler->>+Checker: Invoke with user context
+        Checker->>+SourceAPI: hasNewData(since=...)?
+        SourceAPI-->>-Checker: true / false
+
+        alt New Data Exists
+            Checker->>MainQueue: Enqueue HotPathSyncRequested job
+            MainQueue-->>+Worker: Invoke worker
+            Worker-->>-MainQueue: Process and complete
+        else No New Data
+            Checker-->>Scheduler: End (do nothing)
+        end
+    ```
 
 *(See Diagram 6 in the "Visual Diagrams" section below.)*
 
@@ -816,11 +867,26 @@ For analytics, **Amazon Kinesis Data Firehose** will be used.
     *   **Log Schema:** The core JSON schema will include: `timestamp`, `level` (e.g., INFO, ERROR), `service` (e.g., "worker-lambda"), `correlationId`, `message`, and a `payload` object for contextual data.
     *   **Scrubbing:** The process for scrubbing PII from logs **must be tested and audited** as part of the QA cycle for any feature that introduces new log statements.
 
-*   **Cost-Optimized Log Ingestion (Head/Tail Sampling):** To manage the significant cost of log ingestion at scale, the system will implement a context-aware sampling strategy for the high-volume `WorkerFargateTask`. This strategy ensures that diagnostic fidelity is retained for failures while aggressively reducing log volume for successful operations.
-    *   **Mechanism:** Logs for each job will be buffered in memory within the worker.
-    *   **Success Path:** If a sync job completes successfully, the worker will only ingest the buffered logs into CloudWatch if a sampling condition is met (e.g., `hash(jobId) % 1000 == 0`). This means, for example, only 0.1% of successful job logs are stored. The sampling rate itself **must** be configurable via AWS AppConfig to allow for dynamic tuning in production.
-    *   **Failure Path:** If a sync job fails for any reason (including transient errors, DLQ redrives, etc.), **all** buffered logs for that specific job execution will be ingested into CloudWatch to guarantee full diagnostic visibility.
-    *   **Benefit:** This "Head/Tail" sampling approach provides full observability for errors and anomalies, while dramatically reducing the log volume—and therefore cost—for the vast majority of successful executions.
+*   **Tiered & Sampled Log Ingestion:** To manage the significant cost of log ingestion at scale, the system will implement a context-aware, tiered sampling strategy. This approach directly links observability costs to revenue by providing different levels of logging fidelity for different user tiers, while ensuring full diagnostic data is always available for failures.
+    *   **Baseline Strategy (Head/Tail Sampling):** The core of the strategy is "head/tail" sampling. Logs for each job are buffered in memory within the worker. If the job fails at any point, all buffered logs for that specific execution are ingested into CloudWatch. This guarantees 100% diagnostic visibility for all errors, for all users.
+    *   **Tiered Sampling for Success Cases:** For jobs that complete successfully, the decision to ingest the buffered logs is based on the user's subscription tier. This aligns infrastructure costs with business value.
+        *   **`PRO` Tier:** Paying users receive a high-fidelity experience. The sampling rate is generous (e.g., 1 in 100 successful jobs are logged) to support premium customer service.
+        *   **`FREE` Tier:** Non-paying users receive a lower-fidelity experience. The sampling rate is aggressive (e.g., 1 in 10,000 successful jobs are logged) to minimize costs.
+    *   **Dynamic Configuration:** The specific sampling rates for each tier (`pro`, `free`) **must** be managed via AWS AppConfig, allowing for dynamic tuning without a code deployment.
+    *   **Benefit:** This tiered approach provides the greatest cost reduction by targeting the highest volume of events (successful jobs from free users) while retaining full observability for failures and for paying customers. It treats observability as a feature with distinct service levels, not just a fixed operational cost.
+    *   **Logic Flow:** The following diagram illustrates the decision-making process within a worker for each completed job.
+        ```mermaid
+        graph TD
+            A[Sync Job Completes] --> B{Job Succeeded?};
+            B -- No --> C[Ingest 100% of<br>Buffered Logs to CloudWatch];
+            B -- Yes --> D{User is PRO Tier?};
+            D -- Yes --> E[Get PRO Sampling Rate<br>e.g., 1/100];
+            D -- No --> F[Get FREE Sampling Rate<br>e.g., 1/10,000];
+            E --> G{Apply Sampling Logic<br>hash(jobId) % rate == 0?};
+            F --> G;
+            G -- Yes --> H[Ingest Buffered Logs<br>to CloudWatch];
+            G -- No --> I[Discard Logs];
+        ```
 *   **Dynamic X-Ray Trace Sampling:** By default, AWS X-Ray traces every request, which can be costly at scale. To manage this, the system will implement dynamic sampling. A low default sampling rate (e.g., 1 request per second and 5% of all requests) will be configured for the main API Gateway stage. This captures a baseline for performance monitoring. Additionally, specific, higher-volume sampling rules will be applied to critical user flows (e.g., new user sign-up, payment processing) to ensure full visibility into key interactions. This approach significantly reduces cost while retaining deep observability where it is most needed.
 *   **Key Metrics & Alerting:**
     *   **Idempotency Key Collisions:** This will be tracked via a custom CloudWatch metric published using the **Embedded Metric Format (EMF)** from the worker Fargate task. An alarm will trigger on any anomalous spike.

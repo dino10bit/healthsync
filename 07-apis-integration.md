@@ -99,12 +99,21 @@ interface DataProvider {
     suspend fun revoke(tokens: ProviderTokens)
 
     /**
-     * Fetches a specific type of data from the provider's API for a given time range
-     * and transforms it into a list of `CanonicalData` models.
-     * @param dataType The type of data to fetch (e.g., "steps", "workouts"). The provider
-     * implementation is responsible for checking if it supports the given type.
+     * Fetches lightweight metadata for a specific type of data from the provider's API
+     * for a given time range. This is the first step in the "Intelligent Hydration" flow.
+     * @param dataType The type of data to fetch (e.g., "steps", "workouts").
+     * @return A list of `CanonicalData` models containing only metadata (e.g., IDs, timestamps).
      */
-    suspend fun fetchData(tokens: ProviderTokens, dateRange: DateRange, dataType: String): List<CanonicalData>
+    suspend fun fetchMetadata(tokens: ProviderTokens, dateRange: DateRange, dataType: String): List<CanonicalData>
+
+    /**
+     * Fetches the full, heavy data payloads for a specific list of record IDs that were
+     * previously retrieved via `fetchMetadata`. This is the second step in the
+     * "Intelligent Hydration" flow.
+     * @param recordIds A list of provider-specific record IDs to fetch.
+     * @return A list of `CanonicalData` models with their full payloads.
+     */
+    suspend fun fetchPayloads(tokens: ProviderTokens, recordIds: List<String>, dataType: String): List<CanonicalData>
 
     /**
      * Pushes a list of canonical data models to the provider's API. The implementation
@@ -112,6 +121,14 @@ interface DataProvider {
      * based on the `dataType` of the sync job.
      */
     suspend fun pushData(tokens: ProviderTokens, data: List<CanonicalData>): PushResult
+
+    /**
+     * Optional: Performs a lightweight pre-flight check to see if there is any new data
+     * available at the source since the given timestamp. This is used by the tiered
+     * polling mechanism to avoid triggering a full sync job unnecessarily.
+     * @return True if new data is likely available, false otherwise. Returns null if not implemented.
+     */
+    suspend fun hasNewData(tokens: ProviderTokens, dateRange: DateRange): Boolean? = null
 
     /**
      * Handles an incoming webhook event. The implementation is responsible for
