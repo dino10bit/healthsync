@@ -86,7 +86,7 @@ Designs for post-MVP features like the "cold path" for historical syncs have bee
     *   **Responsibilities:** Manages user credentials, issues short-lived JWTs with a **1-hour TTL** to the mobile client after a successful authentication event, and provides public keys for backend token verification.
 
 3.  **Scalable Serverless Backend (AWS)**
-    *   **Description:** A decoupled, event-driven backend on AWS that uses a unified AWS Lambda compute model for its core business logic to orchestrate all syncs. This serverless-first approach maximizes developer velocity and minimizes operational overhead.
+    *   **Description:** A decoupled, event-driven backend on AWS that uses a container-based worker fleet on **AWS Fargate** for its core business logic to orchestrate all syncs. This approach, detailed in Section 1's key architectural decision, provides a more cost-effective and predictable performance profile for the system's high-throughput workload.
     *   The backend **must not** persist any raw user health data; this critical security requirement will be enforced via a dedicated test case in the QA plan. Any temporary diagnostic metadata containing user identifiers is stored in a secure, audited, time-limited index, as detailed in `../ops/19-security-privacy.md`. Data is otherwise only processed ephemerally in memory during active sync jobs.
     *   **Technology:** AWS Lambda, API Gateway, **Amazon EventBridge**, **Amazon SQS**, DynamoDB.
     *   **Responsibilities:** The API Layer (**API Gateway**) is responsible for initial request validation (e.g., format), authorization via the `AuthorizerLambda`, and routing requests to the appropriate backend service. It does not handle business-level validation like idempotency checks. To ensure maximum performance and cost-effectiveness, it will leverage **API Gateway's built-in caching for the Lambda Authorizer**. The authorizer's response (the IAM policy) will be cached based on the user's identity token for a **5-minute TTL**. For subsequent requests within this TTL, API Gateway will use the cached policy and will not invoke the `AuthorizerLambda`, dramatically reducing latency and cost.
@@ -110,7 +110,7 @@ Designs for post-MVP features like the "cold path" for historical syncs have bee
     *   **Responsibilities:**
         *   Stores all versions of the canonical data model schemas.
         *   **Must** enforce schema evolution rules (e.g., backward compatibility) within the CI/CD pipeline, preventing the deployment of breaking changes.
-        *   Provides schemas to the worker service (AWS Lambda) for serialization and deserialization tasks, ensuring data conforms to the expected structure.
+        *   Provides schemas to the worker service (AWS Fargate) for serialization and deserialization tasks, ensuring data conforms to the expected structure.
 
 7.  **Centralized Configuration Management (AWS AppConfig)**
     *   **Description:** To manage dynamic operational configurations and feature flags, we will adopt AWS AppConfig. This allows for safe, audited changes without requiring a full code deployment.
@@ -138,7 +138,7 @@ Designs for post-MVP features like the "cold path" for historical syncs have bee
 
 The KMP module contains the core, shareable business logic. The architectural strategy is to use **KMP for portable business logic** and **platform-native runtimes for performance-critical infrastructure code**.
 
-For the backend, this means the general strategy is to compile the KMP module to a JAR and run it on a standard JVM-based AWS Lambda runtime. However, security-critical, latency-sensitive functions like the `AuthorizerLambda` **must** be implemented in a faster-starting runtime like TypeScript or Python. This is a deliberate, non-negotiable trade-off. The P99 latency SLO of <500ms for the entire API Gateway request cannot be reliably met if the authorizer suffers from a multi-second JVM cold start. This technology split is justified because the authorizer is a simple, self-contained function whose performance is critical to the entire user experience.
+For the backend, this means the general strategy is to compile the KMP module to a JAR, package it in a container, and run it on the **AWS Fargate** worker fleet. However, security-critical, latency-sensitive functions like the `AuthorizerLambda` that are not part of the main worker fleet **must** be implemented in a faster-starting runtime like TypeScript or Python. This is a deliberate, non-negotiable trade-off. The P99 latency SLO of <500ms for the entire API Gateway request cannot be reliably met if the authorizer suffers from a multi-second JVM cold start. This technology split is justified because the authorizer is a simple, self-contained function whose performance is critical to the entire user experience.
 
 *   **[T-001] Contradiction & Trade-off Acceptance:** This decision creates a deliberate contradiction with the project's goal of using a single cross-platform framework (KMP). The complexity of maintaining a hybrid runtime is a formally accepted technical trade-off, made to meet the non-functional requirement for API latency.
 
@@ -282,25 +282,19 @@ To provide a near real-time user experience and dramatically reduce costs, the a
 
 ## 3a. Unified End-to-End Idempotency Strategy
 
-In a distributed, event-driven system, operations can be retried, making a robust idempotency strategy critical for data integrity. We will implement a unified strategy based on a client-generated idempotency key.
+To ensure "exactly-once" processing semantics in a distributed, event-driven system, the architecture will adopt a unified idempotency strategy that leverages the native capabilities of **Amazon SQS FIFO queues**. This is a more cost-effective, simpler, and more robust approach than maintaining a separate application-level locking mechanism in Redis or DynamoDB.
 
-*   **[C-004] Header Specification:** The key **must** be passed in an `Idempotency-Key` HTTP header. The API Gateway will reject any request missing this header with a `400 Bad Request`.
+*   **[C-004] Header Specification:** The key **must** be passed in an `Idempotency-Key` HTTP header for all state-changing API calls. The API Gateway will reject any request missing this header with a `400 Bad Request`.
 
-*   **Key Generation:** The mobile client is responsible for generating a unique `Idempotency-Key` (e.g., a UUID) for each new state-changing operation. This same key **must** be used for any client-side retries of that same operation.
+*   **Key Generation:** The mobile client is responsible for generating a unique `Idempotency-Key` (e.g., a UUIDv4) for each new state-changing operation. This same key **must** be used for any client-side retries of that same operation.
 
-*   **Locking Mechanism:** Before starting any processing, the asynchronous worker (Fargate task) will attempt to acquire an exclusive lock using an atomic **`SET-if-not-exists`** operation against the central cache (Redis). This ensures that a job is processed at most once and handles race conditions where multiple workers attempt to process the same job simultaneously.
+*   **Authoritative Mechanism (SQS FIFO Deduplication):**
+    *   **Queue Type:** The primary `HotPathSyncQueue` will be a FIFO queue.
+    *   **Deduplication ID:** The client-generated `Idempotency-Key` from the API header will be used as the `MessageDeduplicationId` when the message is sent to the SQS FIFO queue.
+    *   **Guarantee:** SQS FIFO queues natively prevent messages with the same `MessageDeduplicationId` from being delivered more than once within the 5-minute deduplication interval. This guarantees that a retried API call from the client will not result in a duplicate job being processed by the Fargate worker fleet.
+    *   **Benefit:** This approach eliminates an entire class of database or cache operations (e.g., read/write for a lock), significantly reducing cost and complexity in the worker logic. The throughput limits of FIFO queues (~3,000 messages per second with batching) are well above the system's NFRs.
 
-#### Post-MVP: Idempotency for Historical Syncs (Step Functions)
-For long-running historical syncs, an additional layer of idempotency will be required at the orchestration level. The design for this is captured alongside the Historical Sync architecture in `45-future-enhancements.md`.
-
-#### Idempotency via SQS FIFO Deduplication
-
-To ensure jobs are processed exactly once while minimizing cost and complexity, the system will leverage the native deduplication feature of **Amazon SQS FIFO queues**. This is a more cost-effective and simpler approach than maintaining a separate locking mechanism in DynamoDB.
-
-*   **Queue Type:** The `HotPathSyncQueue` will be converted from a Standard SQS queue to a FIFO queue.
-*   **Deduplication ID:** The client-generated `Idempotency-Key` (passed in the API header) will be used as the `MessageDeduplicationId` when the message is sent to the SQS FIFO queue.
-*   **Mechanism:** SQS FIFO queues automatically prevent messages with the same `MessageDeduplicationId` from being delivered more than once within the 5-minute deduplication interval. This guarantees that a retried API call from the client will not result in a duplicate job being processed.
-*   **Benefit:** This approach eliminates an entire class of database operations (one write and potentially one read per job for locking), significantly reducing DynamoDB costs and simplifying the worker logic, as it no longer needs to manage a distributed lock. The trade-off is a lower maximum throughput for FIFO queues compared to Standard queues, but the 3,000 transactions per second (with batching) supported by FIFO is well above the system's NFRs.
+*   **Post-MVP (Historical Syncs):** For long-running historical syncs orchestrated by Step Functions, an additional layer of idempotency will be required at the orchestration level. The design for this is captured in `45-future-enhancements.md`.
 
 ## 3b. Architecture for 1M DAU
 
@@ -349,22 +343,7 @@ The following table details the specific items to be cached:
 | **User Sync Config** | `config##{userId}` | Serialized user sync configurations | 15 minutes | Reduces DynamoDB reads for frequently accessed user settings. |
 | **Rate Limit Token Bucket** | `ratelimit##{...}` | A hash containing tokens and timestamp | 60 seconds | Powers the distributed rate limiter for third-party APIs. |
 | **Negative Lookups** | e.g., `nosub##{userId}` | A special "not-found" value | 1 minute | Prevents repeated, fruitless queries for non-existent data (e.g., checking if a user has a Pro subscription). |
-| **Sync Confidence** | `sync:confidence:{userId}:{destProvider}` | An integer counter for consecutive empty results. | 7 days | **Algorithmic Optimization:** Caches metadata about sync patterns to intelligently skip redundant API calls to destination providers, reducing latency, cost, and third-party API pressure. |
-
-**Algorithmic Sync Optimization via "Sync Confidence"**
-
-To improve the efficiency of the core sync algorithm, the system will employ a "Sync Confidence" caching strategy. The default sync behavior (as defined in `./05-data-sync.md`) fetches data from the destination provider to perform conflict resolution. However, this destination fetch is often unnecessary, and this optimization avoids that fetch under specific conditions.
-
-*   **Implementation Details:**
-    *   **Redis Cache:** The `WorkerFargateTask` will use Redis to store a simple integer counter.
-    *   **Cache Key:** The key will follow the format `sync:confidence:{userId}:{destinationProvider}`.
-    *   **Logic:**
-        1.  **Strategy-Based Elimination:** Before a sync job, the worker will check the user's conflict resolution strategy. If it is `Prioritize Source`, the destination API call will be skipped entirely.
-        2.  **Pattern-Based Elimination:** If the strategy requires a destination check, the worker will check the value of the Redis key. If the counter exceeds a configured threshold (e.g., 10 consecutive polls that returned no data), the destination API call will be skipped.
-        3.  **Counter Management:** If the destination API is called and returns data, the counter is reset to 0. If it returns no data, the counter is incremented. If a `pushData` operation later fails due to a conflict (indicating the cache was wrong), the counter is also reset to zero, forcing a re-fetch on the next attempt.
-    *   **Configuration:** The threshold for consecutive empty polls will be managed as an environment variable in the `WorkerFargateTask` to allow for tuning without code redeployment.
-
-This strategy makes the sync algorithm adaptive, reducing redundant API calls for the majority of routine background syncs.
+| **Sync Confidence** | `sync:confidence:{userId}:{destProvider}` | An integer counter for consecutive empty results. | 7 days | **Algorithmic Optimization:** Caches metadata about sync patterns to intelligently skip redundant API calls. See `05-data-sync.md` for the detailed algorithm. |
 
 #### Rate-Limiting Backoff Mechanism
 The following diagram shows how a worker interacts with the distributed rate limiter. If the rate limit is exceeded, the worker **must not** fail the job. Instead, it will use the SQS `ChangeMessageVisibility` API to return the job to the queue with a calculated delay, using an **exponential backoff with jitter** algorithm to avoid thundering-herd problems.
@@ -496,7 +475,7 @@ Finding all connections that need re-authentication is a key operational require
 
 ### Data Consistency and Conflict Resolution
 
-*   **Distributed Locking for Idempotency:** As defined in Section 3a, all state-changing operations are protected by a distributed lock implemented using DynamoDB's conditional `PutItem` calls on an `IDEM#` item. This is the **single, authoritative** locking mechanism for the system.
+*   **Application-Level Locking for Post-MVP Workflows:** The `IDEM#` item type is reserved for application-level distributed locking that may be required by post-MVP workflows, such as the "Cold Path" historical sync. For the primary "Hot Path" sync, the authoritative idempotency mechanism is the SQS FIFO queue's native content-based deduplication, as defined in Section 3a.
 *   **Optimistic Locking with Versioning:** To prevent lost updates during concurrent writes, optimistic locking **must** be used for all updates to `PROFILE` and `SYNCCONFIG` items. This will be implemented by adding a `version` number attribute and using a condition expression on update to ensure the `version` has not changed since the item was read.
 
 ### Mitigating "Viral User" Hot Partitions
@@ -769,7 +748,7 @@ This strategy ensures that the app remains responsive and that user actions are 
 | **Authentication Service** | **Firebase Authentication** | **Rationale vs. Amazon Cognito:** While Amazon Cognito is a native AWS service, Firebase Authentication has been chosen for the MVP due to its superior developer experience, higher-quality client-side SDKs (especially for social logins on iOS and Android), and more generous free tier. This choice prioritizes rapid development and a smooth user onboarding experience. The cross-cloud dependency is an acceptable trade-off for the MVP, but a migration to Cognito could be considered in the future if the benefits of a single-cloud solution outweigh the advantages of Firebase's SDKs. **Dependency Risk:** This introduces a hard dependency on Google Cloud. An outage in Firebase Authentication would prevent all users from logging in, even if the AWS backend is healthy. This risk is formally accepted by the product owner. |
 | **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. The KMP/JVM runtime will be packaged in a container for the asynchronous `WorkerFargateTask`. For latency-sensitive functions that are not part of the worker fleet (e.g., the `AuthorizerLambda`), a faster-starting runtime like TypeScript or Python must be used to meet strict latency SLOs. **[NEEDS_CLARIFICATION: Q-04]** The engineering team must formally confirm their acceptance of the added complexity of maintaining a separate runtime and toolchain for these specific functions. |
 | **On-Device Database** | **SQLDelight** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
-| **Primary Database** | **Amazon DynamoDB with Global Tables** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance required to support 1M DAU. The single-table design enables efficient, complex access patterns. We use On-Demand capacity mode, which is the most cost-effective choice for our unpredictable, spiky workload, as it automatically scales to meet traffic demands without the need for manual capacity planning. Global Tables provide the multi-region, active-active replication needed for high availability and low-latency access for our global user base.** |
+| **Primary Database** | **Amazon DynamoDB** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance. For the MVP, it will be deployed in a single region. It will use a hybrid capacity model (a baseline of Provisioned Capacity with On-Demand for scaling) to balance cost and performance, as detailed in Section 3b.** |
 | **Backend Compute** | **AWS Fargate on Graviton (ARM64)** | **Container-based Compute for High Throughput.** The asynchronous worker fleet will be run as a container-based service on **AWS Fargate**, standardized on the **`arm64` (AWS Graviton) architecture**. For a constant, high-throughput workload like our sync engine, Fargate is significantly more cost-effective than a Lambda-per-job model. It avoids the high costs associated with massive Lambda concurrency and provides more predictable performance for long-running tasks. To further optimize costs, the fleet will use a mix of capacity providers: primarily **Fargate Spot** (e.g., 90% of tasks) for maximum savings, with a small baseline of **Fargate On-Demand** tasks (e.g., 10%) to guarantee capacity. The architecture's use of SQS for buffering makes the workload inherently fault-tolerant and ideally suited for interruptible Spot instances. The worker application will be packaged into a Docker image and run as an auto-scaling fleet of Fargate tasks that continuously poll the SQS queue. |
 | **Schema Governance** | **AWS Glue Schema Registry** | **Data Integrity & Evolution.** Provides a managed, centralized registry for our canonical data schemas. Enforces backward-compatibility checks in the CI/CD pipeline, preventing breaking changes and ensuring system stability as new data sources are added. |
 | **Distributed Cache** | **Amazon ElastiCache for Redis** | **Performance & Scalability.** Provides a high-throughput, low-latency in-memory cache for reducing database load and implementing distributed rate limiting. |
