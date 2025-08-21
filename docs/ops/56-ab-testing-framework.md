@@ -13,7 +13,7 @@
 # PRD Section 56: A/B Testing Framework (Deep Dive)
 
 ## 1. Introduction
-A/B testing is our core methodology for making data-driven product decisions. This document serves as a comprehensive guide to our A/B testing framework, principles, processes, and technical implementation.
+A/B testing is our core methodology for making data-driven product decisions. This document serves as a comprehensive guide to our A/B testing framework, principles, processes, and technical implementation. This process is owned by the **Product Manager**.
 
 ## 2. A/B Testing Principles
 -   **Randomization:** Users must be randomly assigned to a control or variant group to ensure unbiased results.

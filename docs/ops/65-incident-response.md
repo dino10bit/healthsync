@@ -70,20 +70,28 @@ A SEV-1 incident triggers our highest level of response:
 
 ## 4. Post-Incident Process
 
-### 4.1. Postmortem - The 5 Whys
--   **Culture:** Postmortems are always blameless. The goal is to learn from the system, not to point fingers.
--   **The 5 Whys Technique:** We will use this technique to drill down to the root cause.
-    1.  *Problem:* The API was down. **Why?**
-    2.  *Because:* A bad deployment was pushed. **Why?**
-    3.  *Because:* The automated tests did not catch the breaking change. **Why?**
-    4.  *Because:* The test suite was missing coverage for that specific code path. **Why?**
-    5.  *Because:* Our test coverage standards don't require it. **Root Cause.**
--   **Action Item:** "Improve test coverage standards and add a test for this specific case."
+A formal post-incident review, or post-mortem, is a critical part of our continuous improvement cycle.
 
-### 4.2. Postmortem - Action Item Tracking
--   All action items identified in a postmortem must be converted into Jira tickets.
+### 4.1. Post-Mortem Process
+-   **Trigger:** A post-mortem is **mandatory for all SEV-1 incidents** and highly encouraged for SEV-2 incidents.
+-   **Ownership:** The **Incident Commander** from the incident is responsible for scheduling the post-mortem meeting and for writing the final post-mortem document.
+-   **Timeline:** The post-mortem meeting must be held within **3 business days** of the incident's resolution to ensure details are fresh.
+-   **Attendees:** Required attendees are the Incident Commander, all Subject Matter Experts involved in the resolution, and representatives from any significantly impacted teams (e.g., customer support).
+-   **Blameless Culture:** The primary rule of the post-mortem is that it is **blameless**. The goal is to identify weaknesses in our systems and processes, not to assign blame to individuals. We assume everyone acted with the best intentions based on the information they had at the time.
+
+### 4.2. Post-Mortem Document Template
+All post-mortems must follow a standard template, which will be maintained in Confluence. The template must include the following sections:
+1.  **Executive Summary:** A brief, high-level summary of the incident, including what happened, the user impact, and the duration.
+2.  **Timeline:** A detailed, timestamped log of all key events, from initial detection to full resolution.
+3.  **Root Cause Analysis:** A deep dive into the root cause(s) of the incident. The **"5 Whys"** technique should be used here to move beyond surface-level causes.
+4.  **Action Items:** A list of concrete, actionable, and owned tasks that will be implemented to prevent this class of incident from recurring or to improve the response process.
+5.  **Lessons Learned:** A summary of what went well during the response and what could be improved.
+
+### 4.3. Action Item Tracking
+-   All action items identified in a post-mortem **must** be converted into Jira tickets.
 -   Each ticket must have a clear owner and a due date.
--   These tickets are treated with high priority in the next development sprint.
+-   The Incident Commander is responsible for ensuring these tickets are created.
+-   The SRE Team Lead is responsible for tracking these action items to completion. These tickets are treated with high priority in the next development sprint.
 
 ## 5. Preparedness
 

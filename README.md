@@ -29,6 +29,12 @@ All changes to PRD documents must be accompanied by an entry in the document's "
 
 A central `GLOSSARY.md` file is maintained at the root of this repository to ensure a single, consistent definition for all business and technical terms. All other documents should defer to this glossary.
 
+### 2.4. Documentation Maintenance Process
+This documentation suite is a living project. To ensure it remains accurate and relevant, the following process must be followed:
+*   **Ownership:** The **Head of Product** is the ultimate owner of the entire documentation suite. Individual document owners are specified in the document's metadata.
+*   **Review Cadence:** All documents will be formally reviewed on a **quarterly basis**.
+*   **Updates with Code:** Any code change that alters a feature or technical implementation described in this documentation **must** be accompanied by a corresponding update to the documentation in the same pull request.
+
 ## 3. Consolidated Project Assumptions
 
 This section lists the key business and technical assumptions that underpin the entire PRD suite.

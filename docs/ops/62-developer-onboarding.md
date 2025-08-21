@@ -47,13 +47,39 @@ This template provides a structure for the new hire and their manager to set exp
 
 ## 3. The Onboarding Process
 
-### 3.1. Tooling & Access Checklist (Day 1)
--   [ ] **Communication:** Slack, Google Workspace (Email, Calendar).
--   [ ] **Code:** GitHub access to all relevant repositories.
--   [ ] **Project Management:** Jira & Confluence access.
--   [ ] **Design:** Figma (view access).
--   [ ] **Cloud Provider:** AWS Console (read-only access to staging environment).
--   [ ] **CI/CD:** CircleCI (or equivalent).
+### 3.1. The Onboarding Checklist
+
+This checklist provides a detailed, week-by-week guide for the new hire.
+
+#### Week 1: Setup & First Contribution
+-   [ ] **Day 1: HR & Initial Setup**
+    -   [ ] Complete all HR paperwork.
+    -   [ ] Get company laptop and peripherals.
+    -   [ ] Meet your Onboarding Buddy.
+    -   [ ] **Tooling & Access:**
+        -   [ ] Slack account created and joined to `#engineering`, `#general`, and your team channel.
+        -   [ ] Google Workspace (Email, Calendar) account created.
+        -   [ ] GitHub account created and invited to the SyncWell organization with "Read" access.
+        -   [ ] Jira & Confluence accounts created.
+        -   [ ] Figma account created (view-only).
+        -   [ ] AWS Console account created (read-only access to the `staging` environment).
+        -   [ ] PagerDuty account created (if applicable for the role).
+-   [ ] **Day 2: Local Environment**
+    -   [ ] Clone the main application repository.
+    -   [ ] Run the `./scripts/setup.sh` script to install all dependencies and configure your local environment.
+    -   [ ] Successfully run the application locally.
+    -   [ ] Successfully run the unit test suite locally.
+-   [ ] **Day 3: Architecture & Code**
+    -   [ ] Attend the Architectural Overview Session with a senior engineer.
+    -   [ ] Pick your "Good First Issue" from Jira with your buddy.
+-   [ ] **Day 4: First PR**
+    -   [ ] Implement the fix for your first issue.
+    -   [ ] Create a pull request, following the PR template.
+    -   [ ] Your buddy will review the PR with you.
+-   [ ] **Day 5: Merge & Celebrate**
+    -   [ ] Address any feedback on your PR.
+    -   [ ] Merge your first contribution to the `develop` branch.
+    -   [ ] Join the team for the weekly engineering demo.
 
 ### 3.2. Local Development Environment - Deep Dive
 -   **The Setup Script (`./scripts/setup.sh`):** This script is the cornerstone of a smooth setup. It must:

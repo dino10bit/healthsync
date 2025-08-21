@@ -100,7 +100,8 @@ For users who cannot access their account.
     -   **Mitigation:** The deletion process must be robust, automated, and auditable. Logs should be kept of deletion requests and their successful completion.
 
 ## 6. Data Retention
--   **Anonymized Analytics:** Aggregated, anonymized data that is not personally identifiable (e.g., feature usage statistics, sync success rates) may be retained for analytical purposes. This data will have no link to any specific user.
+-   **User Analytics Data:** User-level analytics data, which is tied to a specific `userId` but is not core health data (e.g., button clicks, screen views), will be retained for a maximum of **24 months** after the event was generated. This allows for long-term cohort analysis while still adhering to data minimization principles.
+-   **Anonymized Aggregated Data:** Aggregated, fully anonymized data that is not personally identifiable (e.g., overall sync success rates) may be retained indefinitely for analytical purposes.
 -   **Financial Records:** For legal and accounting purposes, records of subscriptions and payments will be retained for the period required by law (e.g., 7 years), but will be disconnected from the user's deleted account.
 
 ## 7. Compliance

@@ -14,7 +14,7 @@
 # PRD Section 58: Marketing & SEO Strategy (Deep Dive)
 
 ## 1. Introduction
-This document provides a granular, actionable marketing and SEO strategy for SyncWell. It covers our target audience, messaging, and the specific tactics we will employ across organic and paid channels to drive user acquisition and growth.
+This document provides a granular, actionable marketing and SEO strategy for SyncWell. It covers our target audience, messaging, and the specific tactics we will employ across organic and paid channels to drive user acquisition and growth. This process is owned by the **Head of Marketing**.
 
 ## 2. Go-to-Market Strategy
 
