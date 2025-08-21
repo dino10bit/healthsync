@@ -75,7 +75,7 @@ This detailed, bottom-up analysis reveals that the true operational cost is appr
 
 *   **Key Cost Drivers:** After extensive optimization, the remaining primary cost drivers are messaging (SQS), security (WAF), networking (NAT Gateway), and core database/cache services.
 *   **Integrated Optimizations:** The cost figures in the table above are achieved through several key strategies:
-    *   **API & Ingress Path:** The architecture uses **CloudFront** to cache API requests and **a direct API Gateway-to-SQS integration**, which significantly reduces costs. The CloudFront cost of **~$55.00** reflects its role serving both static assets and API traffic, which in turn reduces the load and cost on the downstream API Gateway and compute services. The EventBridge cost of **~$40.00** is lower due to the direct SQS integration for high-volume paths.
+    *   **API & Ingress Path:** The architecture uses **CloudFront** to cache API requests and **direct API Gateway-to-SQS integrations**, which significantly reduces costs. The CloudFront cost of **~$55.00** reflects its role serving both static assets and API traffic, which in turn reduces the load and cost on the downstream API Gateway and compute services. The EventBridge cost of **~$40.00** is significantly lower because two high-volume paths (API Gateway ingress and webhook coalescing) send messages directly to SQS, bypassing the event bus entirely.
     *   **Tiered Observability:** The CloudWatch cost of **~$82.50** is significantly reduced by implementing tiered log sampling. Log data for `FREE` users is sampled aggressively, while `PRO` users receive higher fidelity, aligning cost with revenue.
     *   **Pre-flight Checks:** The Fargate, Lambda, and DynamoDB costs are optimized via a pre-flight check for polling-based syncs. A lightweight Lambda (**~$17/month** of the total Lambda cost) checks for new data first, avoiding an estimated **61 million** unnecessary Fargate task invocations per month and their associated database reads. This accounts for the lower Fargate and DynamoDB costs.
     *   **Intelligent Data Hydration:** The NAT Gateway and Fargate costs are further reduced by fetching heavyweight data payloads only when necessary, minimizing data transfer and processing. This accounts for the **~$18/month** reduction in NAT Gateway data processing charges.
@@ -425,18 +425,16 @@ Proposal #16 suggested using the DynamoDB Standard-Infrequent Access (Standard-I
 
 ### 14.4. Event Coalescing to Reduce Chatter
 
-*   **Strategy:** This strategy directly targets the "event-driven chatter" identified in the Sensitivity Analysis as a key cost driver. It introduces a short-term caching layer to buffer and merge multiple, rapid-fire webhook events for the same user into a single, consolidated sync job. Instead of 10 events triggering 10 jobs, they trigger one job.
-*   **Cost Impact Analysis:** This is a high-impact optimization. The primary savings come from a significant reduction in the volume of high-cost events and messages.
-    *   **EventBridge & SQS Reduction:** We assume that webhook-driven providers account for 50% of the event volume (`~114M` events/month) and that a 60% coalescing rate is achievable.
+*   **Architecture:** This architectural pattern directly targets the "event-driven chatter" identified in the Sensitivity Analysis as a key cost driver. It uses an SQS FIFO queue with a delivery delay to buffer and merge multiple, rapid-fire webhook events for the same user. A `CoalescingTriggerLambda` then processes these buffered events and sends a single, consolidated message directly to the main `HotPathSyncQueue`. This bypasses EventBridge entirely for this flow.
+*   **Cost Impact Analysis:** This is a high-impact optimization. The primary savings come from a significant reduction in the volume of high-cost events and messages that would have otherwise been sent to EventBridge.
+    *   **EventBridge Reduction:** We assume that webhook-driven providers account for 50% of the event volume (`~114M` events/month) and that a 60% coalescing rate is achievable. By sending the coalesced messages directly to SQS, we avoid the cost of these events hitting the bus.
         *   Events Reduced: `114M * 0.60 = ~68.4M`
-        *   EventBridge Savings (`$1.00/M`): `68.4 * $1.00 = $68.40`
-        *   SQS Savings (`$0.50/M`): `68.4 * $0.50 = $34.20`
-        *   **Gross Monthly Savings:** **~$102.60**
-    *   **New Component Costs:** The solution introduces a new SQS delay queue and a `CoalescingTriggerLambda`.
-        *   New SQS Messages: `114M * (1 - 0.60) = ~45.6M` messages. At `$0.40/M` (standard queue), this costs **~$18.24**.
-        *   New Lambda Invocations: `45.6M` invocations. This is a very lightweight lambda, so the cost is estimated at **~$5.00**.
-        *   **Total New Costs:** **~$23.24**
-*   **Estimated Net Monthly Savings:** `$102.60 (Gross Savings) - $23.24 (New Costs) =` **~$79.36**. This is a direct, recurring saving on the platform's highest-velocity components.
+        *   EventBridge Savings (`$1.00/M`): `68.4 * $1.00 = **~$68.40**`
+    *   **New Component Costs:** The architecture uses an SQS delay queue and a `CoalescingTriggerLambda`.
+        *   SQS Messages for Coalescing: The initial `114M` webhook events are sent to the `CoalescingBufferQueue`, costing `114M * $0.40/M = ~$45.60`.
+        *   Coalescing Lambda: `~45.6M` invocations of a lightweight lambda costs **~$5.00**.
+        *   SQS Messages to Worker: The `~45.6M` coalesced messages are then sent to the `HotPathSyncQueue`.
+    *   **Net Impact:** This change adds SQS and Lambda costs but removes a larger EventBridge cost. The cost breakdown in Section 2 already reflects this optimized architecture, resulting in a lower overall EventBridge expense. The primary benefit is a net reduction in the cost of the messaging layer and reduced architectural complexity for this flow.
 
 ### 14.5. Just-in-Time (JIT) Credential Caching
 
