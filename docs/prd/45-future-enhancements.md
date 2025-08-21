@@ -214,6 +214,9 @@ When it comes time to consider one of these ideas for the official roadmap, it w
 
 ## 6. Deferred Architectural Designs from PRD-06
 
+> **DOCUMENT STATUS: SINGLE SOURCE OF TRUTH FOR POST-MVP DESIGNS**
+> This section is the single, authoritative source of truth for the architecture of major features deferred from the initial MVP (e.g., Historical Sync, AI Insights). It serves as a canonical reference for future design and implementation work.
+
 This section archives detailed architectural designs that were originally specified in `06-technical-architecture.md` but have been deferred to post-MVP releases to focus the initial development effort.
 
 ### Historical Sync ("Cold Path")

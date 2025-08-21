@@ -1,5 +1,8 @@
 # PRD Section 6: Technical Architecture, Security & Compliance
 
+> **DOCUMENT STATUS: SINGLE SOURCE OF TRUTH**
+> This document is the single, authoritative source of truth for the SyncWell technical architecture. All other PRDs, architectural documents, and operational runbooks **must** align with the decisions, patterns, and diagrams specified here. Where contradictions exist, this document takes precedence.
+
 ## 0. Document Management
 
 ### Version History
