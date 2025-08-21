@@ -5,12 +5,12 @@ migrated: true
 ## Dependencies
 
 ### Core Dependencies
-- `06-technical-architecture.md` - Technical Architecture, Security & Compliance
-- `19-security-privacy.md` - Data Security & Privacy Policies
-- `44-contingency-planning.md` - Contingency & Rollback Plans
+- `../architecture/06-technical-architecture.md` - Technical Architecture, Security & Compliance
+- `../security/19-security-privacy.md` - Data Security & Privacy Policies
+- `./44-contingency-planning.md` - Contingency & Rollback Plans
 
 ### Strategic / Indirect Dependencies
-- `22-maintenance.md` - Maintenance & Post-Launch Operations (SRE)
+- `./22-maintenance.md` - Maintenance & Post-Launch Operations (SRE)
 
 ---
 
@@ -18,104 +18,69 @@ migrated: true
 
 ## 1. Executive Summary
 
-This document specifies the strategy for data backup, high availability, and disaster recovery for the SyncWell application's MVP. To balance cost, complexity, and time-to-market, the MVP will be deployed to a **single AWS region**. The strategy is therefore focused on **intra-region high availability** and a robust, well-tested plan for recovering from a disaster scenario such as data corruption or the failure of an entire Availability Zone.
+This document specifies the strategy for data backup, high availability, and disaster recovery for the SyncWell application's MVP. To balance cost, complexity, and time-to-market, the MVP will be deployed to a **single AWS region (`us-east-1`)**. The strategy is therefore focused on **intra-region high availability** and a robust, well-tested plan for recovering from a disaster scenario.
 
 ## 2. High Availability Strategy (Intra-Region)
 
 High availability for the MVP is achieved by deploying services across multiple Availability Zones (AZs) within our primary AWS region.
-*   **Stateless Services:** API Gateway and AWS Fargate are inherently highly available and run across multiple AZs by default.
-*   **Stateful Services:**
-    *   **DynamoDB:** The `SyncWellMetadata` table is configured for Multi-AZ deployment.
-    *   **ElastiCache for Redis:** The Redis cluster is configured with Multi-AZ failover.
-    *   **Secrets Manager:** This is a regional service that is resilient to AZ failure by default.
+*   **Stateless Services:** API Gateway and AWS Fargate run across multiple AZs by default.
+*   **Stateful Services:** DynamoDB, ElastiCache for Redis, and Secrets Manager are all configured for Multi-AZ resilience.
 
 This multi-AZ approach ensures that the failure of a single Availability Zone does not result in a service outage.
 
-## 3. The New Device / Re-install Experience
-*(Unchanged from previous version, as this flow remains the same)*
+## 3. Disaster Recovery Strategy (Single-Region MVP)
 
-The recovery process is an integral part of the onboarding flow for a returning user.
+A "disaster" is defined as an event that makes the service entirely unavailable or results in widespread data corruption. The recovery plan is manual and focuses on restoring data integrity and service functionality from backups.
 
-1.  **First Launch:** On first launch, the app presents the user with "Sign in with Apple" and "Sign in with Google" options.
-2.  **Authentication:** The user signs in with the same method they used originally.
-3.  **State Recovery:** The app sends the user's ID to the SyncWell backend. The backend retrieves the user's complete configuration from the DynamoDB table.
-4.  **Instant Setup:** The app UI populates with all the user's sync configurations.
-5.  **Seamless Syncing:** The user's OAuth tokens are retrieved from Secrets Manager, and syncs can resume immediately.
-
-## 4. Disaster Recovery Strategy (Single-Region MVP)
-
-For the single-region MVP, a "disaster" is defined as an event that makes the service entirely unavailable or results in widespread data corruption. This could be a full regional outage or a critical bug. The recovery plan is manual and focuses on restoring data integrity and service functionality from backups.
-
-This strategy yields the following recovery objectives, which are aligned with the NFRs in `06-technical-architecture.md`:
+This strategy yields the following recovery objectives, which are validated via **mandatory, quarterly Disaster Recovery (DR) tests**. The results and learnings from these tests must be documented in a central location.
 
 | Failure Scenario | Recovery Time Objective (RTO) | Recovery Point Objective (RPO) | Mechanism |
 | :--- | :--- | :--- | :--- |
-| **Full Regional Outage** or **Data Corruption Event** | **< 4 hours** | **< 15 minutes** | **Manual Restore.** An engineer initiates a DynamoDB Point-in-Time Recovery (PITR) to a new table. The application is then repointed to the new table using AWS AppConfig. The RPO is governed by the continuous backup window of PITR. |
+| **Full Regional Outage** or **Data Corruption Event** | **< 4 hours** | **< 15 minutes** | **Manual Restore.** An engineer initiates a DynamoDB Point-in-Time Recovery (PITR) to a new table. The application is then repointed to the new table using AWS AppConfig. |
 | **Availability Zone Failure** | **< 5 minutes** | **~0** | **Automatic Failover.** Handled automatically by the Multi-AZ configuration of AWS services. |
 
-### Recovery Mechanisms:
+### 3.1. Recovery Mechanisms
 
-*   **Infrastructure as Code (IaC):** The entire backend infrastructure is defined in **Terraform**. In the event of a full regional outage, this allows for the rapid redeployment of the entire stack to a new, healthy region.
-*   **Data Backup (DynamoDB Point-in-Time Recovery):**
-    *   Our primary recovery mechanism for data is **DynamoDB Point-in-Time Recovery (PITR)**, which is enabled on the `SyncWellMetadata` table.
-    *   PITR provides continuous backups of our table data, allowing us to restore to any single second in the preceding 35 days. This provides an RPO of minutes, or even seconds, depending on how quickly the incident is detected.
-*   **Credential Backup (AWS Secrets Manager):** Secrets Manager is a highly available regional service. In the event of a full regional outage, the secrets would need to be restored from a backup or recreated as part of the recovery process in a new region.
-*   **Configuration-Driven Recovery (AWS AppConfig):**
-    *   The application code does not contain hardcoded resource names (like the DynamoDB table name). Instead, it fetches these from **AWS AppConfig** at startup.
-    *   This is a crucial element of the DR strategy. After restoring a table via PITR, which creates a new table with a new name, an engineer simply updates the `tableName` configuration value in AppConfig.
-    *   This allows the entire application to be repointed to the restored database without requiring a new code deployment, dramatically reducing the RTO.
-*   **Stateless Compute (AWS Fargate):**
-    *   The backend worker fleet is stateless. This is critical for recovery, as no data is stored on the compute instances themselves. In a disaster recovery scenario, a new Fargate fleet can be deployed, and it can immediately start processing jobs once the data layer (DynamoDB) is restored and repointed.
+*   **Infrastructure as Code (IaC):** The entire backend infrastructure is defined in **Terraform**, allowing for the rapid redeployment of the stack. [NEEDS_CLARIFICATION: A link to the specific operational runbook for IaC-based regional recovery should be added here.]
+*   **Data Backup (DynamoDB Point-in-Time Recovery):** **DynamoDB PITR** is enabled on the `SyncWellMetadata` table, providing continuous backups with the ability to restore to any single second in the preceding 35 days.
+*   **Credential Backup (AWS Secrets Manager):** Secrets Manager is a highly available regional service. For a full regional outage, secrets would need to be manually recreated in the new region. This is an accepted risk for the MVP's RTO.
+*   **Configuration-Driven Recovery (AWS AppConfig):** The application fetches the DynamoDB table name from AWS AppConfig at startup. The specific key for this is `dynamodb_metadata_table_name`. This allows the application to be repointed to a restored table without a code deployment, dramatically reducing the RTO.
+*   **Stateless Compute (AWS Fargate):** The backend worker fleet is stateless, allowing a new fleet to be deployed and start processing jobs immediately once the data layer is restored.
 
-### Disaster Recovery Flow (Data Corruption)
-```mermaid
-graph TD
-    A[Data Corruption Detected] --> B(Declare Incident & Halt Writes);
-    B --> C(Identify Restore Point in Time);
-    C --> D(Initiate DynamoDB PITR);
-    D --> E[New Restored Table Created];
-    E --> F(Validate Restored Data);
-    F --> G(Update Table Name in AppConfig);
-    G --> H(Deploy AppConfig Change);
-    H --> I[Service Restored];
-```
+### 3.2. User Communication Plan for Disaster Recovery
+
+In the event of a disaster that impacts users, clear and timely communication is critical.
+1.  **Status Page Update:** The first step is to update the public status page (e.g., status.syncwell.com) to acknowledge the issue and inform users that we are investigating.
+2.  **Internal Communication:** The incident commander will establish a dedicated Slack channel for internal coordination.
+3.  **Ongoing Updates:** The status page will be updated at regular intervals (e.g., every 30 minutes) throughout the incident.
+4.  **Post-Resolution:** Once the service is restored, a final update will be posted to the status page. For severe incidents, a full post-mortem will be published on the company blog.
+
+## 4. Detailed Recovery Runbooks
+
+### 4.1. Runbook: Data Corruption Recovery (PITR)
+
+This is a last-resort, high-risk manual procedure.
+
+1.  **Declare Incident & Halt Writes:** A major incident is declared. Writes to DynamoDB are disabled if possible.
+2.  **Identify Restore Point:** Engineers use logs and metrics to identify the precise moment *before* the corruption began. **This timestamp must be reviewed and approved by a second authorized engineer before proceeding.**
+3.  **Initiate PITR:** An authorized engineer initiates a Point-in-Time Recovery of the `SyncWellMetadata` table.
+4.  **Validate Restored Data:** The engineer must run validation scripts against the new table to ensure data consistency. [NEEDS_CLARIFICATION: The location of these validation scripts in the repository must be defined.]
+5.  **Update AppConfig & Redirect Traffic:** The engineer updates the `dynamodb_metadata_table_name` value in AppConfig and deploys the configuration change to redirect traffic.
+6.  **Post-Mortem:** A full post-mortem analysis is conducted.
+
+### 4.2. Runbook: Manual Account Recovery
+
+**CRITICAL RISK ADVISORY:** Manually migrating user data between identities is exceptionally high-risk.
+
+*   **MVP Policy: Not Supported.** If a user permanently loses access to their sign-in provider, they lose access to their SyncWell data. This is a deliberate product decision to avoid the immense security risks.
+*   **User Communication:** Support staff must communicate this policy clearly and empathetically.
+    *   **Canned Response:** "I understand how frustrating it is to lose access to an account. Unfortunately, for security and privacy reasons, we cannot manually change the Google or Apple account associated with your SyncWell data. If you are unable to regain access to your original sign-in account, your only option is to create a new SyncWell account. We apologize for this limitation."
+*   **Future Implementation Requirements:** If this feature is prioritized in the future, it **must** be built as a dedicated, secure, and audited internal tool with a "two-person rule" for execution.
 
 ## 5. Risk Analysis & Mitigation
 
 | Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
 | :--- | :--- | :--- | :--- | :--- |
-| **R-50** | A bug in our code corrupts user configuration data in DynamoDB. | Low | High | **Mitigated.** Use the manual DynamoDB Point-in-Time Recovery (PITR) runbook to restore the table to a state before the corruption occurred. |
-| **R-51** | A full AWS regional outage makes the backend unavailable. | Low | Critical | **Partially Mitigated.** The RTO is < 4 hours via a manual restore process to a new region using IaC and PITR. The business has accepted this RTO for the MVP to avoid the cost and complexity of a multi-region architecture. |
-| **R-52** | User loses access to their Apple/Google account. | Medium | Medium | **Accepted Risk for MVP.** Manual account recovery is not supported for the MVP due to the high security risk. See Section 6 for details. |
-
-## 6. Future Enhancement: Multi-Region Active-Active
-
-As specified in `06-technical-architecture.md`, a future enhancement to dramatically improve the RTO and RPO is to migrate to a **multi-region, active-active architecture**. This would involve promoting the DynamoDB table to a Global Table, enabling cross-region replication for Secrets Manager, and using Route 53 for automatic, latency-based failover. This would reduce the RTO for a regional outage from hours to minutes, but it is deferred from the MVP due to its significant cost and operational complexity.
-
-## 6. Detailed Recovery Runbooks
-
-### Runbook: Data Corruption Recovery (PITR)
-This is a last-resort, high-risk manual procedure to be followed in the event of widespread data corruption.
-
-1.  **Declare Incident & Halt Writes:** A major incident is declared. If possible, writes to the DynamoDB table are temporarily disabled to prevent further corruption.
-2.  **Identify Restore Point:** This is the most critical and difficult step. Engineers must use logs and metrics to identify the precise moment *before* the corruption began. This determines the restore timestamp. All data written between this point and the incident declaration will be lost. This data loss must be acknowledged and accepted before proceeding.
-3.  **Initiate PITR:** An authorized engineer initiates a Point-in-Time Recovery of the `SyncWellMetadata` DynamoDB table from the AWS console, using the identified restore timestamp. This creates a new table (e.g., `SyncWellMetadata-restored-YYYY-MM-DD`).
-4.  **Validate Restored Data:** The engineer must run validation scripts against the new table to ensure the data is consistent and the corruption is gone.
-5.  **Update AppConfig & Redirect Traffic:** The application code does not contain a hardcoded table name. Instead, it fetches the table name from **AWS AppConfig**. To redirect all application traffic to the newly restored table, the engineer updates the `tableName` configuration value in AppConfig and deploys the configuration change. This is a fast and safe way to repoint the entire application without a code deployment.
-6.  **Post-Mortem:** A full post-mortem analysis is conducted to understand the root cause and prevent recurrence.
-
-### Runbook: Manual Account Recovery
-
-**CRITICAL RISK ADVISORY:** The process of manually migrating user data from one identity to another is exceptionally high-risk and is a prime vector for catastrophic human error, social engineering attacks, and permanent data loss. A manually executed, script-based process for this operation is **unacceptable** for a production system at scale.
-
-*   **MVP Stance:** For the MVP, this feature **is considered unsupported**. If a user permanently loses access to their sign-in provider (e.g., their Google account), they will lose access to their SyncWell data. This is a deliberate product decision to avoid the immense security and operational risks of a manual process.
-
-*   **Future Implementation Requirements:** If this feature is prioritized in the future, it **must not** be implemented as a manual script run by an engineer. It must be built as a dedicated, secure, and audited internal tool with multiple safety checks and a robust approval workflow.
-
-*   **Required Safety Features for a Future Tool:**
-    1.  **MFA-Gated Execution:** The tool must require the executing engineer to re-authenticate with MFA.
-    2.  **Two-Person Rule:** The operation must require approval from a second authorized engineer, who also authenticates with MFA (a "two-person rule").
-    3.  **Soft Deletes:** The old data must not be immediately deleted. It should be "soft-deleted" (e.g., flagged for deletion with a 30-day TTL) to allow for a rollback in case of error.
-    4.  **Comprehensive Auditing:** Every step of the process must be logged to an immutable audit trail.
-
-A simple peer review of a script is insufficient for an operation of this magnitude. The process described in the previous version of this document is a recipe for disaster and **must not be implemented**.
+| **R-50** | A bug in our code corrupts user configuration data in DynamoDB. | Low | High | **Mitigated.** Use the manual DynamoDB PITR runbook to restore the table. |
+| **R-51** | A full AWS regional outage makes the backend unavailable. | Low | Critical | **Partially Mitigated.** The RTO is < 4 hours via a manual restore process to a new region. The business has accepted this RTO for the MVP. |
+| **R-52** | User loses access to their Apple/Google account, resulting in data loss for that user. | Medium | **High** | **Accepted Risk for MVP.** Manual account recovery is not supported. This is a known limitation that will be communicated clearly to users who contact support. |
