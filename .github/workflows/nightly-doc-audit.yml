@@ -1,0 +1,45 @@
+name: Nightly Documentation Audit
+
+on:
+  schedule:
+    # Runs at 03:00 UTC every day
+    - cron: '0 3 * * *'
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  audit-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Generate Traceability Matrix
+        id: traceability
+        run: python3 tools/generate_traceability_matrix.py
+
+      - name: Generate Risk Register
+        id: risk
+        run: python3 tools/generate_risk_register.py
+
+      - name: Check for changes
+        id: git-check
+        run: |
+          # The 'git diff' command will exit with 1 if there are changes, 0 if not.
+          # We use '|| true' to prevent the step from failing if there are changes.
+          git diff --quiet || echo "changes_exist=true" >> $GITHUB_ENV
+
+      - name: Commit and push changes
+        if: env.changes_exist == 'true'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add reports/
+          git commit -m "docs: Update nightly audit reports"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

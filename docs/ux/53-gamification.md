@@ -1,14 +1,14 @@
 ## Dependencies
 
 ### Core Dependencies
-- `04-user-stories.md` - User Stories
-- `23-analytics.md` - Analytics
-- `57-app-analytics.md` - App Analytics (Deep Dive)
+- `../prd/04-user-stories.md` - User Stories
+- `../ops/23-analytics.md` - Analytics
+- `../ops/57-app-analytics.md` - App Analytics (Deep Dive)
 
 ### Strategic / Indirect Dependencies
-- `51-push-notifications.md` - Push Notifications (Deep Dive)
-- `54-social-sharing.md` - Social Sharing (Deep Dive)
-- `60-brand-assets.md` - Brand Assets & Identity Guidelines
+- `./51-push-notifications.md` - Push Notifications (Deep Dive)
+- `./54-social-sharing.md` - Social Sharing (Deep Dive)
+- `./60-brand-assets.md` - Brand Assets & Identity Guidelines
 
 ---
 
@@ -27,7 +27,7 @@ The gamification system is designed around established motivational theories:
 ## 3. Badge & Achievement Design
 
 ### 3.1. Badge Design & Tiers
--   **Visual Style:** All badges will share a consistent visual style, using the color palette from `60-brand-assets.md`.
+-   **Visual Style:** All badges will share a consistent visual style, using the color palette from `./60-brand-assets.md`.
 -   **Tiered Badges:** Certain achievements will have Bronze, Silver, and Gold tiers to encourage continued engagement.
     -   **Sync Streak:** Bronze (7 days), Silver (30 days), Gold (90 days).
     -   **Power User:** Bronze (3 services), Silver (5 services), Gold (10 services).
@@ -93,7 +93,7 @@ The initial set of achievements is designed to reward both initial onboarding ac
 -   **Calculation/Goal:**
     -   We will track the Day 30, Day 60, and Day 90 retention cohorts for both groups.
     -   **Goal:** We aim to see a **20% higher Day 90 retention rate** for the "Engaged" cohort (users with at least one deep engagement badge).
--   **KPI:** This directly supports the "DAU/MAU Ratio" and "Churn Rate" KPIs in `01-context-vision.md` by keeping users active and subscribed longer.
+-   **KPI:** This directly supports the "DAU/MAU Ratio" and "Churn Rate" KPIs in `../prd/01-context-vision.md` by keeping users active and subscribed longer.
 
 ### 7.2. Development Cost Analysis
 -   **Hypothesis:** Building a gamification system can be complex. We need to ensure the initial implementation is lightweight.
@@ -101,7 +101,7 @@ The initial set of achievements is designed to reward both initial onboarding ac
     -   Backend Rules Engine (GAME-F-01): **8 points** (medium complexity, requires careful state management).
     -   Achievements Screen UI (GAME-F-02): **5 points** (straightforward UI work).
     -   Notification Hooks (GAME-F-03): **3 points** (simple integration with existing notification system).
-    -   Shareable Achievements (GAME-F-04): **5 points** (requires generating images, dependent on `54-social-sharing.md`).
+    -   Shareable Achievements (GAME-F-04): **5 points** (requires generating images, dependent on `./54-social-sharing.md`).
     -   **Total Estimated Cost:** **21 Story Points**.
 -   **Conclusion:** This represents a significant feature investment. The phased rollout (initially launching without shareable achievements) can de-risk the implementation. The potential 20% retention lift for engaged users justifies this investment, as higher retention is a primary driver of subscription LTV (Lifetime Value).
 

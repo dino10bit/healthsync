@@ -1,0 +1,36 @@
+name: Check OpenAPI Specification
+
+on:
+  pull_request:
+    paths:
+      - 'openapi/**.yaml'
+
+jobs:
+  check-openapi-spec:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          # We need to fetch more than just the latest commit to compare against the base branch
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Find base and head specs
+        id: find-specs
+        run: |
+          # This is a simplified example. A real workflow would need more robust logic
+          # to identify the correct base and head files for comparison.
+          echo "Finding base and head OpenAPI specs..."
+          BASE_SPEC=$(git show "origin/${{ github.base_ref }}:openapi/07-apis-integration_stub.yaml" > base_spec.yaml && echo "base_spec.yaml")
+          HEAD_SPEC="openapi/07-apis-integration_stub.yaml"
+          echo "base_spec_path=$BASE_SPEC" >> $GITHUB_OUTPUT
+          echo "head_spec_path=$HEAD_SPEC" >> $GITHUB_OUTPUT
+
+      - name: Run API Diff Reporter
+        run: |
+          python3 tools/api_diff_reporter.py ${{ steps.find-specs.outputs.base_spec_path }} ${{ steps.find-specs.outputs.head_spec_path }}

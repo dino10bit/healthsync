@@ -1,52 +1,71 @@
 # Repository Traceability Matrix
 
-## 1. Executive Summary
+This report provides a 360-degree view of the documentation graph, mapping each document to its dependencies (files it links to) and dependents (files that link to it).
 
-This document provides a traceability matrix that links business requirements and user stories to the specific design elements, code modules, and test cases that implement and verify them. The purpose of this matrix is to ensure that all requirements are met by the final product and that a clear, auditable trail exists from a requirement to its implementation and verification.
-
-This matrix was automatically generated and should be updated as the project evolves. Missing mappings are flagged for remediation.
-
-## 2. Requirements Traceability Matrix (RTM)
-
-| Requirement ID | Requirement Description | Linked User Stories | Architectural Component(s) | Source Code Module(s) | Test Case ID(s) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **NFR-PERF-01** | P99 API Latency < 500ms | N/A | `docs/architecture/06-technical-architecture.md` (API Gateway, Authorizer Lambda) | `src/authorizer/handler.js` | `LT-API-01` |
-| **NFR-SEC-01** | All data transfer over TLS 1.2+ | *Implicit in all stories* | `docs/architecture/06-technical-architecture.md` (TLS Termination on ALB/APIGW) | `MISSING` | `SEC-TEST-01` |
-| **NFR-SCALE-01**| Support 1M DAU / 3,000 RPS | N/A | `docs/architecture/06-technical-architecture.md` (Fargate Compute Model) | `MISSING` | `LOAD-TEST-01` |
-| **FR-ONBOARD-01**| New user onboarding flow | US-01, US-02, US-03 | `docs/ux/08-ux-onboarding.md` | `MISSING` | `E2E-ONBOARD-01` |
-| **US-01** | See a brief, clear overview of the app's value proposition | US-01 | `docs/ux/08-ux-onboarding.md` (Welcome Carousel) | `MISSING` | `E2E-ONBOARD-01` |
-| **US-02** | Be guided through connecting the first two health apps | US-02 | `docs/architecture/07-apis-integration.md` (OAuth Flow) | `MISSING` | `E2E-CONNECT-01` |
-| **US-03** | Be clearly informed about permission requests | US-03 | `docs/ux/08-ux-onboarding.md` (Permission Priming) | `MISSING` | `UI-TEST-PERM-01` |
-| **US-04** | Configure a new data sync with full control | US-04 | `docs/ux/09-ux-configuration.md` (Sync Configuration Screen) | `MISSING` | `E2E-CONFIG-01` |
-| **US-05** | Have data sync automatically in the background | US-05 | `docs/architecture/05-data-sync.md` (Hot Path Sync) | `src/worker/service.kt` | `E2E-BG-SYNC-01` |
-| **US-06** | Manually trigger a sync from the main dashboard | US-06 | `docs/ux/09-ux-configuration.md` (Dashboard) | `MISSING` | `E2E-MANUAL-SYNC-01` |
-| **US-07** | Easily view the status of sync connections | US-07 | `docs/ux/09-ux-configuration.md` (Sync Card) | `MISSING` | `UI-TEST-STATUS-01` |
-| **US-08** | Delete a sync configuration that is no longer needed | US-08 | `docs/ux/09-ux-configuration.md` (Sync Card Context Menu) | `MISSING` | `E2E-DELETE-SYNC-01` |
-| **US-09** | Purchase the Pro subscription | US-09 | `docs/prd/11-monetization.md` (RevenueCat) | `src/mobile/billing/PurchaseManager.kt` | `E2E-IAP-01`, `E2E-IAP-02`|
-| **US-10** | Sync historical data | US-10 | `docs/prd/45-future-enhancements.md` (Cold Path) | (Post-MVP) | (Post-MVP) |
-| **US-11** | Restore a previous purchase on a new device | US-11 | `docs/prd/12-trial-subscription.md` | `MISSING` | `E2E-RESTORE-IAP-01` |
-| **US-12** | Find answers to common questions in an in-app Help Center | US-12 | `docs/ux/10-ux-feedback.md` | `MISSING` | `UI-TEST-HELP-01` |
-| **US-13** | De-authorize a connected app and delete credentials | US-13 | `docs/ux/36-user-privacy-settings.md` | `MISSING` | `E2E-DEAUTH-01` |
-| **US-14** | Sync data between Apple Health and Google Fit | US-14 | `docs/architecture/30-sync-mapping.md` | `MISSING` | `E2E-APPLE-GOOGLE-01` |
-| **US-15** | Automatically detect and merge duplicate activities | US-15 | `docs/architecture/05-data-sync.md` (Conflict Resolution) | `MISSING` | `MISSING` |
-| **US-16** | See a single dashboard with the status of all connections | US-16 | `docs/ux/09-ux-configuration.md` (Dashboard) | `MISSING` | `UI-TEST-DASH-01` |
-| **US-17** | Be shown the value of Pro features contextually | US-17 | `docs/ux/08-ux-onboarding.md` (Contextual Upsell) | `MISSING` | `MISSING` |
-| **US-18** | Be guided to re-enable a permanently denied permission | US-18 | `docs/ux/40-error-recovery.md` | `MISSING` | `MISSING` |
-| **US-21** | Back up health data to personal cloud storage | US-21 | `MISSING` | `MISSING` | `MISSING` |
-| **US-30** | Preview data before a sync is executed | US-30 | `MISSING` | `MISSING` | `MISSING` |
-| **US-31** | Smart, automatic backfill of recent data for new users | US-31 | `MISSING` | `MISSING` | `MISSING` |
-| **US-33** | Display API rate limit status to the user | US-33 | `MISSING` | `MISSING` | `MISSING` |
-| **US-34** | Set a "Source of Truth" for automatic conflict resolution | US-34 | `MISSING` | `MISSING` | `MISSING` |
-| **US-35** | Use an interactive guide for troubleshooting sync errors | US-35 | `MISSING` | `MISSING` | `MISSING` |
-| **US-39** | Understand and retry failed historical syncs | US-39 | `MISSING` | `MISSING` | `MISSING` |
-| **US-45** | Future enhancements | US-45 | `docs/prd/45-future-enhancements.md` | `MISSING` | `MISSING` |
-| **US-66** | Costs Model | N/A | `docs/costs/66-costs-model.md` | `MISSING` | `MISSING` |
-| **GLOSSARY** | Glossary of Terms | N/A | `docs/prd/GLOSSARY.md` | `MISSING` | `MISSING` |
-| **README** | Top-level README | N/A | `README.md` | `MISSING` | `MISSING` |
-| **TRACEABILITY** | Traceability Matrix | N/A | `reports/rtm/repository_traceability_matrix.md` | `MISSING` | `MISSING` |
-| **f-1.md** | | `MISSING` | `MISSING` | `MISSING` | `MISSING` |
-| **f-24.md** | | `MISSING` | `MISSING` | `MISSING` | `MISSING` |
-| **load-testing** | | `MISSING` | `MISSING` | `MISSING` | `MISSING` |
-| **other/diagram.md**| | `MISSING` | `MISSING` | `MISSING` | `MISSING` |
-| **src/authorizer**| | `MISSING` | `MISSING` | `MISSING` | `MISSING` |
-| **terraform/** | | `MISSING` | `MISSING` | `MISSING` | `MISSING` |
+| Document | Dependencies (Links To) | Dependents (Linked From) |
+| :--- | :--- | :--- |
+| `01-context-vision.md` | `02-product-scope.md`, `03-competitive-analysis.md`, `11-monetization.md`, `13-roadmap.md`, `45-future-enhancements.md`, `GLOSSARY.md` | `02-product-scope.md`, `03-competitive-analysis.md`, `04-user-stories.md`, `05-data-sync.md`, `06-technical-architecture.md`, `08-ux-onboarding.md`, `11-monetization.md`, `13-roadmap.md`, `19-security-privacy.md`, `21-risks.md`, `23-analytics.md`, `45-future-enhancements.md`, `60-brand-assets.md` |
+| `02-product-scope.md` | `01-context-vision.md`, `03-competitive-analysis.md`, `04-user-stories.md`, `13-roadmap.md`, `21-risks.md`, `45-future-enhancements.md` | `01-context-vision.md`, `03-competitive-analysis.md`, `04-user-stories.md`, `05-data-sync.md`, `06-technical-architecture.md`, `08-ux-onboarding.md`, `09-ux-configuration.md`, `11-monetization.md`, `13-roadmap.md`, `14-qa-testing.md` |
+| `03-competitive-analysis.md` | `01-context-vision.md`, `02-product-scope.md`, `11-monetization.md`, `13-roadmap.md`, `45-future-enhancements.md` | `01-context-vision.md`, `02-product-scope.md`, `11-monetization.md`, `33-third-party-integration.md`, `45-future-enhancements.md` |
+| `04-user-stories.md` | `01-context-vision.md`, `02-product-scope.md`, `05-data-sync.md`, `06-technical-architecture.md`, `08-ux-onboarding.md`, `09-ux-configuration.md`, `12-trial-subscription.md`, `13-roadmap.md`, `14-qa-testing.md` | `02-product-scope.md`, `08-ux-onboarding.md`, `09-ux-configuration.md`, `12-trial-subscription.md`, `13-roadmap.md`, `14-qa-testing.md`, `53-gamification.md`, `54-social-sharing.md` |
+| `05-data-sync.md` | `01-context-vision.md`, `02-product-scope.md`, `06-technical-architecture.md`, `07-apis-integration.md`, `16-performance-optimization.md`, `17-error-handling.md`, `30-sync-mapping.md`, `31-historical-data.md`, `40-error-recovery.md` | `04-user-stories.md`, `06-technical-architecture.md`, `07-apis-integration.md`, `09-ux-configuration.md`, `17-error-handling.md`, `29-notifications-alerts.md`, `30-sync-mapping.md`, `35-data-import.md`, `39-performance-metrics.md` |
+| `06-technical-architecture.md` | `01-context-vision.md`, `02-product-scope.md`, `05-data-sync.md`, `07-apis-integration.md`, `08-ux-onboarding.md`, `09-ux-configuration.md`, `14-qa-testing.md`, `15-integration-testing.md`, `17-error-handling.md`, `18-backup-recovery.md`, `19-security-privacy.md`, `21-risks.md`, `25-release-management.md`, `30-sync-mapping.md`, `31-historical-data.md`, `33-third-party-integration.md`, `34-data-export.md`, `35-data-import.md`, `39-performance-metrics.md`, `44-contingency-planning.md`, `45-future-enhancements.md`, `66-costs-model.md` | `04-user-stories.md`, `05-data-sync.md`, `07-apis-integration.md`, `14-qa-testing.md`, `15-integration-testing.md`, `17-error-handling.md`, `18-backup-recovery.md`, `19-security-privacy.md`, `30-sync-mapping.md`, `44-contingency-planning.md`, `46-user-authentication.md`, `50-payment-gateway-integration.md` |
+| `07-apis-integration.md` | `05-data-sync.md`, `06-technical-architecture.md`, `15-integration-testing.md`, `19-security-privacy.md`, `20-compliance-regulatory.md`, `21-risks.md`, `32-platform-limitations.md`, `33-third-party-integration.md`, `40-error-recovery.md` | `05-data-sync.md`, `06-technical-architecture.md`, `08-ux-onboarding.md`, `15-integration-testing.md`, `19-security-privacy.md`, `20-compliance-regulatory.md`, `30-sync-mapping.md`, `33-third-party-integration.md` |
+| `08-ux-onboarding.md` | `01-context-vision.md`, `02-product-scope.md`, `04-user-stories.md`, `07-apis-integration.md`, `12-trial-subscription.md`, `24-user-support.md`, `37-onboarding-tutorials.md`, `38-ux-flow-diagrams.md` | `04-user-stories.md`, `06-technical-architecture.md`, `12-trial-subscription.md`, `20-compliance-regulatory.md`, `29-notifications-alerts.md`, `38-ux-flow-diagrams.md`, `46-user-authentication.md`, `49-subscription-management.md`, `51-push-notifications.md`, `60-brand-assets.md` |
+| `09-ux-configuration.md` | `02-product-scope.md`, `04-user-stories.md`, `05-data-sync.md`, `10-ux-feedback.md`, `28-accessibility.md`, `32-platform-limitations.md`, `36-user-privacy-settings.md`, `38-ux-flow-diagrams.md`, `40-error-recovery.md` | `04-user-stories.md`, `06-technical-architecture.md`, `38-ux-flow-diagrams.md` |
+| `10-ux-feedback.md` | _None_ | `09-ux-configuration.md`, `13-roadmap.md`, `42-customer-feedback.md` |
+| `11-monetization.md` | `01-context-vision.md`, `02-product-scope.md`, `03-competitive-analysis.md`, `12-trial-subscription.md`, `13-roadmap.md`, `23-analytics.md`, `41-metrics-dashboards.md` | `01-context-vision.md`, `03-competitive-analysis.md`, `12-trial-subscription.md`, `20-compliance-regulatory.md`, `23-analytics.md`, `45-future-enhancements.md`, `49-subscription-management.md`, `50-payment-gateway-integration.md`, `57-app-analytics.md`, `59-legal-and-compliance.md` |
+| `12-trial-subscription.md` | `04-user-stories.md`, `08-ux-onboarding.md`, `11-monetization.md`, `23-analytics.md`, `29-notifications-alerts.md`, `38-ux-flow-diagrams.md`, `41-metrics-dashboards.md` | `04-user-stories.md`, `08-ux-onboarding.md`, `11-monetization.md`, `29-notifications-alerts.md`, `38-ux-flow-diagrams.md`, `49-subscription-management.md` |
+| `13-roadmap.md` | `01-context-vision.md`, `02-product-scope.md`, `04-user-stories.md`, `10-ux-feedback.md`, `25-release-management.md`, `33-third-party-integration.md`, `42-customer-feedback.md`, `45-future-enhancements.md` | `01-context-vision.md`, `02-product-scope.md`, `03-competitive-analysis.md`, `04-user-stories.md`, `11-monetization.md`, `21-risks.md`, `22-maintenance.md`, `23-analytics.md`, `25-release-management.md`, `33-third-party-integration.md`, `42-customer-feedback.md`, `45-future-enhancements.md` |
+| `14-qa-testing.md` | `02-product-scope.md`, `04-user-stories.md`, `06-technical-architecture.md`, `15-integration-testing.md`, `16-performance-optimization.md`, `17-error-handling.md`, `22-maintenance.md`, `25-release-management.md`, `28-accessibility.md` | `04-user-stories.md`, `06-technical-architecture.md`, `15-integration-testing.md`, `17-error-handling.md`, `25-release-management.md`, `30-sync-mapping.md`, `34-data-export.md`, `35-data-import.md`, `38-ux-flow-diagrams.md` |
+| `15-integration-testing.md` | `06-technical-architecture.md`, `07-apis-integration.md`, `14-qa-testing.md`, `25-release-management.md`, `30-sync-mapping.md`, `44-contingency-planning.md` | `06-technical-architecture.md`, `07-apis-integration.md`, `14-qa-testing.md` |
+| `16-performance-optimization.md` | _None_ | `05-data-sync.md`, `14-qa-testing.md`, `39-performance-metrics.md` |
+| `17-error-handling.md` | `05-data-sync.md`, `06-technical-architecture.md`, `14-qa-testing.md`, `22-maintenance.md`, `24-user-support.md`, `40-error-recovery.md`, `41-metrics-dashboards.md` | `05-data-sync.md`, `06-technical-architecture.md`, `14-qa-testing.md`, `19-security-privacy.md`, `22-maintenance.md`, `29-notifications-alerts.md`, `35-data-import.md`, `38-ux-flow-diagrams.md` |
+| `18-backup-recovery.md` | `06-technical-architecture.md`, `19-security-privacy.md`, `22-maintenance.md`, `44-contingency-planning.md` | `06-technical-architecture.md`, `19-security-privacy.md`, `36-user-privacy-settings.md`, `44-contingency-planning.md` |
+| `19-security-privacy.md` | `01-context-vision.md`, `06-technical-architecture.md`, `07-apis-integration.md`, `17-error-handling.md`, `18-backup-recovery.md`, `20-compliance-regulatory.md`, `36-user-privacy-settings.md` | `06-technical-architecture.md`, `07-apis-integration.md`, `18-backup-recovery.md`, `20-compliance-regulatory.md`, `23-analytics.md`, `34-data-export.md`, `36-user-privacy-settings.md`, `44-contingency-planning.md`, `46-user-authentication.md`, `48-data-deletion-policy.md`, `50-payment-gateway-integration.md`, `54-social-sharing.md`, `59-legal-and-compliance.md` |
+| `20-compliance-regulatory.md` | `07-apis-integration.md`, `08-ux-onboarding.md`, `11-monetization.md`, `19-security-privacy.md`, `21-risks.md`, `25-release-management.md`, `36-user-privacy-settings.md` | `07-apis-integration.md`, `19-security-privacy.md`, `36-user-privacy-settings.md`, `48-data-deletion-policy.md`, `59-legal-and-compliance.md` |
+| `21-risks.md` | `01-context-vision.md`, `13-roadmap.md`, `22-maintenance.md`, `44-contingency-planning.md` | `02-product-scope.md`, `06-technical-architecture.md`, `07-apis-integration.md`, `20-compliance-regulatory.md`, `22-maintenance.md`, `29-notifications-alerts.md`, `33-third-party-integration.md`, `44-contingency-planning.md` |
+| `22-maintenance.md` | `13-roadmap.md`, `17-error-handling.md`, `21-risks.md`, `24-user-support.md`, `25-release-management.md`, `41-metrics-dashboards.md`, `44-contingency-planning.md` | `14-qa-testing.md`, `17-error-handling.md`, `18-backup-recovery.md`, `21-risks.md`, `25-release-management.md`, `39-performance-metrics.md`, `44-contingency-planning.md`, `65-incident-response.md` |
+| `23-analytics.md` | `01-context-vision.md`, `11-monetization.md`, `13-roadmap.md`, `19-security-privacy.md`, `41-metrics-dashboards.md` | `11-monetization.md`, `12-trial-subscription.md`, `36-user-privacy-settings.md`, `39-performance-metrics.md`, `53-gamification.md`, `57-app-analytics.md` |
+| `24-user-support.md` | _None_ | `08-ux-onboarding.md`, `17-error-handling.md`, `22-maintenance.md`, `42-customer-feedback.md`, `44-contingency-planning.md`, `48-data-deletion-policy.md`, `65-incident-response.md` |
+| `25-release-management.md` | `13-roadmap.md`, `14-qa-testing.md`, `22-maintenance.md`, `42-customer-feedback.md`, `43-changelog.md`, `44-contingency-planning.md` | `06-technical-architecture.md`, `13-roadmap.md`, `14-qa-testing.md`, `15-integration-testing.md`, `20-compliance-regulatory.md`, `22-maintenance.md`, `33-third-party-integration.md`, `39-performance-metrics.md` |
+| `28-accessibility.md` | _None_ | `09-ux-configuration.md`, `14-qa-testing.md` |
+| `29-notifications-alerts.md` | `05-data-sync.md`, `08-ux-onboarding.md`, `12-trial-subscription.md`, `17-error-handling.md`, `21-risks.md`, `42-customer-feedback.md` | `12-trial-subscription.md`, `49-subscription-management.md`, `51-push-notifications.md` |
+| `30-sync-mapping.md` | `05-data-sync.md`, `06-technical-architecture.md`, `07-apis-integration.md`, `14-qa-testing.md`, `31-historical-data.md`, `32-platform-limitations.md`, `33-third-party-integration.md` | `05-data-sync.md`, `06-technical-architecture.md`, `15-integration-testing.md`, `34-data-export.md`, `35-data-import.md` |
+| `31-historical-data.md` | _None_ | `05-data-sync.md`, `06-technical-architecture.md`, `30-sync-mapping.md` |
+| `32-platform-limitations.md` | _None_ | `07-apis-integration.md`, `09-ux-configuration.md`, `30-sync-mapping.md`, `33-third-party-integration.md`, `35-data-import.md` |
+| `33-third-party-integration.md` | `03-competitive-analysis.md`, `07-apis-integration.md`, `13-roadmap.md`, `21-risks.md`, `25-release-management.md`, `32-platform-limitations.md`, `42-customer-feedback.md` | `06-technical-architecture.md`, `07-apis-integration.md`, `13-roadmap.md`, `30-sync-mapping.md`, `42-customer-feedback.md` |
+| `33a-firebase-exit-strategy.md` | _None_ | _None_ |
+| `34-data-export.md` | `14-qa-testing.md`, `19-security-privacy.md`, `30-sync-mapping.md`, `35-data-import.md`, `36-user-privacy-settings.md` | `06-technical-architecture.md`, `35-data-import.md`, `36-user-privacy-settings.md` |
+| `35-data-import.md` | `05-data-sync.md`, `14-qa-testing.md`, `17-error-handling.md`, `30-sync-mapping.md`, `32-platform-limitations.md`, `34-data-export.md` | `06-technical-architecture.md`, `34-data-export.md` |
+| `36-user-privacy-settings.md` | `18-backup-recovery.md`, `19-security-privacy.md`, `20-compliance-regulatory.md`, `23-analytics.md`, `34-data-export.md` | `09-ux-configuration.md`, `19-security-privacy.md`, `20-compliance-regulatory.md`, `34-data-export.md`, `46-user-authentication.md`, `47-user-profile-management.md`, `51-push-notifications.md` |
+| `37-onboarding-tutorials.md` | _None_ | `08-ux-onboarding.md` |
+| `38-ux-flow-diagrams.md` | `08-ux-onboarding.md`, `09-ux-configuration.md`, `12-trial-subscription.md`, `14-qa-testing.md`, `17-error-handling.md` | `08-ux-onboarding.md`, `09-ux-configuration.md`, `12-trial-subscription.md` |
+| `39-performance-metrics.md` | `05-data-sync.md`, `16-performance-optimization.md`, `22-maintenance.md`, `23-analytics.md`, `25-release-management.md`, `41-metrics-dashboards.md` | `06-technical-architecture.md` |
+| `40-error-recovery.md` | _None_ | `05-data-sync.md`, `07-apis-integration.md`, `09-ux-configuration.md`, `17-error-handling.md` |
+| `41-metrics-dashboards.md` | _None_ | `11-monetization.md`, `12-trial-subscription.md`, `17-error-handling.md`, `22-maintenance.md`, `23-analytics.md`, `39-performance-metrics.md`, `42-customer-feedback.md`, `57-app-analytics.md` |
+| `42-customer-feedback.md` | `10-ux-feedback.md`, `13-roadmap.md`, `24-user-support.md`, `33-third-party-integration.md`, `41-metrics-dashboards.md`, `43-changelog.md` | `13-roadmap.md`, `25-release-management.md`, `29-notifications-alerts.md`, `33-third-party-integration.md`, `45-future-enhancements.md` |
+| `43-changelog.md` | _None_ | `25-release-management.md`, `42-customer-feedback.md` |
+| `44-contingency-planning.md` | `06-technical-architecture.md`, `18-backup-recovery.md`, `19-security-privacy.md`, `21-risks.md`, `22-maintenance.md`, `24-user-support.md` | `06-technical-architecture.md`, `15-integration-testing.md`, `18-backup-recovery.md`, `21-risks.md`, `22-maintenance.md`, `25-release-management.md`, `65-incident-response.md` |
+| `45-future-enhancements.md` | `01-context-vision.md`, `03-competitive-analysis.md`, `11-monetization.md`, `13-roadmap.md`, `42-customer-feedback.md` | `01-context-vision.md`, `02-product-scope.md`, `03-competitive-analysis.md`, `06-technical-architecture.md`, `13-roadmap.md` |
+| `46-user-authentication.md` | `06-technical-architecture.md`, `08-ux-onboarding.md`, `19-security-privacy.md`, `36-user-privacy-settings.md` | `47-user-profile-management.md` |
+| `47-user-profile-management.md` | `36-user-privacy-settings.md`, `46-user-authentication.md`, `48-data-deletion-policy.md`, `54-social-sharing.md`, `57-app-analytics.md` | `48-data-deletion-policy.md`, `54-social-sharing.md` |
+| `48-data-deletion-policy.md` | `19-security-privacy.md`, `20-compliance-regulatory.md`, `24-user-support.md`, `47-user-profile-management.md`, `65-incident-response.md` | `47-user-profile-management.md`, `57-app-analytics.md`, `59-legal-and-compliance.md` |
+| `49-subscription-management.md` | `08-ux-onboarding.md`, `11-monetization.md`, `12-trial-subscription.md`, `29-notifications-alerts.md`, `50-payment-gateway-integration.md` | `50-payment-gateway-integration.md` |
+| `50-payment-gateway-integration.md` | `06-technical-architecture.md`, `11-monetization.md`, `19-security-privacy.md`, `49-subscription-management.md` | `49-subscription-management.md` |
+| `51-push-notifications.md` | `08-ux-onboarding.md`, `29-notifications-alerts.md`, `36-user-privacy-settings.md`, `52-in-app-messaging.md`, `53-gamification.md`, `57-app-analytics.md` | `53-gamification.md` |
+| `52-in-app-messaging.md` | _None_ | `51-push-notifications.md` |
+| `53-gamification.md` | `04-user-stories.md`, `23-analytics.md`, `51-push-notifications.md`, `54-social-sharing.md`, `57-app-analytics.md`, `60-brand-assets.md` | `51-push-notifications.md`, `54-social-sharing.md` |
+| `54-social-sharing.md` | `04-user-stories.md`, `19-security-privacy.md`, `47-user-profile-management.md`, `53-gamification.md`, `60-brand-assets.md` | `47-user-profile-management.md`, `53-gamification.md`, `60-brand-assets.md` |
+| `56-ab-testing-framework.md` | _None_ | `57-app-analytics.md` |
+| `57-app-analytics.md` | `11-monetization.md`, `23-analytics.md`, `41-metrics-dashboards.md`, `48-data-deletion-policy.md`, `56-ab-testing-framework.md` | `47-user-profile-management.md`, `51-push-notifications.md`, `53-gamification.md` |
+| `58-marketing-and-seo.md` | _None_ | `60-brand-assets.md` |
+| `59-legal-and-compliance.md` | `11-monetization.md`, `19-security-privacy.md`, `20-compliance-regulatory.md`, `48-data-deletion-policy.md` | _None_ |
+| `60-brand-assets.md` | `01-context-vision.md`, `08-ux-onboarding.md`, `54-social-sharing.md`, `58-marketing-and-seo.md` | `53-gamification.md`, `54-social-sharing.md` |
+| `64-server-monitoring.md` | _None_ | `65-incident-response.md` |
+| `65-incident-response.md` | `22-maintenance.md`, `24-user-support.md`, `44-contingency-planning.md`, `64-server-monitoring.md` | `48-data-deletion-policy.md` |
+| `66-costs-model.md` | _None_ | `06-technical-architecture.md` |
+| `66-costs-model_summary.md` | _None_ | _None_ |
+| `GLOSSARY.md` | _None_ | `01-context-vision.md` |
+| `README.md` | _None_ | _None_ |
+| `feature_events.md` | _None_ | _None_ |

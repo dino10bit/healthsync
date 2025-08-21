@@ -1,6 +1,6 @@
 # Cost Model Assumptions
 
-This document lists the key assumptions used to generate the cost models and financial projections in `docs/costs/66-costs-model.md`.
+This document lists the key assumptions used to generate the cost models and financial projections in `./66-costs-model_summary.md`.
 
 ## I. Workload & Load Assumptions
 

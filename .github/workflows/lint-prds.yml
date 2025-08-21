@@ -1,0 +1,28 @@
+name: Lint PRD Documents
+
+on:
+  pull_request:
+    paths:
+      - 'docs/prd/**.md'
+
+jobs:
+  lint-prds:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install linter (placeholder)
+        run: pip install markdownlint-cli
+
+      - name: Run PRD Linter (placeholder)
+        run: |
+          echo "Linting all modified PRD files..."
+          # In a real workflow, you would target only the changed files.
+          # This is a placeholder that lints all files in the directory.
+          markdownlint docs/prd/
