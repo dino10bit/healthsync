@@ -299,10 +299,10 @@ To provide a near real-time user experience and dramatically reduce costs, the a
     4.  **Coalescing Logic:**
         *   When the `CoalescingTriggerLambda` is invoked, it will receive a batch of messages from the SQS queue.
         *   It will iterate through the messages, extracting the `userId` from each.
-        *   Using a local `Set` to track unique user IDs within the batch, it will publish a single, consolidated `SyncRequest` event to the primary EventBridge bus for each unique user.
-        *   This ensures that even if 10 webhook events for a single user were received in the 60-second window, only one `SyncRequest` event is published.
-    5.  **Execution:** The consolidated event is routed to the SQS queue (`HotPathSyncQueue`) and processed by the standard "Hot Path" architecture.
-*   **Advantage:** This model directly attacks the "event chatter" identified as a key cost driver in the financial model. By relying on native SQS FIFO features for buffering and deduplication, it provides a simpler, more robust, and more cost-effective solution compared to a custom implementation using Redis. It significantly reduces the volume of downstream EventBridge events and SQS messages.
+        *   Using a local `Set` to track unique user IDs within the batch, it will send a single, consolidated `SyncRequest` message directly to the **`HotPathSyncQueue`** for each unique user. This is a key MVP cost optimization.
+        *   This ensures that even if 10 webhook events for a single user were received in the 60-second window, only one sync message is sent.
+    5.  **Execution:** The consolidated message is now in the `HotPathSyncQueue` and is processed by the standard "Hot Path" architecture.
+*   **Advantage:** This model directly attacks the "event chatter" identified as a key cost driver in the financial model. By having the `CoalescingTriggerLambda` send its message directly to the `HotPathSyncQueue`, it bypasses EventBridge, reducing both latency and cost for the MVP. This direct integration pattern mirrors the one used by API Gateway for maximum efficiency. It relies on native SQS FIFO features for buffering and deduplication, providing a simpler, more robust, and more cost-effective solution compared to a custom implementation using Redis. It significantly reduces the volume of downstream SQS messages.
 
 ## 3a. Unified End-to-End Idempotency Strategy
 
@@ -1067,7 +1067,7 @@ graph TD
 
 ```mermaid
 ---
-title: "Container Diagram for SyncWell (MVP, v1.4 as of 2025-08-21)<br>Note: This diagram is aligned with the architecture defined in the text."
+title: "Container Diagram for SyncWell (MVP, v1.3 as of 2025-08-22)<br>Note: This diagram is aligned with the architecture defined in the text."
 ---
 graph TD
     subgraph "User's Device"
@@ -1095,6 +1095,7 @@ graph TD
         SecretsManager[Secrets Manager]
         Observability["CloudWatch Suite"]
         AppConfig[AWS AppConfig]
+        GlueRegistry[AWS Glue Schema Registry]
 
         subgraph "VPC"
             style VPC fill:#f5f5f5,stroke:#333
@@ -1124,18 +1125,21 @@ graph TD
 
     %% --- WebSocket Flow ---
     WebSocketApi -- "Routes sync requests to" --> SyncOverSocketLambda
+    SyncOverSocketLambda -- "Reads/writes state" --> DynamoDB
+    SyncOverSocketLambda -- "Reads/writes cache" --> ElastiCache
+    SyncOverSocketLambda -- "Gets credentials" --> SecretsManager
 
     %% --- REST API Ingress Flows ---
     RestApi -- "Validates JWT with" --> AuthorizerLambda
     AuthorizerLambda -- "Fetches public keys from" --> FirebaseAuth
+    AuthorizerLambda -- "Caches public keys in" --> ElastiCache
     RestApi -- "<b>Direct Integration (Hot Path)</b>" --> HotPathSyncQueue
     ThirdPartyAPIs -- "Sends Webhook -->" --> RestApi
     RestApi -- "Routes Webhook to" --> CoalescingBufferQueue
 
     %% --- Event Coalescing Flow ---
     CoalescingBufferQueue -- "Triggers" --> CoalescingTriggerLambda
-    CoalescingTriggerLambda -- "Publishes coalesced event to" --> HotPathEventBus
-    HotPathEventBus -- "Rule routes to" --> HotPathSyncQueue
+    CoalescingTriggerLambda -- "Sends coalesced message directly to" --> HotPathSyncQueue
 
     %% --- Core Worker Flow ---
     HotPathSyncQueue -- "Triggers" --> WorkerLambda
@@ -1146,6 +1150,7 @@ graph TD
     WorkerLambda -- "Reads/Writes cache" --> ElastiCache
     WorkerLambda -- "Logs & Metrics" --> Observability
     WorkerLambda -- "Fetches runtime config" --> AppConfig
+    WorkerLambda -- "Validates schemas with" --> GlueRegistry
 
     %% --- Hybrid Egress Flow ---
     subgraph "Hybrid Egress"
