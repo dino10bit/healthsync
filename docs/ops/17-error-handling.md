@@ -54,7 +54,7 @@ The backend's error handling strategy is designed for maximum resilience and mes
 The mobile app will maintain a local, rotating log file with structured JSON entries. The log file will rotate when it reaches **5MB**, and a maximum of **3 rotated files** will be kept.
 
 #### Backend Logging
-All backend services will output structured JSON logs to **AWS CloudWatch Logs** using **AWS Lambda Powertools**.
+All backend services will output structured JSON logs to **AWS CloudWatch Logs**. A common logging library, based on the patterns from AWS Powertools, will be used across the backend (including in Fargate tasks and Lambda functions) to enforce this standard.
 
 **Example Log Entry:**
 ```json

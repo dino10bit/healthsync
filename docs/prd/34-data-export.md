@@ -38,14 +38,17 @@ The user experience is designed to be simple and asynchronous.
 
 ## 3. Technical Architecture (Orchestrated by AWS Step Functions)
 
-To robustly handle a potentially long-running and multi-step process, the Data Export feature will be orchestrated by a dedicated **AWS Step Functions state machine** (`DataExport`). This aligns with the architecture for Historical Syncs, promoting architectural consistency, reliability, and observability.
+To robustly handle a potentially long-running and multi-step process, the Data Export feature will be orchestrated by a dedicated **AWS Step Functions state machine** (`DataExport`). This aligns with the "Cold Path" architecture for Historical Syncs, promoting architectural consistency, reliability, and observability. The workflow is as follows:
 
-1.  **Initiation (API):** The mobile app calls `POST /v1/export-jobs`. The API Gateway triggers a new execution of the `DataExport` state machine, passing in the user's parameters.
-2.  **State Machine Execution (Backend):** The state machine manages the entire workflow:
-    *   **a. Fetch Data in Chunks:** The first step breaks the requested date range into manageable **30-day chunks**. A `Map` state processes these chunks in parallel, invoking a **Fargate task** for each to fetch data and store it temporarily in a secure S3 bucket: `s3://syncwell-prod-data-exports-temp/{jobId}/`. This bucket has a **24-hour lifecycle policy**.
-    *   **b. Consolidate & Format:** Once all data is fetched, a single, larger **Fargate task** consolidates the temporary data. It uses internal `Exporter` modules (internal, format-specific libraries implementing a common `IExporter` interface) to format the data.
-    *   **c. Compress & Store:** The formatted files are compressed into a single `.zip` archive and uploaded to the final, secure S3 bucket (`s3://syncwell-prod-data-exports-final/`).
-    *   **d. Finalize & Notify:** A final, lightweight Lambda function updates the `DataExportJob` table in DynamoDB with the `COMPLETED` status and the secure, time-limited S3 download URL. It then publishes an event to SNS to trigger the push notification to the user.
+1.  **Initiation (API):** The mobile app calls `POST /v1/export-jobs`. The API Gateway validates the request and triggers a new execution of the `DataExport` state machine, passing in the user's parameters and a unique `Idempotency-Key`. The idempotency strategy for Step Functions executions is defined in `../architecture/06-technical-architecture.md`.
+
+2.  **State Machine Execution (Backend):** The state machine manages the entire workflow, which is composed of both parallel and sequential steps:
+    *   **a. Validate & Prepare:** A lightweight Lambda function validates the export parameters and creates the initial job record in the `SyncWellExportJobs` DynamoDB table.
+    *   **b. Fetch Data in Chunks (Parallel):** A `Map` state processes the requested date range in parallel. It breaks the range into manageable **30-day chunks** and invokes a **Fargate task** for each chunk. This task fetches the relevant data and stores it in a temporary, format-specific location in S3 (e.g., `s3://syncwell-prod-data-exports-temp/{jobId}/chunk-1/`). This S3 bucket has a strict **24-hour lifecycle policy** to manage costs and data retention.
+    *   **c. Consolidate & Format (Sequential):** After the `Map` state completes successfully, a single, larger **Fargate task** is invoked. It consolidates all the temporary data chunks from S3. It then uses internal `Exporter` modules (internal, format-specific libraries implementing a common `IExporter` interface) to format the data into the final specified file formats.
+    *   **d. Compress & Store (Sequential):** The same Fargate task then compresses the formatted files into a single `.zip` archive and uploads it to the final, secure S3 bucket (`s3://syncwell-prod-data-exports-final/`).
+    *   **e. Finalize & Notify (Sequential):** A final lightweight Lambda function updates the `DataExportJob` table in DynamoDB with the `COMPLETED` status and the secure, time-limited S3 download URL. It then publishes an event to SNS to trigger the `N-07` push notification to the user.
+    *   **f. Error Handling:** The state machine has a global `Catch` block that routes any terminal failure from any step to a dedicated error-handling Lambda. This Lambda updates the job's status to `FAILED` in DynamoDB and triggers the appropriate failure notification to the user.
 
 ### 3.1. DynamoDB Job Table
 
@@ -97,7 +100,7 @@ graph TD
         C[Step Functions<br>DataExport State Machine]
         D[Fetch Data Chunks (Fargate)]
         E[Consolidate & Format (Fargate)]
-        F[Compress & Store (Lambda)]
+        F[Compress & Store (Fargate)]
         G[Finalize & Notify (Lambda)]
         H[S3 for Exports]
         J[SNS]
@@ -129,7 +132,7 @@ graph TD
         C[Step Functions<br>DataExport State Machine]
         D[Fetch Data Chunks (Fargate)]
         E[Consolidate & Format (Fargate)]
-        F[Compress & Store (Lambda)]
+        F[Compress & Store (Fargate)]
         G[Finalize & Notify (Lambda)]
         H[S3 for Exports]
         J[SNS]

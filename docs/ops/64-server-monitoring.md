@@ -37,7 +37,7 @@ This is how we apply the golden signals to our key services.
 
 ### 3.1. Metrics Collection Architecture
 -   **Method:** We will use the AWS CloudWatch Embedded Metric Format (EMF).
--   **Process:** Our Lambda functions will write a single, structured JSON object to standard output. This JSON object contains both the log message and the metrics to be extracted (e.g., `_aws: { "CloudWatchMetrics": [...] }`).
+-   **Process:** Our compute services (Fargate tasks, Lambda functions) will write a single, structured JSON object to standard output. This JSON object contains both the log message and the metrics to be extracted (e.g., `_aws: { "CloudWatchMetrics": [...] }`).
 -   **Benefit:** This is highly efficient, as it allows us to generate custom metrics from logs with a single CloudWatch PutLogEvents call, reducing cost and code complexity.
 
 ### 3.2. Structured Logging Deep Dive
@@ -51,7 +51,7 @@ This is how we apply the golden signals to our key services.
 -   **Benefit:** This allows us to use CloudWatch Logs Insights to run powerful SQL-like queries on our logs (e.g., `fields @timestamp, message | filter level = 'ERROR' and service = 'sync-service'`).
 
 ### 3.3. Distributed Tracing Deep Dive (AWS X-Ray)
--   **Propagation:** The API Gateway will generate a trace ID (`X-Amzn-Trace-Id`) for each incoming request. All downstream services (Lambda functions, etc.) must be configured to receive this header and propagate it in any subsequent network calls.
+-   **Propagation:** The API Gateway will generate a trace ID (`X-Amzn-Trace-Id`) for each incoming request. All downstream services (Fargate tasks, Lambda functions, etc.) must be configured to receive this header and propagate it in any subsequent network calls.
 -   **Custom Annotations:** We will add custom annotations to our traces to aid debugging. For example, a sync worker will add annotations for `provider` and `dataType`. This allows us to filter traces in X-Ray for all syncs related to a specific provider.
 
 ## 4. Alerting & On-Call

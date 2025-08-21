@@ -102,7 +102,7 @@ Each notification type has a specific goal tied to a business KPI.
         -   100,000 active users.
         -   On average, 2 error notifications (PN-02) and 1 marketing notification (PN-03) are sent per user per month.
         -   Total notifications per month = 100,000 users * 3 notifications/user = 300,000.
-        -   Each notification trigger is one AWS invocation (e.g., from a Fargate task or Lambda).
+        -   Each notification trigger is one AWS invocation from a backend compute service (e.g., a Fargate task for a completed sync, or a Lambda function for a Step Functions event).
     -   *Calculation:* The cost of the triggering compute is considered negligible, as it is part of a larger task's execution.
     -   *Conclusion:* The cost of the infrastructure to send push notifications is expected to be **$0**, as it will fall entirely within the AWS free tier at our projected scale.
 
