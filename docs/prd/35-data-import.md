@@ -1,118 +1,89 @@
 ---
-title: "PRD Section 35: Data Import Feature"
+title: "PRD: Data Import"
 migrated: true
 ---
 ## Dependencies
 
 ### Core Dependencies
-- `30-sync-mapping.md` - Source-Destination Sync Mapping
-- `34-data-export.md` - Data Export Feature
-- `05-data-sync.md` - Data Sync & Conflict Resolution
+- `../architecture/30-sync-mapping.md` - Source-Destination Sync Mapping
+- `./34-data-export.md` - Data Export Feature
+- `../architecture/05-data-sync.md` - Data Sync & Conflict Resolution
 
 ### Strategic / Indirect Dependencies
-- `14-qa-testing.md` - QA & Testing Strategy
-- `17-error-handling.md` - Error Handling, Logging & Monitoring
-- `32-platform-limitations.md` - Platform-Specific Limitations
+- `../qa/14-qa-testing.md` - QA & Testing Strategy
+- `../ops/17-error-handling.md` - Error Handling, Logging & Monitoring
+- `./32-platform-limitations.md` - Platform-Specific Limitations
 
 ---
 
-# PRD Section 35: Data Import Feature
+# PRD: Data Import
 
 ## 1. Executive Summary
 
-This document provides the detailed specification for the **Data Import** feature. This feature allows users to import activity files (FIT, TCX, GPX), enabling them to bring in data from unsupported devices.
+This document provides the detailed specification for the **Data Import** feature. This feature allows users to import activity files (e.g., from a `.fit`, `.tcx`, or `.gpx` file), enabling them to bring in data from devices or services that SyncWell does not natively support (e.g., Wahoo, Coros, Suunto).
 
-To ensure reliability and consistency with the rest of our ecosystem, the import process is built on an **asynchronous, backend-driven architecture**. This specification details the process of uploading the file, having the backend parse and validate it, and then prompting the user for a final review before syncing.
+To ensure reliability, the import process is built on an **asynchronous, backend-driven architecture** using AWS Step Functions. This specification details the process of uploading the file, having the backend parse and validate it, and then prompting the user for a final review before syncing.
 
-## 2. Data Import Architecture (Orchestrated by AWS Step Functions)
+*   **Priority:** Should-Have (S-2)
+*   **Status:** Not Started
 
-The data import process is a multi-step workflow that includes waiting for user input. To manage this complexity reliably, the feature will be orchestrated by a dedicated **AWS Step Functions state machine**. This provides superior state management, error handling, and observability compared to an ad-hoc SQS-based approach.
+## 2. User Experience & Workflow
 
-1.  **Initiation & Upload (Mobile):** A user selects a file, and the mobile app uploads it to a secure S3 bucket.
-2.  **Start Execution (Mobile -> Backend):** The app calls an API endpoint that triggers a new execution of the `DataImport` state machine, providing the S3 URL of the uploaded file.
-3.  **State Machine Execution (Backend):**
-    *   **a. Parse & Validate:** A Lambda function downloads the file from S3 and uses a `Parser` to validate it and convert it into our `CanonicalActivity` model. If the file is corrupt, the state machine transitions to a `FAILED` state.
-    *   **b. Duplicate Check:** A second Lambda queries destination APIs to check for potential duplicates. See section 2.1 for details on the logic.
-    *   **c. Wait for User Review (Secure Token Swap):** The state machine saves the parsed data and enters a "wait" state using a **task token**. To avoid exposing this sensitive token to the client, the state machine will then call a `CreateSecureCallbackToken` Lambda. This function generates a new, single-use opaque token (e.g., a UUID), stores the mapping (`opaque_token` -> `real_task_token`) in DynamoDB with a short TTL (e.g., 7 days), and returns the **opaque token**. The state machine then triggers the `N-08` "Ready for Review" push notification, providing this opaque token to the client.
-    *   **d. User Confirmation (Mobile):** The user reviews the import in the app. When they confirm, the app sends the confirmation choices and the **opaque token** to a backend API.
-    *   **e. Resume Execution:** The backend API receives the opaque token, looks it up in the DynamoDB mapping table to retrieve the real task token, and then calls the `SendTaskSuccess` Step Functions API action. After successfully resuming the workflow, it deletes the mapping item from the table.
-    *   **f. Final Sync:** The final state in the machine places the approved sync job into the main `hot-queue` for processing by the standard sync workers.
-
-### 2.1. Duplicate Check Logic
-
-A key step in the import workflow is checking for potential duplicates to avoid corrupting the user's data. The `Check Duplicates` Lambda function will implement the following logic:
-
-1.  **Extract Key Identifiers:** The function will first extract the key identifiers from the parsed `CanonicalActivity` that was uploaded:
-    *   `activityType` (e.g., "RUNNING", "CYCLING")
-    *   `startTimestamp`
-    *   `endTimestamp`
-2.  **Query Destination Platforms:** For each potential destination platform the user might sync to, the function will call that platform's `DataProvider`.
-3.  **Time-based Query:** The `DataProvider` will be queried for any existing activities of the same `activityType` within a specific time window. The query range will be `[startTimestamp - 5 minutes, endTimestamp + 5 minutes]`. This 5-minute buffer accounts for small discrepancies in how different devices record start and end times.
-4.  **Flag Potential Duplicates:** If the `DataProvider` returns any activities within this time window, they will be flagged as potential duplicates.
-5.  **Pass to UI for Resolution:** The list of potential duplicates will be passed back to the Step Functions workflow and ultimately to the mobile client. The "Preview & Configure" screen will then display these potential duplicates to the user, allowing them to decide whether to skip the import or proceed. This "human-in-the-loop" approach is the safest way to handle potential data conflicts.
-
-This architecture provides a robust way to handle the human-in-the-loop part of the workflow, with built-in support for timeouts (e.g., after 7 days) if the user never confirms the import.
-
-## 3. User Experience & Workflow
-
-1.  **Initiation:** User opens a file with SyncWell.
-2.  **Upload:** The app shows a status: *"Uploading file..."*
-3.  **Processing:** The status updates: *"We're processing your file. We will notify you when it's ready for review."* The user can safely close the app.
-4.  **Review Notification:** The user receives a push notification.
-5.  **Preview & Configure Screen:** Tapping the notification opens a screen showing a summary of the parsed activity. Here, the user can:
+1.  **Initiation:** A user opens an activity file (e.g., from an email attachment) using the SyncWell mobile app.
+2.  **Upload:** The app shows a status indicator: **"Uploading file..."**
+3.  **Processing:** The status updates: **"Processing file... We'll notify you when it's ready for review."** The user can now safely close the app.
+4.  **Review Notification (`N-08`):** The user receives a push notification: **"Your imported file is ready for review."**
+5.  **Preview & Configure Screen:** Tapping the notification opens a screen showing a summary of the parsed activity (e.g., activity type, duration, distance). Here, the user can:
     *   Map any unrecognized activity types.
-    *   Select the destination(s).
-    *   Resolve any potential duplicates that the backend has flagged.
-6.  **Confirmation:** The user taps "Confirm Import." The data is then queued for syncing, and a confirmation message is shown.
+    *   Select the destination service(s) for the imported data.
+    *   Resolve any potential duplicates that the backend has flagged. [NEEDS_CLARIFICATION: UI/UX mockups for the duplicate resolution flow are required.]
+6.  **Confirmation:** The user taps "Confirm Import." The data is then queued for syncing, and a confirmation message is shown: **"Success! Your imported activity has been queued for syncing."**
 
-## 4. Import Limitations & User Communication
+## 3. Technical Architecture (Orchestrated by AWS Step Functions)
 
-*   **Activities Only:** The feature is exclusively for activity files (FIT, TCX, GPX).
-*   **Data Completeness:** The Preview screen must clearly indicate what data was found in the file.
-*   **Destination Limitations:** The destination selection UI will disable read-only platforms like Garmin.
+The data import process is a multi-step workflow that includes waiting for user input. To manage this complexity reliably, the feature will be orchestrated by a dedicated **AWS Step Functions state machine** (`DataImport`).
 
-## 5. Validation & Error Handling
+1.  **Initiation & Upload:** The mobile app uploads the user-selected file to a secure, private S3 bucket: `s3://syncwell-prod-data-imports/`.
+2.  **Start Execution:** The app calls an API endpoint that triggers a new execution of the `DataImport` state machine, providing the S3 URL of the uploaded file.
+3.  **State Machine Execution (Backend):**
+    *   **a. Parse & Validate:** A Fargate task downloads the file from S3 and uses a `Parser` module (provider-specific logic within the worker codebase) to validate it and convert it into our `CanonicalActivity` model. The `CanonicalActivity` schema is defined in `../architecture/06-technical-architecture.md`. If the file is corrupt, the state machine transitions to a `FAILED` state.
+    *   **b. Duplicate Check:** A second Fargate task queries destination APIs to check for potential duplicates.
+    *   **c. Wait for User Review (Secure Token Swap):** The state machine saves the parsed data and enters a "wait" state using a **task token**. To avoid exposing this sensitive token, it calls a `CreateSecureCallbackToken` Lambda (a lightweight Node.js function). This function generates a new, opaque token (UUID), stores the mapping in the `OpaqueTokenMapping` table in DynamoDB with a 7-day TTL, and returns the opaque token. The state machine then triggers the `N-08` push notification, providing this opaque token to the client. If the user does not respond within 7 days, the workflow will automatically time out and fail.
+    *   **d. User Confirmation:** The user confirms the import in the app. The app sends the confirmation and the opaque token to a backend API.
+    *   **e. Resume Execution:** The backend API looks up the opaque token to retrieve the real task token, then calls the `SendTaskSuccess` Step Functions API action. After successfully resuming the workflow, it deletes the mapping item from the table.
+    *   **f. Final Sync:** The final state in the machine places the approved sync job into the main `HotPathSyncQueue` for processing.
 
-*   **Backend Validation:** The `import-worker` is responsible for all validation.
-*   **File Corrupt:** If the `Parser` fails, the worker sets the job status to `FAILED` in DynamoDB with the error `FILE_CORRUPT`. The user is notified.
-*   **Missing Key Data:** If the file is missing required data (e.g., a start time), the job status is set to `FAILED` with the error `MISSING_DATA`.
-*   **Parser Unit Tests:** Each `Parser` module on the backend must have a comprehensive suite of unit tests in the CI/CD pipeline to prevent parsing regressions.
+### 3.1. Duplicate Check Logic
 
-## 6. Visual Diagrams
+1.  **Extract Identifiers:** The function extracts the `activityType`, `startTimestamp`, and `endTimestamp` from the parsed `CanonicalActivity`.
+2.  **Query Destination Platforms:** For each potential destination, the function queries the `DataProvider`.
+3.  **Time-based Query:** The `DataProvider` is queried for any existing activities of the same type within a specific time window: `[startTimestamp - 5 minutes, endTimestamp + 5 minutes]`. The 5-minute buffer accounts for potential clock drift between devices.
+4.  **Flag Potential Duplicates:** Any activities found are flagged as potential duplicates and sent to the mobile client for user resolution.
 
-### Import Architecture (Orchestrated by Step Functions)
-```mermaid
-graph TD
-    subgraph Mobile App
-        A[Upload File to S3]
-        B[Trigger State Machine]
-        G[Review & Confirm Import]
-    end
-    subgraph AWS Backend
-        C[Step Functions<br>Import State Machine]
-        D[Parse & Validate (Lambda)]
-        E[Check Duplicates (Lambda)]
-        F[Wait for User Review<br>(with Task Token)]
-        H[Queue Final Sync Job (Lambda)]
-        I[SQS Hot Queue]
-    end
+### 3.2. DynamoDB Opaque Token Mapping Table
 
-    A --> B
-    B --> C
-    C -- Invokes --> D
-    D -- Success --> E
-    E -- Success --> F
-    F -- Sends Notification --> G
-    G -- Send Confirmation w/ Task Token --> C
-    C -- Resumes --> H
-    H --> I
-```
+| Table Name | PK | TTL Attribute | Other Attributes |
+| :--- | :--- | :--- | :--- |
+| `OpaqueTokenMapping` | `opaque_token` (String) | `ttl` (Number) | `real_task_token` (String) |
 
-## 7. Security of Uploaded Files
+## 4. Validation & Error Handling
 
-To ensure the confidentiality and integrity of user-uploaded data, all files handled by the import feature are subject to the following security policies:
+*   **Backend Validation:** The `Parse & Validate` Fargate task is responsible for all validation.
+*   **`FILE_CORRUPT`:** If the `Parser` fails, the job status is set to `FAILED`. The user is notified: **"Import failed: The file appears to be corrupt or in an unsupported format."**
+*   **`MISSING_DATA`:** If the file is missing required data (e.g., a start time), the job status is set to `FAILED`. The user is notified: **"Import failed: The file is missing required data, such as a start time or duration."**
+*   **Parser Unit Tests:** Each `Parser` module must have a comprehensive suite of unit tests.
 
-*   **Secure Transport:** All files are uploaded from the mobile client to S3 over HTTPS (TLS 1.2+).
-*   **Encryption at Rest:** All files are stored in a dedicated, private S3 bucket. Server-Side Encryption with Amazon S3-Managed Keys (SSE-S3) is enabled on this bucket, so all objects are automatically encrypted at rest.
-*   **Strict Access Control:** The S3 bucket is configured to block all public access. Access is granted only to specific, authorized principals via IAM policies. The `Parse & Validate` Lambda function has a narrowly-scoped IAM role that grants it temporary, read-only access to the specific object it needs to process. No other services have access to the bucket.
-*   **Automatic Deletion (Lifecycle Policy):** A short-lived S3 lifecycle policy is configured on the bucket. This policy will automatically and permanently delete all uploaded files **24 hours** after they are created. This ensures that user data is not stored any longer than is absolutely necessary to complete the import process, adhering to the principle of data minimization.
+## 5. Risk Analysis
+
+| Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
+| :--- | :--- | :--- | :--- | :--- |
+| **R-81** | A bug in a file `Parser` causes data to be imported incorrectly. | Medium | High | Implement a comprehensive suite of unit tests for each parser, including "golden file" validation in the CI/CD pipeline. |
+| **R-82** | A malicious or malformed file exploits a vulnerability in a third-party parsing library. | Low | Critical | Keep all parsing libraries up-to-date and run automated dependency vulnerability scans (Snyk). Run the parsing logic in an isolated environment (Fargate). |
+| **R-83** | The duplicate detection logic is too aggressive or not aggressive enough, leading to a poor user experience. | Medium | Medium | The "human-in-the-loop" design is the primary mitigation. Make the 5-minute time window for the duplicate check configurable in AppConfig to allow for tuning. |
+
+## 6. Security of Uploaded Files
+
+*   **Secure Transport:** All files are uploaded over HTTPS.
+*   **Encryption at Rest:** All files are stored in the `s3://syncwell-prod-data-imports/` bucket with SSE-S3 encryption enabled.
+*   **Strict Access Control:** The S3 bucket blocks all public access. Access is granted only via IAM roles to specific services.
+*   **Automatic Deletion:** A lifecycle policy permanently deletes all uploaded files **24 hours** after creation.
