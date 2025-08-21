@@ -1067,7 +1067,7 @@ graph TD
 
 ```mermaid
 ---
-title: "Container Diagram for SyncWell (MVP, v1.3 as of 2025-08-22)"
+title: "Container Diagram for SyncWell (MVP, v1.4 as of 2025-08-21)<br>Note: This diagram is aligned with the architecture defined in the text."
 ---
 graph TD
     subgraph "User's Device"
@@ -1083,8 +1083,8 @@ graph TD
     end
 
     subgraph "AWS Cloud"
-        CloudFront[CloudFront CDN]
         S3Assets[S3 Bucket for Static Assets]
+        CloudFront[CloudFront CDN]
         WAF[AWS WAF]
         RestApi[REST API Gateway]
         WebSocketApi[WebSocket API Gateway]
@@ -1099,6 +1099,7 @@ graph TD
         subgraph "VPC"
             style VPC fill:#f5f5f5,stroke:#333
             NetworkFirewall[AWS Network Firewall]
+            NatGateway[NAT Gateway]
             subgraph "Private Subnets"
                 WorkerLambda["Worker Lambda"]
                 ElastiCache[ElastiCache for Redis]
@@ -1113,33 +1114,46 @@ graph TD
         end
     end
 
-    CloudFront -- "Serves content from" --> S3Assets
-    MobileApp -- "Fetches static assets from" --> CloudFront
+    %% --- Ingress and Static Content ---
     MobileApp -- "Signs up / signs in with" --> FirebaseAuth
-    MobileApp -- "Establishes connection with" --> WebSocketApi
-    WebSocketApi -- "Routes sync requests to" --> SyncOverSocketLambda
-    MobileApp -- "HTTPS Request (with Firebase JWT)" --> WAF
-    WAF -- "Filters traffic to" --> RestApi
+    MobileApp -- "API & WebSocket Requests" --> CloudFront
+    CloudFront -- "Protected by" --> WAF
+    CloudFront -- "Serves static assets from" --> S3Assets
+    CloudFront -- "Routes REST traffic to" --> RestApi
+    CloudFront -- "Routes WebSocket traffic to" --> WebSocketApi
 
+    %% --- WebSocket Flow ---
+    WebSocketApi -- "Routes sync requests to" --> SyncOverSocketLambda
+
+    %% --- REST API Ingress Flows ---
     RestApi -- "Validates JWT with" --> AuthorizerLambda
     AuthorizerLambda -- "Fetches public keys from" --> FirebaseAuth
-    RestApi -- "Publishes 'HotPathSyncRequested' event" --> HotPathSyncQueue
+    RestApi -- "<b>Direct Integration (Hot Path)</b>" --> HotPathSyncQueue
     ThirdPartyAPIs -- "Sends Webhook -->" --> RestApi
     RestApi -- "Routes Webhook to" --> CoalescingBufferQueue
+
+    %% --- Event Coalescing Flow ---
     CoalescingBufferQueue -- "Triggers" --> CoalescingTriggerLambda
     CoalescingTriggerLambda -- "Publishes coalesced event to" --> HotPathEventBus
-
     HotPathEventBus -- "Rule routes to" --> HotPathSyncQueue
+
+    %% --- Core Worker Flow ---
     HotPathSyncQueue -- "Triggers" --> WorkerLambda
     HotPathSyncQueue -- "On failure, redrives to" --> HotPathSyncDLQ
 
-    WorkerLambda -- "Reads/writes user state" --> DynamoDB
+    WorkerLambda -- "Reads/writes state" --> DynamoDB
     WorkerLambda -- "Gets credentials" --> SecretsManager
     WorkerLambda -- "Reads/Writes cache" --> ElastiCache
     WorkerLambda -- "Logs & Metrics" --> Observability
-    WorkerLambda -- "Fetches runtime config from" --> AppConfig
-    WorkerLambda -- "Makes outbound API calls via" --> NetworkFirewall
-    NetworkFirewall -- "Allow-listed traffic to" --> ThirdPartyAPIs
+    WorkerLambda -- "Fetches runtime config" --> AppConfig
+
+    %% --- Hybrid Egress Flow ---
+    subgraph "Hybrid Egress"
+        WorkerLambda -- "Trusted Partner APIs" --> NatGateway
+        WorkerLambda -- "Untrusted/Low-Volume APIs" --> NetworkFirewall
+    end
+    NatGateway -- "High-volume traffic" --> ThirdPartyAPIs
+    NetworkFirewall -- "Inspected traffic" --> ThirdPartyAPIs
 ```
 
 ### Diagram 3: ProviderManager Factory Pattern
