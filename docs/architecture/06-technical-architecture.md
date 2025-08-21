@@ -75,7 +75,7 @@ We will use the **C4 Model** as a framework to describe the architecture. The co
 
 ## 2. Architectural Model (C4)
 
-This document provides Level 1 (System Context), Level 2 (Containers), and Level 3 (Components) of the C4 model. Level 4 (Code) diagrams are considered out of scope for this high-level architectural document and are expected to exist within the source code repositories themselves.
+This document provides Level 1 (System Context), Level 2 (Containers), and Level 3 (Components) of the C4 model. Level 4 (Code) diagrams are considered out of scope for this high-level architectural document and are expected to exist within the source code repositories themselves. The following sections describe an architecture for an MVP, which requires balancing feature completeness with time-to-market, cost, and operational readiness. Key decisions are framed with this balance in mind, prioritizing a robust and scalable core while deferring some production-hardening optimizations to post-MVP phases.
 
 ### Level 1: System Context
 
@@ -109,7 +109,7 @@ Designs for post-MVP features like the "cold path" for historical syncs have bee
     *   **Description:** A decoupled, event-driven backend on AWS that uses a fleet of **AWS Lambda functions** for its core business logic to orchestrate all "Hot Path" syncs. This approach, detailed in Section 1's key architectural decision, provides extreme scalability and cost-effectiveness for the system's event-driven workload.
     *   The backend **must not** persist any raw user health data; this critical security requirement will be enforced via a dedicated test case in the QA plan (`../qa/14-qa-testing.md#TC-SEC-01`) and supplemented with automated static analysis rules to detect accidental persistence of sensitive data types. Any temporary diagnostic metadata containing user identifiers is stored in a secure, audited, time-limited index, as detailed in `../security/19-security-privacy.md`. Data is otherwise only processed ephemerally in memory during active sync jobs.
     *   **Technology:** AWS Lambda, API Gateway, **Amazon EventBridge**, **Amazon SQS**, DynamoDB.
-    *   **Responsibilities:** The API Layer (**API Gateway**) is responsible for initial request validation (e.g., format), authorization via the `AuthorizerLambda`, and routing requests to the appropriate backend service. It does not handle business-level validation like idempotency checks. To ensure maximum performance and cost-effectiveness, it will leverage **API Gateway's built-in caching for the Lambda Authorizer**. The authorizer's response (the IAM policy) will be cached based on the user's identity token for a **5-minute TTL**. For subsequent requests within this TTL, API Gateway will use the cached policy and will not invoke the `AuthorizerLambda`, dramatically reducing latency and cost.
+    *   **Responsibilities:** The API Layer (**API Gateway**) is responsible for initial request validation (e.g., format), authorization via the `AuthorizerLambda`, and routing requests to the appropriate backend service. It does not handle business-level validation like idempotency checks. To ensure maximum performance and cost-effectiveness, it will leverage **API Gateway's built-in caching for the Lambda Authorizer**. The authorizer's response (the IAM policy) will be cached based on the user's identity token for a **5-minute TTL**. For subsequent requests within this TTL, API Gateway will use the cached policy and will not invoke the `AuthorizerLambda`, dramatically reducing latency and cost. All communication between backend services is secured using granular, least-privilege IAM roles, ensuring a secure-by-default posture.
     *   **Risk:** This caching strategy introduces a known risk: if a user's permissions are revoked, they may retain access for up to the 5-minute TTL of the cached policy. Conversely, a user with newly granted permissions may have to wait up to 5 minutes for access. This trade-off is accepted to achieve the required API performance.
 
 4.  **Distributed Cache (Amazon ElastiCache for Redis)**
@@ -1102,7 +1102,7 @@ graph TD
             NetworkFirewall[AWS Network Firewall]
             NatGateway[NAT Gateway]
             subgraph "Private Subnets"
-                WorkerLambda["Worker Lambda"]
+                WorkerLambda["Worker Lambda<br><br><i>Note: Provisioned Concurrency is used<br>to mitigate cold starts (see Sec. 3b).</i>"]
                 ElastiCache[ElastiCache for Redis]
             end
         end
