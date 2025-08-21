@@ -1,0 +1,235 @@
+openapi: 3.0.3
+info:
+  title: SyncWell API Stub
+  description: |-
+    This is a stub OpenAPI 3.0 specification for the SyncWell API.
+    It has been automatically generated based on the PRD documents:
+    - 06-technical-architecture.md
+    - 07-apis-integration.md
+
+    **Note:** This is a skeleton and requires further refinement. It makes assumptions
+    about the exact schema definitions and error responses.
+  version: 1.0.0
+servers:
+  - url: https://api.syncwell.com/v1
+paths:
+  /connections:
+    get:
+      summary: Get User Connections
+      description: Retrieves a list of all third-party applications the user has connected.
+      responses:
+        '200':
+          description: A list of connections.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionsResponse'
+  /connections/{connectionId}:
+    delete:
+      summary: De-authorize a Connection
+      description: |-
+        De-authorizes a specific third-party connection. This action is irreversible.
+        It will revoke the stored credentials and delete all sync configurations
+        that depend on this connection.
+      parameters:
+        - name: connectionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: No Content. The connection was successfully de-authorized.
+  /sync-jobs:
+    post:
+      summary: Initiate Sync Job
+      description: Initiates a new synchronization job for a user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncJobRequest'
+      responses:
+        '202':
+          description: Accepted. The job has been queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncJobResponse'
+  /sync-jobs/{jobId}:
+    get:
+      summary: Get Sync Job Status
+      description: Retrieves the status of a specific synchronization job.
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^job_.*'
+      responses:
+        '200':
+          description: The status of the job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncJobStatusResponse'
+  /users/me:
+    delete:
+      summary: Delete User Account
+      description: |-
+        Permanently deletes a user's account and all associated data.
+        This is an irreversible, asynchronous action.
+      responses:
+        '202':
+          description: Accepted. The deletion has been queued.
+  /users/me/settings:
+    put:
+      summary: Update User Settings
+      description: Updates user-specific settings.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserSettingsRequest'
+      responses:
+        '200':
+          description: Settings updated successfully.
+  /export-jobs:
+    post:
+      summary: Initiate Data Export
+      description: Initiates an asynchronous job to export all user-related data.
+      responses:
+        '202':
+          description: Accepted. The export job has been queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJobResponse'
+  /export-jobs/{jobId}:
+    get:
+      summary: Get Export Job Status
+      description: Checks the status of a data export job.
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The status of the export job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJobStatusResponse'
+
+components:
+  schemas:
+    Connection:
+      type: object
+      properties:
+        connectionId:
+          type: string
+        provider:
+          type: string
+        displayName:
+          type: string
+        providerIconUrl:
+          type: string
+          format: uri
+        status:
+          type: string
+          enum: [active, needs_reauth, revoked]
+    ConnectionsResponse:
+      type: object
+      properties:
+        connections:
+          type: array
+          items:
+            $ref: '#/components/schemas/Connection'
+    SyncJobRequest:
+      type: object
+      properties:
+        sourceConnectionId:
+          type: string
+        destinationConnectionId:
+          type: string
+        dataType:
+          type: string
+          enum: [workout, sleep_session, steps, weight]
+        mode:
+          type: string
+          enum: [manual, historical]
+        priority:
+          type: string
+          enum: [high, medium, low]
+        dateRange:
+          type: object
+          properties:
+            startDate:
+              type: string
+              format: date
+            endDate:
+              type: string
+              format: date
+    SyncJobResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [QUEUED]
+    SyncJobStatusResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, IN_PROGRESS, SUCCEEDED, FAILED]
+        progress:
+          type: object
+          properties:
+            totalChunks:
+              type: integer
+            processedChunks:
+              type: integer
+            failedChunks:
+              type: integer
+    UserSettingsRequest:
+      type: object
+      properties:
+        settings:
+          type: object
+          properties:
+            conflictResolutionStrategy:
+              type: string
+              enum: [source_wins, dest_wins, newest_wins, AI_POWERED_MERGE]
+            notificationsEnabled:
+              type: boolean
+    ExportJobResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [PENDING]
+    ExportJobStatusResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, IN_PROGRESS, SUCCEEDED, FAILED]
+        downloadUrl:
+          type: string
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
