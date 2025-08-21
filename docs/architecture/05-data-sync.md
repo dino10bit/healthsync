@@ -30,7 +30,7 @@ This document works in conjunction with the main **`./06-technical-architecture.
 
 ## 2. Sync Engine Overview
 
-The sync engine is a server-side, event-driven system built on AWS. For the MVP, it is focused exclusively on the **"Hot Path"** for handling syncs of recent data. The core components, including the Fargate-based worker fleet, SQS queues, and DynamoDB tables, are canonically defined in `./06-technical-architecture.md`.
+The sync engine is a server-side, event-driven system built on AWS. For the MVP, it is focused exclusively on the **"Hot Path"** for handling syncs of recent data. The core components, including the Fargate-based worker fleet, SQS queues, and DynamoDB tables, are canonically defined in `./06-technical-architecture.md`. The specific vCPU, memory, and auto-scaling configurations for the `Worker Fargate Task` are defined in the project's Terraform IaC files.
 
 The engine employs a multi-faceted strategy to trigger syncs, optimizing for cost, performance, and user experience:
 
@@ -96,7 +96,7 @@ The sync algorithm uses a "metadata-first" or "intelligent hydration" approach, 
 Data integrity is paramount. The system ensures this through several mechanisms, which are authoritatively defined in `06-technical-architecture.md`.
 
 *   **Idempotency:** The end-to-end idempotency strategy is based on the native deduplication capabilities of **Amazon SQS FIFO queues**. The client generates a unique `Idempotency-Key` (UUIDv4) which is passed as the `MessageDeduplicationId` to SQS, guaranteeing exactly-once processing within the 5-minute deduplication window.
-*   **Durable Queueing & DLQ:** The use of SQS for the `HotPathSyncQueue` provides a durable buffer for all jobs. A corresponding Dead-Letter Queue (DLQ) is configured to catch messages that fail repeatedly (`maxReceiveCount` is set to **5**), allowing for offline analysis without blocking the main queue.
+*   **Durable Queueing & DLQ:** The use of SQS for the `HotPathSyncQueue` provides a durable buffer for all jobs. A corresponding Dead-Letter Queue (DLQ) is configured to catch messages that fail repeatedly (`maxReceiveCount` is set to **5**), allowing for offline analysis without blocking the main queue. The queue's `VisibilityTimeout` will be configured to **90 seconds**, a value chosen to be safely above the P95 latency for a single sync job, ensuring that a job has ample time to complete before SQS considers it to have failed and makes it visible for another consumer.
 *   **Transactional State:** State updates in DynamoDB are atomic. The `lastSyncTime` is only updated if the entire sync operation succeeds.
 
 ## 7. User Support Flow for DLQ Messages

@@ -85,13 +85,13 @@ A new serverless workflow will be introduced to handle the coalescing logic:
 
 ### 4.1. Strategy
 
-The Just-in-Time (JIT) Credential Caching strategy focuses on improving the performance and resilience of the `WorkerHandler` Lambda function by reducing its reliance on AWS Secrets Manager. By implementing a local, in-memory cache for user credentials (e.g., OAuth tokens), the worker can avoid making a network call to Secrets Manager for every synchronization job.
+The Just-in-Time (JIT) Credential Caching strategy focuses on improving the performance and resilience of the `WorkerHandler` Fargate task by reducing its reliance on AWS Secrets Manager. By implementing a local, in-memory cache for user credentials (e.g., OAuth tokens), the worker can avoid making a network call to Secrets Manager for every synchronization job.
 
-This is particularly effective in a high-throughput environment where the same "hot" users are being processed by the same warm Lambda instance multiple times in a short period.
+This is particularly effective in a high-throughput environment where the same "hot" users are being processed by the same warm Fargate container multiple times in a short period.
 
 ### 4.2. Implementation Details
 
-*   **Cache Scope:** The cache will be implemented as a static, in-memory map within the `WorkerHandler`'s Java runtime. This means the cache will live for the lifetime of the Lambda execution environment (i.e., the "warm" container).
+*   **Cache Scope:** The cache will be implemented as a static, in-memory map within the `WorkerHandler`'s Java runtime. This means the cache will live for the lifetime of the Fargate task (i.e., the "warm" container).
 *   **Cache Library:** A lightweight, well-tested library like Google's Guava Cache will be used to implement a size-limited, time-based LRU (Least Recently Used) cache.
 *   **Cache Configuration:**
     *   **Maximum Size:** The cache will be configured with a maximum size (e.g., 1,000 entries) to prevent excessive memory consumption.

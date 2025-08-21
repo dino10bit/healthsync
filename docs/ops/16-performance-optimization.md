@@ -56,8 +56,8 @@ The architecture, as defined in `06-technical-architecture.md`, is explicitly de
 A distributed, in-memory cache using **Amazon ElastiCache for Redis** is a cornerstone of our performance strategy. It serves multiple critical functions to reduce latency and database load.
 
 *   **Configuration Caching:** User-specific sync configurations and settings are cached, dramatically reducing read operations on DynamoDB for every sync job. This lowers latency and cost.
-*   **Rate Limit Enforcement:** The cache acts as a high-speed, centralized counter for our global rate-limiting engine, enabling us to manage third-party API call frequency across tens of thousands of concurrent Lambda executions.
-*   **Note on Idempotency:** The critical distributed locking mechanism for idempotency is handled by **DynamoDB**, not ElastiCache, to ensure stronger consistency and durability guarantees as defined in `06-technical-architecture.md`.
+*   **Rate Limit Enforcement:** The cache acts as a high-speed, centralized counter for our global rate-limiting engine, enabling us to manage third-party API call frequency across the highly concurrent Fargate worker fleet.
+*   **Note on Idempotency:** The critical end-to-end idempotency mechanism for the primary "Hot Path" sync is handled by **Amazon SQS FIFO queues** using a `MessageDeduplicationId`. This is the authoritative strategy defined in `../architecture/06-technical-architecture.md` as it is simpler and more cost-effective than an application-level locking mechanism.
 
 ### 3.2. Load Projections & Resource Planning
 
@@ -108,7 +108,7 @@ The SyncWell architecture is designed from the ground up for massive, automatic 
 
 ## 6. Visual Diagrams
 *   **Caching Architecture:**
-    *   The following diagram illustrates the **cache-aside pattern** used by worker Lambdas. Before accessing the primary data store (DynamoDB), the worker first checks the ElastiCache for Redis cluster. This significantly reduces read load on the database and improves latency.
+    *   The following diagram illustrates the **cache-aside pattern** used by the worker fleet. Before accessing the primary data store (DynamoDB), a worker first checks the ElastiCache for Redis cluster. This significantly reduces read load on the database and improves latency.
 
     ```mermaid
     sequenceDiagram

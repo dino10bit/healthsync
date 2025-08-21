@@ -463,7 +463,7 @@ For the **engineering team**, this document serves as the primary "to-do list" f
     *   **Resilience:** The sync job must be able to recover from network loss and resume when connectivity is restored.
     *   **Idempotency:** The sync logic must be designed to prevent duplicate data entries in the destination, even if a job is run multiple times.
 *   **Stakeholder & Team Impact:**
-    *   **Developer:** This is the most complex piece of engineering. It requires deep knowledge of the backend serverless architecture (Lambda, SQS) and the various third-party API integrations.
+    *   **Developer:** This is the most complex piece of engineering. It requires deep knowledge of the backend architecture (AWS Fargate, SQS) and the various third-party API integrations.
     *   **Support Team:** Will need clear dashboards to see sync success/failure rates at an aggregate level to identify systemic platform issues.
 
 *   **UI/UX Considerations:**
@@ -1278,7 +1278,7 @@ For the **engineering team**, this document serves as the primary "to-do list" f
 
 *   **Technical Notes:**
     *   The core of this feature is the "duplicate detection" algorithm. It should be configurable (e.g., time tolerance, required data overlap).
-    *   The "merge" logic will be powered by the **`AI Insights Service`** as defined in `../architecture/06-technical-architecture.md`. The worker lambda will send the two conflicting activities to the service, which will use a trained ML model to return an intelligently merged super-activity. This is more powerful than simple, hard-coded rules.
+    *   The "merge" logic will be powered by the **`AI Insights Service`** as defined in `../architecture/06-technical-architecture.md`. The worker Fargate task will send the two conflicting activities to the service, which will use a trained ML model to return an intelligently merged super-activity. This is more powerful than simple, hard-coded rules.
 *   **Non-Functional Requirements (NFRs):**
     *   **Algorithmic Performance:** The duplicate detection algorithm must run efficiently and not significantly slow down the overall sync process.
     *   **Configurability:** Power users should eventually be able to set their own merging rules (e.g., "Always prefer GPS from Wahoo").
