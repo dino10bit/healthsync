@@ -425,11 +425,31 @@ To enable more aggressive scale-to-zero settings for the Fargate fleet (especial
 To minimize data transfer and processing costs, the sync algorithm will employ an "intelligent hydration" or "metadata-first" fetching strategy. This is particularly effective for data types with large, heavy payloads (e.g., GPX track for a workout, detailed heart rate time series).
 
 *   **Problem:** A naive sync algorithm fetches the entire data payload from the source at the beginning of a job. If conflict resolution later determines the data is not needed (e.g., it already exists at the destination), the bandwidth (NAT Gateway cost) and compute (Fargate memory/CPU) used to download and process the heavy payload are wasted.
-*   **Mechanism:** The sync process is split into a two-step fetch:
+*   **Mechanism:** The sync process is split into a two-step fetch, as illustrated in the diagram below.
     1.  **Fetch Metadata:** The worker first calls the `DataProvider` to retrieve only the lightweight metadata for new activities (e.g., timestamps, IDs, type, duration).
     2.  **Conflict Resolution on Metadata:** The Conflict Resolution Engine runs using only this metadata to determine which activities definitively need to be written to the destination.
     3.  **Hydrate on Demand:** The worker then makes a second, targeted call to the `DataProvider` to fetch the full, heavy payloads *only* for the specific activities that it needs to write.
 *   **Benefit:** This "lazy loading" of data payloads significantly reduces outbound data transfer through the NAT Gateway and lowers the memory and CPU requirements for the Fargate worker fleet. This is a crucial application-level optimization that reduces costs across multiple services. This requires a modification to the `DataProvider` interface to support a metadata-only fetch mode.
+*   **Flow Diagram:**
+    ```mermaid
+    sequenceDiagram
+        participant Worker as WorkerFargateTask
+        participant Provider as DataProvider
+        participant Engine as ConflictResolutionEngine
+
+        Worker->>+Provider: fetchData(mode='metadata')
+        Provider-->>-Worker: return List<ActivityMetadata>
+
+        Worker->>+Engine: resolveConflicts(metadata)
+        Engine-->>-Worker: return List<activityIdToHydrate>
+
+        alt Has Data to Hydrate
+            Worker->>+Provider: fetchPayloads(ids=...)
+            Provider-->>-Worker: return List<FullActivity>
+        end
+
+        Worker->>Worker: Proceed to write hydrated data...
+    ```
 
 #### DynamoDB Capacity Model
 We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased (e.g., via a Savings Plan) to handle the predictable average load, with an initial estimate of covering **70% of expected peak usage**. **On-Demand Capacity** will handle any traffic that exceeds this provisioned throughput. This ratio will be tuned based on production traffic patterns.
@@ -683,6 +703,27 @@ For providers that do not support webhooks, a simple polling approach is ineffic
         *   If no new data **exists**, the Lambda does nothing and terminates. The cost of this check is a tiny fraction of a full Fargate task invocation.
 
 *   **Benefit:** This two-tiered model is exceptionally cost-effective. Tier 1 (adaptive SQS delays) reduces the total number of polls. Tier 2 (pre-flight checks) ensures that the polls that *do* run only trigger the expensive compute and database resources when there is actual work to be done. This eliminates the vast majority of "empty" sync jobs, saving significant costs on Fargate, DynamoDB, and CloudWatch.
+*   **Flow Diagram:** The following sequence diagram illustrates this two-tiered polling flow.
+    ```mermaid
+    sequenceDiagram
+        participant Scheduler as Adaptive Scheduler (SQS Delay)
+        participant Checker as PollingPreflightChecker (Lambda)
+        participant SourceAPI as Source Provider API
+        participant MainQueue as Main SQS Queue
+        participant Worker as WorkerFargateTask
+
+        Scheduler->>+Checker: Invoke with user context
+        Checker->>+SourceAPI: hasNewData(since=...)?
+        SourceAPI-->>-Checker: true / false
+
+        alt New Data Exists
+            Checker->>MainQueue: Enqueue HotPathSyncRequested job
+            MainQueue-->>+Worker: Invoke worker
+            Worker-->>-MainQueue: Process and complete
+        else No New Data
+            Checker-->>Scheduler: End (do nothing)
+        end
+    ```
 
 *(See Diagram 6 in the "Visual Diagrams" section below.)*
 

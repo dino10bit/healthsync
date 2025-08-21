@@ -118,6 +118,14 @@ The following proposals represent new, innovative strategies to further reduce o
     *   Gross Savings: `$38 + $11 + $15 = ~$64`.
     *   New Costs: The pre-flight Lambda will have ~61M invocations, costing `~$12 (requests) + ~$5 (compute) = ~$17`.
     *   Net Estimated Savings: `$64 - $17 = **~$47**`.
+*   **Visual Impact:** The bar chart below shows the projected reduction in expensive Fargate task invocations for the polling workload, illustrating how the pre-flight check eliminates the vast majority of unnecessary compute jobs.
+    ```mermaid
+    xychart-beta
+        title "Fargate Invocations for Polling (Monthly)"
+        x-axis [Before Pre-flight, After Pre-flight]
+        y-axis "Invocations (in Millions)"
+        bar [68, 7]
+    ```
 
 #### Proposal 3: Intelligent Data Hydration (Est. Savings: ~$30/month)
 *   **Opportunity:** The system currently downloads full, heavy data payloads (e.g., GPX files) from source APIs, even if conflict resolution later discards them. This wastes data transfer (NAT Gateway) and compute (Fargate).
@@ -128,6 +136,18 @@ The following proposals represent new, innovative strategies to further reduce o
     *   Fargate Savings: Reduced memory/CPU usage could lower Fargate costs by an estimated 5%, saving `$140 * 0.05 = ~$7`.
     *   CloudWatch Savings: Fewer logs from less processing, estimated at `~$5`.
     *   Net Estimated Savings: `$18 + $7 + $5 = **~$30**`.
+*   **Visual Impact:** The following chart illustrates how Intelligent Hydration reduces wasted data transfer. In the "After" state, the "Wasted Payload" component is eliminated, leading to direct savings on NAT Gateway data processing costs.
+    ```mermaid
+    xychart-beta
+        title "Data Transfer Volume for Heavy Syncs"
+        x-axis "Sync Model"
+        y-axis "Relative Data Volume"
+        stacked-bar "Before Hydration"
+            bar [30, 70]
+        stacked-bar "After Hydration"
+            bar [30, 35]
+    legend ["Metadata + Required Payload", "Wasted Payload"]
+    ```
 
 ## 3. Cost Analysis: Peak Load
 
