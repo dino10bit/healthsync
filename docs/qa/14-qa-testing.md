@@ -122,7 +122,7 @@ Our testing strategy follows the principles of the classic testing pyramid.
     *   **Automated E2E Tests:** A dedicated E2E test suite will be created to simulate webhook events. This will involve:
         1.  Using a tool like `ngrok` to expose a local endpoint for receiving webhooks during the test run.
         2.  Programmatically triggering an action in a test account of a third-party service (e.g., creating a new activity in a Strava test account).
-        3.  Asserting that the webhook is received by the local endpoint, processed by the `WebhookIngressLambda`, and results in a successful sync job.
+        3.  Asserting that the webhook is received by the local endpoint, processed by the `WebhookIngressLambda`, and results in a successful sync job processed by the Fargate worker.
     *   **Manual Testing:** Manually testing the webhook flow with real provider accounts in the staging environment.
 
 ### Adaptive Polling Algorithm Testing

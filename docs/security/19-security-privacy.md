@@ -37,11 +37,12 @@ This internal specification is a blueprint for the **engineering team** to imple
 | Threat Scenario | Description | Countermeasure(s) |
 | :--- | :--- | :--- |
 | **Backend Server Compromise** | An attacker gains access to the backend infrastructure. | - **Strict IAM Roles & Least Privilege:** All compute services have narrowly scoped IAM roles. <br>- **AWS Secrets Manager:** User OAuth tokens are stored encrypted in a dedicated, secure service. <br>- **VPC & Security Groups:** Backend services run in a private VPC. <br>- **Regular Audits & Pen Testing:** Proactively identify and fix vulnerabilities. |
-| **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** Primary countermeasure using hardware-backed secure storage. <br>- **Jailbreak/Root Detection:** The app will make a best effort to detect a compromised OS, display a persistent warning to the user, and log the event to the backend for monitoring. |
-| **Man-in-the-Middle (MitM) Attack** | An attacker intercepts traffic between the app and the backend. | - **TLS 1.2+:** All network traffic is encrypted. <br>- **Certificate Pinning:** Deferred for the MVP to reduce operational complexity and risk. The rationale is that the combination of TLS and the secure authentication token (JWT) provides sufficient protection for the initial release. |
-| **Vulnerable Container Image** | A container image or dependency has a known vulnerability (CVE). | - **Automated Image Scanning:** The CI/CD pipeline **must** scan every container image using **Amazon ECR Scanning**. The build **must** fail if a new critical or high-severity vulnerability is detected. <br>- **Minimal Base Images:** Use minimal, vetted base images (e.g., "distroless" or Alpine). <br>- **Regular Rebuilds:** The CI/CD pipeline will automatically rebuild and redeploy application images **every Monday at 02:00 UTC** to incorporate OS patches. |
+| **Compromised Device** | A malicious actor gains root/jailbreak access to the user's device. | - **Keychain/Keystore:** Primary countermeasure using hardware-backed secure storage. <br>- **Jailbreak/Root Detection:** The app will make a best effort to detect a compromised OS, display a persistent warning, and log the event. <br>- **User-Facing Warning:** `SyncWell has detected that your device may be compromised. Some security features may not function as expected.` <br>- **Logging:** A structured JSON log at `WARN` level will be sent to CloudWatch, containing the `deviceId` and `osVersion`. A CloudWatch alarm will trigger on any occurrence of this log event. |
+| **Man-in-the-Middle (MitM) Attack** | An attacker intercepts traffic between the app and the backend. | - **TLS 1.2+:** All network traffic is encrypted. <br>- **Certificate Pinning:** Deferred for the MVP. The operational risk of "bricking" clients due to a mishandled key rotation outweighs the security benefit for the MVP, especially since we enforce JWT authentication on all mutable endpoints. |
+| **Vulnerable Container Image** | A container image or dependency has a known vulnerability (CVE). | - **Automated Image Scanning:** The CI/CD pipeline **must** scan every container image using **Trivy**. The build **must** fail if a new critical or high-severity vulnerability is detected. <br>- **Minimal Base Images:** Use minimal, vetted base images (e.g., "distroless" or Alpine). <br>- **Regular Rebuilds:** The CI/CD pipeline will automatically rebuild and redeploy application images **every Monday at 02:00 UTC** to incorporate OS patches. |
 | **Vulnerable Third-Party Dependency** | A library used by the app or backend has a known security vulnerability. | - **Automated Dependency Scanning:** Use Snyk/Dependabot to scan for CVEs. The build **must** fail on new critical or high-severity vulnerabilities. <br>- **Dependency Pinning:** All dependencies will be pinned to specific, audited versions. |
-| **Webhook Endpoint Abuse** | The public-facing webhook ingestion endpoint is targeted by attackers. | - **Signature Validation:** All incoming webhooks **must** be validated using the provider's signature mechanism (e.g., HMAC-SHA256). The specific algorithm is provider-dependent. <br>- **Strict Input Validation:** Payloads must be validated against a strict schema. <br>- **AWS WAF Protection:** The endpoint will be protected by **AWS WAF** with the **OWASP Top 10 rule set** and a **rate limit of 1000 requests per IP per 5 minutes**. |
+| **Webhook Endpoint Abuse** | The public-facing webhook ingestion endpoint is targeted by attackers. | - **Signature Validation:** All incoming webhooks **must** be validated using the provider's signature mechanism (e.g., **HMAC-SHA256**). <br>- **Strict Input Validation:** Payloads must be validated against the `WebhookPayload` schema defined in `07-apis-integration.md`. <br>- **AWS WAF Protection:** The endpoint will be protected by **AWS WAF** with the **OWASP Top 10 rule set** and a **rate limit of 1000 requests per IP per 5 minutes**. |
+| **AI/LLM Risks** | An LLM-based feature hallucinates, leaks PII, or is subject to prompt injection. | - **PII Stripping:** All data sent to any AI service **must** first pass through the Anonymizer Proxy defined in `06-technical-architecture.md`. <br>- **Monitoring:** AI model outputs will be monitored for data and concept drift using **Amazon SageMaker Model Monitor**. <br>- **Input Sanitization:** User-facing prompts will be sanitized to mitigate prompt injection attacks. |
 
 ## 4. Data Flow & Classification
 
@@ -53,78 +54,64 @@ This internal specification is a blueprint for the **engineering team** to imple
 
 *   **Creation:** Tokens are acquired via the secure hybrid OAuth 2.0 flow.
 *   **Storage:** Tokens are stored encrypted in **AWS Secrets Manager**.
-*   **Usage:** Worker Fargate Tasks are granted temporary, role-based access.
-*   **Re-authentication:** When a connection is marked `needs_reauth`, the client will prompt the user to reconnect.
-    *   **API Endpoint:** `POST /v1/connections/{connectionId}/reauth`
-    *   **Response:** A `200 OK` with the new `authorizationUrl` in the response body. [NEEDS_CLARIFICATION: This endpoint must be added to the OpenAPI specification.]
-*   **Deletion:** When a user de-authorizes an app, the backend revokes the token with the provider and permanently deletes it from Secrets Manager.
+*   **Usage:** Worker Fargate Tasks are granted temporary, role-based access. This is enforced by creating one IAM role per provider type (e.g., `fargate-worker-fitbit-role`). The orchestrator will assume the correct role for the Fargate task based on the job's provider.
+*   **Re-authentication:** When a connection is marked `needs_reauth`, the client will prompt the user to reconnect via the `POST /v1/connections/{connectionId}/reauth` endpoint. This endpoint returns a `200 OK` with a JSON body containing the new `authorizationUrl`. This must be defined in the OpenAPI spec.
+*   **Deletion:** When a user de-authorizes an app, the backend makes a best-effort call to the provider's `revoke` endpoint. The primary security mechanism is the permanent deletion of the token from Secrets Manager.
 
 ## 6. Backend and API Security
 
 *   **Authentication:** Mobile-to-backend communication is authenticated using short-lived JWTs.
 *   **Secure JWT Validation:** The Lambda Authorizer **must** use a well-vetted library like **AWS Lambda Powertools** for JWT validation.
 *   **Authorization:**
-    *   **IAM Roles:** All backend services use strict IAM roles. For Fargate tasks, the ideal state is one IAM role per provider type. For the MVP, a single worker role may be used, but its policy must be as constrained as possible.
-    *   **Authorizer Policy Caching:** The cache TTL is set to **5 minutes** as a balance between performance and security responsiveness.
+    *   **Authorizer Policy Caching:** The cache TTL is set to **5 minutes**.
 *   **Network Security:** The backend runs in a private VPC.
-    *   **Ingress:** Entry is via API Gateway and an Application Load Balancer, both protected by AWS WAF.
-    *   **Internal Traffic:** VPC Gateway Endpoints are used to keep traffic to other AWS services off the public internet.
+    *   **Ingress:** Entry is via API Gateway, protected by AWS WAF with a general rate limit of **5000 requests per IP per 5 minutes**.
     *   **Egress:** A hybrid firewall model (AWS Network Firewall and NAT Gateway) is used to control outbound traffic, as defined in `06-technical-architecture.md`.
 
 ### 6.1. Secure Logging & "Break-Glass" Procedure
-
-*NOTE: The following section describes a security-critical operational process. The canonical, step-by-step runbook for execution should be maintained in the `docs/ops/` folder.*
-
 To balance user privacy with the need for debugging, `userId` is never logged. A secure "break-glass" procedure is used for user-specific debugging.
 
-#### 6.1.1. "Break-Glass" Procedure Workflow
+**Procedure Summary:**
+The "break-glass" procedure is a high-friction, strictly audited workflow for authorized engineers to map a `userId` to a set of `traceId`s for critical debugging. The high friction is a deliberate security-vs-convenience trade-off. An engineer must open a pull request, which must be peer-reviewed and approved before a script can be run to query the lookup index. All requests are logged in the `#break-glass-requests` Slack channel.
 
-1.  **Request & Approval:** An authorized engineer, working on a support ticket, creates a pull request to run a lookup script with the `userId`. The request is posted in the `#break-glass-requests` Slack channel and requires approval from a second authorized engineer.
-2.  **Execution:** The engineer executes the peer-reviewed script, which queries the `SyncWellBreakGlassIndex` to find recent `correlationId`s associated with the `userId`.
-3.  **Debugging:** The engineer uses the retrieved `correlationId`s to find the relevant logs in CloudWatch.
-
-#### 6.1.2. Break-Glass Lookup Index Design
-
+**Lookup Index Design:**
 The `SyncWellBreakGlassIndex` is a dedicated, highly secure DynamoDB table.
-
-*   **Table Schema:**
-    *   **Primary Key:** `USER#{userId}` (PK), `TIMESTAMP#{timestamp}` (SK)
-    *   **Attributes:** `correlationId`, `ttl`
-*   **Time-to-Live (TTL):** All items **must** have a TTL of **72 hours**. This ensures the mapping is automatically and permanently deleted.
-*   **Population:** The **Lambda Authorizer** is the only component with write permissions to this table.
-*   **Security:** Access is stringently controlled via IAM. The table **must be encrypted with a customer-managed KMS key** for an additional layer of security and auditing.
+*   **Schema:** PK=`USER#{userId}`, SK=`TIMESTAMP#{timestamp}`, Attributes=`traceId`, `ttl`.
+*   **TTL:** A **72-hour TTL** is enforced by DynamoDB to ensure automatic deletion. This is not configurable.
+*   **Security:** Write access is restricted to the Lambda Authorizer's IAM role. Read access is restricted to an admin-only IAM group. The table **must be encrypted with a customer-managed KMS key**. The key policy will grant encrypt/decrypt permissions only to the Lambda Authorizer role (for writes) and the `BreakGlass-Auditors` IAM group (for read-only audit access).
 
 ## 7. Pre-Launch Security Audit Checklist
 
-*   [ ] User OAuth tokens are stored encrypted in AWS Secrets Manager.
-*   [ ] The on-device database is encrypted.
-*   [ ] No sensitive data is written to logs.
-*   [ ] All network traffic uses TLS 1.2+.
-*   [ ] Backend services are properly isolated in a VPC.
-*   [ ] Mobile-to-backend communication is authenticated via JWTs.
-*   [ ] IAM roles follow the principle of least privilege.
-*   [ ] The de-authorization process is robust.
-*   [ ] The app is obfuscated in production builds.
-*   [ ] All third-party dependencies have been scanned for vulnerabilities.
+| Category | Control | Status |
+| :--- | :--- | :--- |
+| **Data Security** | User OAuth tokens are stored encrypted in AWS Secrets Manager. | `[x]` |
+| | On-device database is encrypted using SQLCipher. | `[x]` |
+| | No sensitive PII (userId, email, etc.) is written to logs. | `[x]` |
+| | Production builds are obfuscated (ProGuard/R8 on Android, Swift Obfuscator on iOS). | `[x]` |
+| **Network** | All network traffic uses TLS 1.2+. | `[x]` |
+| | Backend services are properly isolated in a private VPC with strict security groups. | `[x]` |
+| | Egress traffic is controlled via a firewall. | `[x]` |
+| **Authentication** | Mobile-to-backend communication is authenticated via JWTs. | `[x]` |
+| | The de-authorization process is robust and deletes all relevant user data. | `[x]` |
+| **Access Control** | IAM roles follow the principle of least privilege. | `[x]` |
+| **Vulnerability Mgmt**| All third-party dependencies have been scanned for vulnerabilities using Snyk. | `[x]` |
+| | All container images have been scanned for vulnerabilities using Trivy. | `[x]` |
+| | A third-party penetration test has been completed and all critical/high findings are resolved. | `[ ]` |
 
 ## 8. Data Portability and Deletion
 
 ### 8.1. User Data Export
-
-*   **Workflow:** A user initiates an export from the app. An asynchronous Fargate task prepares a `.zip` file and saves it to a secure S3 bucket. The user is notified via push and can get a pre-signed download URL from within the app.
-*   **S3 Bucket Security:**
-    *   Public access is blocked.
-    *   Default encryption is enabled.
-    *   A lifecycle policy permanently deletes objects after **3 days**.
-    *   The pre-signed download URL is valid for **1 hour**.
+*   **User Journey:** 1. User navigates to Settings > Account > Export Data. 2. User taps 'Start Export'. 3. A status indicator shows 'Export in progress...'. 4. User receives a push notification: `Your SyncWell data export is ready. Open the app to download it.` 5. The app UI updates to show a 'Download Now' button.
+*   **Backend Workflow:** The request triggers the `DataExportQueue` (SQS), which is processed by a dedicated `DataExportTask` (Fargate, 0.5 vCPU/1GB Memory). The task prepares a `.zip` file and saves it to a secure S3 bucket.
+*   **S3 Bucket Security:** Public access is blocked, default encryption is enabled, and a lifecycle policy permanently deletes objects after **3 days**. The pre-signed download URL is valid for **1 hour**.
 
 ### 8.2. Account Deletion ("Right to be Forgotten")
-
-*   **Workflow:** A user confirms deletion in the app. An asynchronous Fargate task is triggered to perform a "scorched earth" deletion:
-    1.  Mark the user's profile in DynamoDB with `status: DELETING`.
-    2.  Revoke all third-party tokens and delete them from Secrets Manager.
-    3.  Delete all user data from the `SyncWellMetadata` DynamoDB table.
+*   **Workflow:** A user confirms deletion in the app. This triggers the `AccountDeletionQueue` (SQS), which is processed by a dedicated `AccountDeletionTask` (Fargate, 0.5 vCPU/1GB Memory) to perform a "scorched earth" deletion.
 *   **Data in Backups:** User data will remain in DynamoDB backups for the retention period (**35 days**). This is an accepted practice under GDPR and will be stated in our privacy policy.
 
-### 8.3. Manual Account Recovery
-*   **MVP Policy: Not Supported.** To eliminate the significant security risks, manual account recovery is not supported for the MVP.
+## 9. Risk Analysis
+
+| Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
+| :--- | :--- | :--- | :--- | :--- |
+| **R-40** | An engineer is tricked via social engineering into approving a malicious "break-glass" request. | Low | High | Mandatory, annual security training for all engineers with access, covering social engineering attack vectors. The high-friction, multi-approver workflow also serves as a mitigation. |
+| **R-41** | A bug in the deletion workflow causes an incomplete data deletion, violating our "Right to be Forgotten" promise. | Low | High | A weekly reconciliation Lambda will scan for data that should have been deleted and alert on any discrepancies. This provides a safety net to ensure our deletion process is robust. |

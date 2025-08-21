@@ -22,19 +22,19 @@ This document provides the detailed specification for the **Data Export** featur
 
 To ensure reliability and performance, especially for large exports, this feature is built on an **asynchronous, backend-driven architecture**. This specification details the process of offloading export jobs to the backend, processing them reliably, and notifying the user when the export is ready for download.
 
-*   **Priority:** Should-Have (S-2)
+*   **Priority:** **P1 (High)** for Post-MVP v1.2 Release
 *   **Status:** Not Started
 
 ## 2. User Experience & Workflow
 
 The user experience is designed to be simple and asynchronous.
 
-1.  **Configuration:** The user navigates to "Settings > Export Data" to configure their export. [NEEDS_CLARIFICATION: Link to final UI/UX mockups to be added here.]
+1.  **Configuration:** The user navigates to "Settings > Export Data". The UI presents a multi-select list of available data types (Activities, Daily Steps, etc.) and a date range picker.
 2.  **Initiation:** After tapping "Start Export," the UI updates to show a persistent status indicator: **"Your export is being prepared. We will notify you when it's ready to download."**
 3.  **Wait:** The user can now safely close the app. The export is processed on the backend.
 4.  **Completion Notification:** Once the export is complete, the user receives a push notification (`N-07`): **"Your data export is ready to download."**
-5.  **Failure Notification:** If the export fails for an unrecoverable reason, the user receives a different push notification: **"Your data export failed. Please try again or contact support if the problem persists."**
-6.  **Download:** Tapping the success notification opens the app to a screen where they can download the `.zip` file. The pre-signed download link will be valid for **1 hour**, as defined in the Core API Contracts.
+5.  **Failure Notification:** If the export fails for an unrecoverable reason, the user is notified and the UI shows: **"Your data export from [Date] failed. Please try again."**
+6.  **Download:** Tapping the success notification opens the app to a screen where they can download the `.zip` file. The pre-signed download link will be valid for **1 hour**, as defined in the Core API Contracts in `../architecture/06-technical-architecture.md`.
 
 ## 3. Technical Architecture (Orchestrated by AWS Step Functions)
 
@@ -42,14 +42,14 @@ To robustly handle a potentially long-running and multi-step process, the Data E
 
 1.  **Initiation (API):** The mobile app calls `POST /v1/export-jobs`. The API Gateway triggers a new execution of the `DataExport` state machine, passing in the user's parameters.
 2.  **State Machine Execution (Backend):** The state machine manages the entire workflow:
-    *   **a. Fetch Data in Chunks:** The first step breaks the requested date range into manageable **30-day chunks**. A `Map` state processes these chunks in parallel, invoking a **Fargate task** for each to fetch data from the source API and store it temporarily in a secure S3 bucket (`s3://syncwell-prod-data-exports-temp/{jobId}/`). Using Fargate is critical for handling very large data chunks without hitting compute timeouts.
-    *   **b. Consolidate & Format:** Once all data is fetched, a single, larger **Fargate task** consolidates the temporary data. It uses internal `Exporter` modules (format-specific logic within the worker codebase) to format the data into the requested file type(s).
+    *   **a. Fetch Data in Chunks:** The first step breaks the requested date range into manageable **30-day chunks**. A `Map` state processes these chunks in parallel, invoking a **Fargate task** for each to fetch data and store it temporarily in a secure S3 bucket: `s3://syncwell-prod-data-exports-temp/{jobId}/`. This bucket has a **24-hour lifecycle policy**.
+    *   **b. Consolidate & Format:** Once all data is fetched, a single, larger **Fargate task** consolidates the temporary data. It uses internal `Exporter` modules (internal, format-specific libraries implementing a common `IExporter` interface) to format the data.
     *   **c. Compress & Store:** The formatted files are compressed into a single `.zip` archive and uploaded to the final, secure S3 bucket (`s3://syncwell-prod-data-exports-final/`).
     *   **d. Finalize & Notify:** A final, lightweight Lambda function updates the `DataExportJob` table in DynamoDB with the `COMPLETED` status and the secure, time-limited S3 download URL. It then publishes an event to SNS to trigger the push notification to the user.
 
 ### 3.1. DynamoDB Job Table
 
-A dedicated DynamoDB table will be used to track the status of export jobs.
+A dedicated DynamoDB table, `SyncWellExportJobs`, will be used to track the status of export jobs.
 
 | Entity | PK (Partition Key) | SK (Sort Key) | Key Attributes & Defined Values |
 | :--- | :--- | :--- | :--- |
@@ -57,11 +57,9 @@ A dedicated DynamoDB table will be used to track the status of export jobs.
 
 ## 4. File Format Specifications
 
-[NEEDS_CLARIFICATION: The specific version and schema for each file format needs to be defined. E.g., for FIT, what is the Profile Version?]
-
-| Data Type | Supported Formats | CSV Schema Details |
+| Data Type | Supported Formats | Schema Details |
 | :--- | :--- | :--- |
-| **Activities** | **FIT, TCX, GPX, CSV**| Header row included. Delimiter: comma. Encoding: UTF-8. |
+| **Activities** | **FIT, TCX, GPX, CSV**| **FIT:** Conforms to the 'Flexible and Interoperable Data Transfer' Protocol **Version 2.0**. <br> **CSV:** Header row included, comma delimiter, UTF-8 encoding. |
 | **Daily Steps**| **CSV** | `date,step_count` |
 | **Weight** | **CSV** | `timestamp,weight_kg,body_fat_percentage` |
 | **Sleep** | **CSV** | `start_time,end_time,duration_asleep_seconds,...` |
@@ -70,16 +68,18 @@ A dedicated DynamoDB table will be used to track the status of export jobs.
 
 To ensure the integrity of our exported files, a validation process will be implemented in the **backend's CI/CD pipeline**.
 
-*   **Golden Files:** A "golden set" of sample `.fit`, `.tcx`, etc., files will be stored in the repository. [NEEDS_CLARIFICATION: Exact path to these files in the repo needs to be defined.]
-*   **CI/CD Validation Job:** On every deployment, a job will run an official command-line tool to validate that the files generated by the backend `Exporter` modules are compliant with their respective standards. [NEEDS_CLARIFICATION: The specific tool and command must be defined (e.g., `java -jar FitCSVTool.jar -b ...`).]
+*   **Golden Files:** A "golden set" of sample `.fit`, `.tcx`, etc., files will be stored in `/qa/resources/golden-exports/`.
+*   **CI/CD Validation Job:** On every deployment, a job named `validate-exports` in the GitHub Actions pipeline will run an official command-line tool to validate that the files generated by the backend `Exporter` modules are compliant. The specific tool for FIT files is **FitCSVTool.jar** from the official FIT SDK.
 
 ## 6. Risk Analysis & Mitigation
 
 | Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
 | :--- | :--- | :--- | :--- | :--- |
 | **R-91** | The generated export files are corrupt or non-compliant. | **Low** | **High** | The formal "Export Validation Suite" in the backend CI/CD pipeline is the primary mitigation. |
-| **R-92** | An export job for a very large date range is slow or costly. | **Medium** | **Medium** | **Mitigated by Design.** The Step Functions/Fargate architecture is designed for long-running, heavy jobs. Costs will be monitored via AWS Budgets. A new risk (R-94) is added to track this. |
+| **R-92** | An export job for a very large date range is slow or costly. | **Medium** | **Medium** | **Mitigated by Design.** The Step Functions/Fargate architecture is designed for long-running, heavy jobs. Costs will be monitored via AWS Budgets. |
 | **R-93** | The temporary S3 bucket for downloads is misconfigured, allowing public access. | **Low** | **Critical**| All S3 bucket policies will be defined in Terraform and will be set to private by default. Download links will be pre-signed, time-limited URLs, which provide secure, temporary access. |
+| **R-94** | A user frequently initiating very large exports leads to high, unexpected cloud costs. | **Low** | **Medium** | Implement cost monitoring and alerts via AWS Budgets. Consider adding a rate-limit or a "fair use" policy for the export feature if abuse is detected. |
+| **R-95** | A bug in an `Exporter` module causes the exported data to be incomplete or inaccurate. | **Medium**| **High** | The "Golden Files" validation suite provides some mitigation. Additional automated checks (e.g., record counts) should be added to the Step Functions workflow. |
 | **R-94** | A user frequently initiating very large exports leads to high, unexpected cloud costs. | **Low** | **Medium** | Implement cost monitoring and alerts via AWS Budgets. Consider adding a rate-limit or a "fair use" policy for the export feature if abuse is detected. |
 | **R-95** | A bug in an `Exporter` module causes the exported data to be incomplete or inaccurate. | **Medium**| **High** | The "Golden Files" validation suite provides some mitigation. Additional automated checks (e.g., record counts) should be added to the Step Functions workflow. |
 

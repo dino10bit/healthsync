@@ -20,66 +20,81 @@ migrated: true
 
 ## 1. Executive Summary
 
-This document specifies the dashboards and Key Performance Indicators (KPIs) for SyncWell. While `16-performance-optimization.md` defined the strategy, this document specifies the *exact* metrics we will track across both the **mobile client and the backend**. The goal is to create a set of actionable dashboards that provide a comprehensive, at-a-glance view of the application's performance health.
+This document specifies the dashboards and Key Performance Indicators (KPIs) for SyncWell. While `16-performance-optimization.md` defined the strategy, this document specifies the *exact* metrics we will track. The goal is to create actionable dashboards that provide a comprehensive, at-a-glance view of the application's performance health for the **engineering and product teams**.
 
-These dashboards are an essential tool for the **engineering team** to efficiently monitor the production application.
+## 2. Dashboards
 
-## 2. Performance Monitoring Philosophy
+The following dashboards will be created and maintained in Grafana and Firebase.
 
-*   **Dashboard-Driven:** We will build and maintain a small number of curated dashboards. [NEEDS_CLARIFICATION: Links to the live dashboards in Firebase and CloudWatch/Grafana should be added here.]
-*   **Focus on Percentiles:** We will focus on P90, P95, and P99 metrics.
-*   **Correlate with Releases:** All performance graphs will be annotated with releases. This will be automated via a script in the CI/CD pipeline that calls the respective monitoring service's API after a successful deployment.
-*   **User-Centric & System-Centric Metrics:** We will track both user-facing and core system metrics.
+| Priority | Dashboard Name | Audience | Location |
+| :--- | :--- | :--- | :--- |
+| **P0** | **Backend Health** | On-call Engineers, SRE | [Grafana Link](https://grafana.syncwell.com/d/backend-health) |
+| **P1** | **Sync Health & KPIs** | Product & Engineering Leads | [Grafana Link](https://grafana.syncwell.com/d/sync-health) |
+| **P2** | **Mobile Performance**| Mobile Engineers | [Firebase Console](https://console.firebase.google.com/u/0/project/syncwell/performance/dashboard) |
 
-## 3. Custom Metrics Namespace & Dimensions
+Release events will be automatically added as annotations to all Grafana dashboards. This will be automated via a `grafana-cli` command in a final step of the GitHub Actions deployment pipeline.
 
-To ensure consistency, all custom backend metrics published to CloudWatch will use the following structure:
-*   **Namespace:** `SyncWell`
-*   **Common Dimensions:**
-    *   `Provider`: (e.g., `fitbit`, `strava`) To isolate issues to a specific integration.
-    *   `SyncType`: (e.g., `hot_path`, `cold_path`, `data_import`) To distinguish between different workloads.
+## 3. Custom Metric Definitions
 
-## 4. The Mobile Performance Dashboard (Firebase)
+To ensure consistency, all custom backend metrics published to CloudWatch will use the **`SyncWell/Backend`** namespace.
 
-This dashboard will be built in the Firebase Console and focuses on the health of the user-facing mobile application.
+| Metric Name | Dimensions | Unit | Description |
+| :--- | :--- | :--- | :--- |
+| `WebhookReceived` | `Provider` | Count | Emitted by the webhook ingress Lambda each time a webhook is successfully received and authenticated. |
+| `SyncJobRequested` | `Source` (e.g., `manual`, `webhook`) | Count | Emitted when a sync job is placed into the SQS queue. |
+| `SyncJobCompleted` | `Provider`, `Status` (`SUCCESS` or `FAILURE`) | Count | Emitted by the Fargate worker when a sync job is completed. |
+| `ManualSyncLatency`| `Provider` | Milliseconds | The time delta between a `SyncJobRequested` and `SyncJobCompleted` event for a manual sync. |
+| `AdaptivePollingCadence`| `Provider` | Seconds | The calculated delay for the next poll for a given provider. Published by the adaptive polling scheduler. |
 
-| Widget Title | Chart Type | Metric(s) | Data Source | SLO Target |
+## 4. The Dashboards
+
+### 4.1. P0: Backend Health Dashboard (Grafana)
+This dashboard is for real-time, critical infrastructure monitoring.
+
+| Widget Title | Chart Type | Metric(s) | Data Source |
+| :--- | :--- | :--- | :--- |
+| **API Gateway Latency (P99)**| Time Series | `Latency` | AWS CloudWatch |
+| **API Gateway Errors (5xx)**| Time Series | `5xxError` count | AWS CloudWatch |
+| **Fargate Worker CPU/Memory**| Time Series | `CPUUtilization`, `MemoryUtilization` | AWS CloudWatch |
+| **SQS Hot Path Queue Depth**| Time Series | `ApproximateNumberOfMessagesVisible` | AWS CloudWatch |
+| **DynamoDB Throttled Requests**| Time Series | `ReadThrottleEvents`, `WriteThrottleEvents` | AWS CloudWatch |
+
+### 4.2. P1: Sync Health & KPIs Dashboard (Grafana)
+This dashboard provides a holistic view of the end-to-end sync process and product KPIs.
+
+| Widget Title | Chart Type | Metric(s) | Data Source |
+| :--- | :--- | :--- | :--- |
+| **Sync Success Rate (24h)**| Gauge | `SyncJobCompleted` where `status='SUCCESS'` / `SyncJobRequested` | Custom Metrics |
+| **Sync Failure Rate by Provider**| Bar Chart | `SyncJobCompleted` where `status='FAILURE'`, grouped by `Provider` | Custom Metrics |
+| **Manual Sync Latency (P95)**| Time Series | `ManualSyncLatency` | Custom Metrics |
+| **Dead-Letter Queue Size** | Big Number | `ApproximateNumberOfMessagesVisible` for the DLQ | AWS CloudWatch |
+| **Time Since Last Webhook**| Big Number | Calculated in Grafana: `time() - last(WebhookReceived)` | Custom Metrics |
+
+### 4.3. P2: Mobile Performance Dashboard (Firebase)
+This dashboard focuses on the health of the user-facing mobile application. Metrics are generated by the Firebase Performance Monitoring SDK integrated into the KMP module.
+
+| Widget Title | Chart Type | Metric(s) | SLO Target | Rationale |
 | :--- | :--- | :--- | :--- | :--- |
-| **Crash-Free Users (24h)**| Gauge | `crashlytics.crash_free_users_rate` | Firebase Crashlytics | > 99.9% |
-| **App Start Time (P90)**| Time Series | `performance.app_start_time` | Firebase Performance | < 2.0s |
-| **Version Adoption**| Donut Chart | `analytics.users_by_app_version` | Firebase Analytics | > 90% on latest version within 14 days |
+| **Crash-Free Users (24h)**| Gauge | `crashlytics.crash_free_users_rate` | > 99.9% | A core indicator of app stability and user trust. |
+| **App Start Time (P90)**| Time Series | `performance.app_start_time` | < 2.0s | A slow app start is a major source of user frustration. |
+| **Version Adoption**| Donut Chart | `analytics.users_by_app_version` | > 90% on latest version within 14 days | This aggressive goal is to minimize the support burden and ensure users get bug fixes quickly. |
 
-## 5. The Backend Health Dashboard (AWS CloudWatch)
+## 5. Alerting Configuration
 
-This dashboard will be built in AWS CloudWatch and provides a real-time view of the health of our backend infrastructure.
+Alerts are routed from CloudWatch via SNS to the **`#alerts-backend`** Slack channel and the **`SyncWell-Backend-P1`** PagerDuty service.
 
-| Widget Title | Chart Type | Metric(s) | Data Source | SLO Target |
+| Alert Name | Metric | Threshold | Period | Eval Periods |
 | :--- | :--- | :--- | :--- | :--- |
-| **API Gateway Latency (P99)**| Time Series | `Latency` on our API Gateway resource | AWS CloudWatch | < 500ms |
-| **API Gateway Errors (5xx)**| Time Series | `5xxError` count | AWS CloudWatch | < 0.1% |
-| **Fargate Worker CPU/Memory**| Time Series | `CPUUtilization`, `MemoryUtilization` for the Fargate service | AWS CloudWatch | < 80% (sustained) |
-| **Fargate Worker Task Count**| Time Series | `RunningTaskCount` for the Fargate service | AWS CloudWatch | N/A (Diagnostic) |
-| **Webhook Ingestion Rate**| Time Series | `WebhookReceived` count, grouped by `Provider` | Custom (`SyncWell`) | N/A (Diagnostic) |
-| **Time Since Last Webhook**| Big Number | `TimeSinceLastWebhook`, per `Provider` | Custom (`SyncWell`) | < 6 hours |
-| **SQS Hot Path Queue Depth**| Big Number / Time Series | `ApproximateNumberOfMessagesVisible` | AWS CloudWatch | < 100 (sustained) |
-| **Step Functions Failures**| Time Series | `ExecutionsFailed` for historical sync & data import state machines | AWS CloudWatch | 0 |
-| **DynamoDB Throttled Requests**| Time Series | `ReadThrottleEvents`, `WriteThrottleEvents` | AWS CloudWatch | 0 |
+| **High API Gateway P99 Latency**| `Latency` (API Gateway) | > 500ms | 5 min | 2 |
+| **API Gateway 5xx Error Spike**| `5xxError` | > 1% | 5 min | 1 |
+| **Fargate CPU High** | `CPUUtilization` | > 80% | 15 min | 2 |
+| **SQS Queue Depth High** | `ApproximateNumberOfMessagesVisible` | > 1000 | 10 min | 3 |
+| **DLQ Has Messages** | `ApproximateNumberOfMessagesVisible` (DLQ) | > 0 | 1 min | 1 |
+| **DynamoDB Throttling** | `ReadThrottleEvents` or `WriteThrottleEvents` | > 10 | 5 min | 1 |
 
-## 6. The Sync Health Dashboard (Combined)
+## 6. Risk Analysis
 
-This dashboard provides a holistic view of the end-to-end sync process.
-
-| Widget Title | Chart Type | Metric(s) | Data Source | SLO Target |
+| Risk ID | Risk Description | Probability | Impact | Mitigation Strategy |
 | :--- | :--- | :--- | :--- | :--- |
-| **Sync Success Rate (24h)**| Gauge | `SyncJobCompleted` where `status='SUCCESS'` / `SyncJobRequested` | Custom (`SyncWell`) | > 99.9% |
-| **Sync Failure Rate by Provider**| Bar Chart | `SyncJobCompleted` where `status='FAILURE'`, grouped by `Provider` | Custom (`SyncWell`) | N/A (Diagnostic) |
-| **Manual Sync Latency (P95)**| Time Series | Time delta between `SyncJobCompleted` and `SyncJobRequested` events | Custom (`SyncWell`) | < 15s |
-| **Dead-Letter Queue Size** | Big Number | `ApproximateNumberOfMessagesVisible` for the DLQ | AWS CloudWatch | 0 |
-
-## 7. Implementation & Tooling
-
-*   **Firebase SDK:** Integrated into the mobile app for client-side metrics.
-*   **AWS CloudWatch:** Used for backend metrics, dashboards, and alerting.
-*   **Alerting:**
-    *   **Firebase:** Alerts configured for client-side issues (e.g., crash rate).
-    *   **CloudWatch:** Alerts configured for backend issues (e.g., API latency, queue depth). Alerts are routed via SNS to PagerDuty. [NEEDS_CLARIFICATION: The specific thresholds for each alarm and the PagerDuty service integration key must be defined in our Terraform configuration.]
+| **R-101** | A bug in our instrumentation leads to inaccurate metrics, causing us to make bad product or technical decisions. | Medium | High | Key business metrics (e.g., SyncSuccessRate) must be validated with automated end-to-end tests that confirm the metric is emitted correctly. |
+| **R-102** | Poorly configured or overly sensitive alerts create "alert fatigue," causing engineers to ignore real issues. | High | Medium | A quarterly review of all P1 alerts will be conducted by the SRE team to ensure they are still relevant and have a low false-positive rate. Any alert that fires more than 3 times a week without a corresponding incident is a candidate for re-evaluation. |
