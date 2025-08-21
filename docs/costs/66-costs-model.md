@@ -36,7 +36,7 @@ This document lists the key assumptions used to generate the cost models and fin
 
 This document provides an exhaustive, bottom-up financial analysis for the SyncWell backend architecture, grounded in the detailed specifications of `06-technical-architecture.md`.
 
-The fully-optimized model estimates a total monthly cost of **~$1,097** for supporting 1 million Daily Active Users ("Normal Load"). This figure is the result of a multi-layered cost optimization strategy, including architectural choices like leveraging Fargate Spot for compute, and application-aware logic such as tiered observability and intelligent data fetching.
+The fully-optimized model estimates a total monthly cost of **~$1,130** for supporting 1 million Daily Active Users ("Normal Load"). This figure is the result of a multi-layered cost optimization strategy, including architectural choices like leveraging Fargate Spot for compute, and application-aware logic such as tiered observability and intelligent data fetching.
 
 The analysis extends into a full financial forecast, covering:
 *   **Detailed Cost Breakdown:** A granular, service-by-service cost breakdown, with explanations of the key optimizations that contribute to the final cost figures.
@@ -68,10 +68,10 @@ This section provides a detailed, bottom-up cost estimation based on the final, 
 | | AWS Secrets Manager| App secrets + cached API calls | $11.00 |
 | **Data Storage** | Amazon S3 | Log & backup storage with lifecycle policies | $8.00 |
 | | Amazon CloudFront | CDN for APIs & static assets | $55.00 |
-| **Total** | | | **~$1,120.23** |
+| **Total** | | | **~$1,130.40** |
 
 ### 2.1. Analysis of Deep Cost Model
-This detailed, bottom-up analysis reveals that the true operational cost is approximately **$1,120 per month**. This model is the result of a comprehensive, multi-layered optimization strategy that combines efficient infrastructure choices with intelligent, application-aware logic to minimize waste.
+This detailed, bottom-up analysis reveals that the true operational cost is approximately **$1,130 per month**.
 
 *   **Key Cost Drivers:** After extensive optimization, the remaining primary cost drivers are messaging (SQS), security (WAF), networking (NAT Gateway), and core database/cache services.
 *   **Integrated Optimizations:** The cost figures in the table above are achieved through several key strategies:
@@ -136,27 +136,27 @@ The following costs are calculated on an **hourly basis**, representing the cost
 
 ### Analysis
 
-Under a sustained peak load of 3,000 RPS, the estimated cost for the infrastructure is approximately **$77 per hour**. This is a significant increase from the normal operating cost of ~$1.52/hour ($1,097 / 720 hours).
+Under a sustained peak load of 3,000 RPS, the estimated cost for the infrastructure is approximately **$77 per hour**. This is a significant increase from the normal operating cost of ~$1.57/hour ($1,130 / 720 hours).
 
 *   **Primary Drivers:** During a peak event, the primary cost drivers shift to services that scale directly with request volume. **CloudWatch Log Ingestion** becomes the single largest expense, followed by **Fargate** compute and **DynamoDB** writes.
 *   **Financial Implications:** While a cost of $77/hour is high, it's important to frame it within the context of a temporary spike. If such a peak were sustained for a full 24 hours, it would cost ~$1,848. This analysis confirms that the on-demand, serverless nature of the architecture allows it to handle extreme peaks in load, but highlights the importance of cost monitoring and anomaly detection to alert the team if such a peak is sustained for an unusual length of time.
 
 ## 4. Financial Projections & Scalability (Revised)
 
-This section is revised based on the new, fully-optimized cost model of **~$1,120/month**.
+This section is revised based on the new, fully-optimized cost model of **~$1,130/month**.
 
 ### 4.1. Annual Cost Projection (1M DAU)
-*   **Calculation:** $1,120/month * 12 months = **$13,440**
-*   **Projected Annual Cost:** Approximately **$13,500 per year**.
+*   **Calculation:** $1,130/month * 12 months = **$13,560**
+*   **Projected Annual Cost:** Approximately **$13,600 per year**.
 
 ### 4.2. Revised Scalability Analysis
-Based on the new cost structure (Fixed: ~$200/month, Variable: ~$920/month per 1M DAU). This table projects the costs for different user load scenarios.
+Based on the new cost structure (Fixed: ~$200/month, Variable: ~$930/month per 1M DAU). This table projects the costs for different user load scenarios.
 
 | Metric | 250k DAU (Projected) | 1M DAU (Baseline) | 5M DAU (Projected) | 10M DAU (Projected) | 20M DAU (Projected) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Variable Costs/Month**| ~$230 | ~$920 | ~$4,600 | ~$9,200 | ~$18,400 |
+| **Variable Costs/Month**| ~$233 | ~$930 | ~$4,650 | ~$9,300 | ~$18,600 |
 | **Fixed Costs/Month** | ~$200 | ~$200 | ~$200 | ~$200 | ~$200 |
-| **Total Monthly Cost**| **~$430** | **~$1,120** | **~$4,800** | **~$9,400** | **~$18,600** |
+| **Total Monthly Cost**| **~$433** | **~$1,130** | **~$4,850** | **~$9,500** | **~$18,800** |
 
 *Note: Fixed costs are held constant for this projection. A more detailed analysis is required to model how these costs (e.g., for cache clusters) will step-scale with significantly higher user loads.*
 
@@ -166,9 +166,9 @@ For a clearer view of costs during the initial growth phases of the platform, th
 
 | Metric                | 100 DAU (Projected) | 1k DAU (Projected) | 10k DAU (Projected) | 50k DAU (Projected) | 100k DAU (Projected) |
 | :-------------------- | :------------------ | :----------------- | :------------------ | :------------------ | :------------------- |
-| **Variable Costs/Month**| ~$0.09              | ~$0.88             | ~$8.79              | ~$43.93             | ~$87.86              |
+| **Variable Costs/Month**| ~$0.67              | ~$7.44             | ~$74.36             | ~$371.80            | ~$743.60             |
 | **Fixed Costs/Month**   | ~$218.80            | ~$218.80           | ~$218.80            | ~$218.80            | ~$218.80             |
-| **Total Monthly Cost**  | **~$219**           | **~$220**          | **~$228**           | **~$263**           | **~$307**            |
+| **Total Monthly Cost**  | **~$219**           | **~$226**          | **~$293**           | **~$591**           | **~$962**            |
 
 ## 4a. Service-Level Cost Projections for Early Growth Stages (Corrected)
 
@@ -216,34 +216,34 @@ This table projects the **hourly costs** for each service under a peak load scen
 
 ## 5. Cost of Goods Sold (COGS) Analysis (Revised)
 
-This analysis is updated with the new total monthly cost of ~$1,120.
+This analysis is updated with the new total monthly cost of ~$1,130.
 
-*   **Blended Average Cost Per User (ACPU):** $1,120 / 1,000,000 DAU = **$0.00112 per user per month**.
-*   **Tier-Specific Cost:** A Pro user now costs approximately **$0.0037 per month**, while a Free user costs **$0.00028 per month**.
+*   **Blended Average Cost Per User (ACPU):** $1,130 / 1,000,000 DAU = **$0.00113 per user per month**.
+*   **Tier-Specific Cost:** A Pro user now costs approximately **$0.0038 per month**, while a Free user costs **$0.00028 per month**.
 
 ## 6. Break-Even Analysis (Revised)
 
 With the fully optimized cost base, the break-even point is calculated.
 
 *   **Assumption:** Pro Tier Price of $2.99/month.
-*   **Calculation:** `P * $2.99/month = $1,120/month`
-*   **Result:** `P ≈ 375`
-*   **Analysis:** The revenue from approximately **375 Pro subscribers** is required to cover the entire monthly infrastructure cost. This represents only **0.19%** of the 200,000 Pro users projected at the 1M DAU mark, indicating an extremely robust and profitable business model.
+*   **Calculation:** `P * $2.99/month = $1,130/month`
+*   **Result:** `P ≈ 378`
+*   **Analysis:** The revenue from approximately **378 Pro subscribers** is required to cover the entire monthly infrastructure cost. This represents only **0.19%** of the 200,000 Pro users projected at the 1M DAU mark, indicating an extremely robust and profitable business model.
 
 ## 7. Long-Term Data Storage Costs
 *(This analysis is still valid and integrated into the main table, but is kept for its detailed breakdown.)*
 
 ## 8. Sensitivity Analysis
 
-This section explores how the total monthly cost of the platform reacts to changes in key operational variables. The "Normal Load" model of ~$1,191/month is used as the baseline. This analysis helps identify which parts of the architecture are most sensitive to changes in workload characteristics, providing insight into potential future cost risks and optimization opportunities.
+This section explores how the total monthly cost of the platform reacts to changes in key operational variables. The "Normal Load" model of ~$1,130/month is used as the baseline.
 
 The following scenarios model the impact of a significant percentage increase in a specific cost driver.
 
 | Scenario | Key Variable Change | Cost Impact (Monthly) | New Total Monthly Cost | % Increase |
 | :--- | :--- | :--- | :--- | :--- |
-| **1. Increased Data Complexity** | +50% log data per job<br>+25% network data per job | +$311 | **~$1,502** | ~26.1% |
-| **2. Decreased Compute Efficiency** | +50% Fargate compute time per job | +$178 | **~$1,369** | ~14.9% |
-| **3. Increased Event-Driven Chatter**| +1 additional EventBridge event per job | +$228 | **~$1,419** | ~19.1% |
+| **1. Increased Data Complexity** | +50% log data per job<br>+25% network data per job | +$311 | **~$1,441** | ~27.5% |
+| **2. Decreased Compute Efficiency** | +50% Fargate compute time per job | +$178 | **~$1,308** | ~15.8% |
+| **3. Increased Event-Driven Chatter**| +1 additional EventBridge event per job | +$228 | **~$1,358** | ~20.2% |
 
 ### Analysis of Findings
 
