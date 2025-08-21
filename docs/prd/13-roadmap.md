@@ -105,3 +105,26 @@ As a solo developer, disciplined time allocation is crucial for balancing compet
 *   **[Diagram] Themed Roadmap:** A visual, multi-lane "swimlane" diagram showing the four quarters as columns and themes/features as rows. This is more strategic than a Gantt chart.
 *   **[Pie Chart] Developer Time Allocation:** A pie chart visually representing the 60/25/15 split for time management.
 *   **[Diagram] OKR Tree:** A diagram showing how the quarterly themes (Objectives) break down into key features, which in turn are measured by the KPIs (Key Results).
+
+## 7. Roadmap Management Process
+This section defines the formal process for creating, managing, and communicating the product roadmap.
+
+### 7.1. Roles & Responsibilities
+*   **Owner:** The **Head of Product** is the ultimate owner of the product roadmap.
+*   **Inputs:** The roadmap is informed by inputs from multiple sources:
+    *   **User Feedback:** Feature requests and bug reports from the support channels.
+    *   **Data Analysis:** Quantitative data on feature usage and user behavior from our analytics tools.
+    *   **Market Analysis:** Competitive analysis and market trends.
+    *   **Stakeholder Input:** Vision and strategic goals from the executive team.
+
+### 7.2. Quarterly Roadmap Planning Cycle
+The roadmap is reviewed and updated on a quarterly basis.
+1.  **Input Gathering (Weeks 1-4):** The Product Manager gathers and synthesizes all inputs from the sources listed above.
+2.  **Prioritization (Week 5):** The Product Manager uses a formal prioritization framework (e.g., RICE, ICE) to score and rank potential initiatives.
+3.  **Draft Roadmap (Week 6):** A draft roadmap for the upcoming quarter is created, outlining the primary theme and key initiatives.
+4.  **Stakeholder Review (Weeks 7-8):** The draft roadmap is presented to the engineering leads and the executive team for feedback and alignment.
+5.  **Finalization & Communication (Week 9):** The roadmap is finalized and communicated to the entire company.
+
+### 7.3. Communicating the Roadmap
+*   **Internal:** The roadmap is presented at the quarterly all-hands meeting and is always available for reference in this document.
+*   **External:** A high-level, public-facing version of the roadmap may be shared on the company blog to keep users informed and excited about the future of the product. This version will focus on themes and major features, without committing to specific delivery dates.

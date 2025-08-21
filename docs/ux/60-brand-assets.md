@@ -13,7 +13,7 @@
 # PRD Section 60: Brand Assets & Identity Guidelines (Deep Dive)
 
 ## 1. Introduction
-This document is the comprehensive guide to the SyncWell brand identity. It provides detailed specifications and examples to ensure a consistent, professional, and trustworthy brand experience across all platforms and materials.
+This document is the comprehensive guide to the SyncWell brand identity. It provides detailed specifications and examples to ensure a consistent, professional, and trustworthy brand experience across all platforms and materials. This process is owned by the **Head of Marketing**.
 
 ## 2. Logo
 

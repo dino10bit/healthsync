@@ -82,3 +82,28 @@ This is the most critical workflow for efficient debugging.
 *   **[Mockup] Help Desk Dashboard:** A mockup of the Freshdesk dashboard showing the ticket queue, tags, and key metrics.
 *   **[Table] Content Plan for Help Center:** A table listing the top 15 planned articles for the Help Center at launch.
 *   **[Diagram] Tiered Support Model:** A diagram visually representing Tier 0 and Tier 1 support channels and the flow of users between them.
+
+## 8. Engineering Escalation Process
+This section defines the process for escalating issues from the Tier 1 support team to the engineering team.
+
+### 8.1. When to Escalate
+A support ticket should be escalated to engineering when:
+*   The issue is a confirmed, reproducible bug in the application.
+*   The issue requires technical investigation that the support agent cannot perform (e.g., analyzing backend logs).
+*   The issue is related to a production incident (e.g., a service outage).
+
+### 8.2. Escalation Procedure
+1.  **Create a Jira Ticket:** The support agent creates a new ticket in the appropriate Jira project (e.g., `BE` for backend, `MOB` for mobile).
+2.  **Link the Tickets:** The agent links the Jira ticket to the original support ticket in Freshdesk.
+3.  **Provide Context:** The Jira ticket description **must** include:
+    *   A clear and concise summary of the issue.
+    *   Steps to reproduce the bug.
+    *   The user's `userId` (if applicable and the user has consented).
+    *   A link back to the Freshdesk ticket.
+    *   Any relevant logs or attachments.
+4.  **Triage:** The engineering team lead for the relevant project is responsible for triaging all new escalated tickets on a daily basis and assigning them to an engineer.
+
+### 8.3. Communication Loop
+*   The support agent remains the primary point of contact for the user.
+*   When the engineering team provides updates in the Jira ticket, the support agent is responsible for communicating those updates back to the user in a clear, non-technical way.
+*   When the Jira ticket is resolved, the support agent is notified and can then inform the user that the issue has been fixed. This "closes the loop" and is critical for a good user experience.

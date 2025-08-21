@@ -20,4 +20,8 @@ This document is the single source of truth for all business and technical termi
 | **Provider** | A specific third-party health platform that SyncWell can integrate with, such as Strava, Garmin, or Fitbit. |
 | **Sync Job** | A single, discrete unit of work processed by a Worker Fargate Task. For example, "sync steps from Fitbit to Google Fit for user X on date Y". |
 | **User Story** | A small, self-contained unit of development work articulated from the perspective of an end user. It is the primary artifact for defining feature requirements. |
+| **User** | A human interacting with the SyncWell system. To avoid ambiguity, this term should be qualified with one of the following roles: |
+| | **End-User:** A customer who uses the SyncWell mobile application to sync their health data. |
+| | **Developer / Engineer:** A software engineer who builds and maintains the SyncWell application and infrastructure. |
+| | **Support Engineer:** A member of the customer support team who assists End-Users and operates internal support tools. |
 | **Worker Fargate Task** | The core containerized service in the SyncWell backend that contains the business logic for performing a sync job. |

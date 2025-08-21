@@ -93,24 +93,22 @@ To minimize the risk of production incidents, all backend services are deployed 
 *   **Monitoring:** The canary is closely monitored for any increase in error rates or latency.
 *   **Rollout/Rollback:** If the canary is stable, traffic is gradually shifted until it serves 100% of requests. If issues are detected, traffic is immediately routed back to the stable version.
 
-### 4b. Canary Releases for the Fargate Worker Service
+### 4b. Mobile App Release Strategy
 
-Canary releasing for a synchronous, user-facing service like an API is straightforward. For our asynchronous, SQS-driven worker fleet running on **AWS Fargate**, we will use **AWS CodeDeploy with a blue/green deployment strategy**.
+Releasing the mobile application requires a different approach, focused on managing the submission and review process for the Apple App Store and Google Play Store.
 
-This approach provides a clean, infrastructure-level solution for safely releasing updates to the containerized service.
-
-**Deployment & Canary Process:**
-
-1.  **Deploy New Version:** The CI/CD pipeline builds a new Docker image for the worker application and pushes it to Amazon ECR. It then creates a new task definition revision pointing to this new image.
-2.  **Initiate Blue/Green Deployment:** The pipeline triggers a new deployment in AWS CodeDeploy, configured for a `Blue/Green` deployment type. CodeDeploy provisions a new "green" Fargate fleet with the new task definition. The original, stable fleet is the "blue" environment.
-3.  **Test Listener:** A separate, temporary "test listener" is configured on the Application Load Balancer to route test traffic to the green environment. Automated tests are run against this test listener to verify the health of the new green fleet.
-4.  **Shift Traffic (Canary):** Once the green fleet is healthy, CodeDeploy begins shifting a small percentage of live traffic (e.g., 10%) from the blue fleet to the green fleet.
-5.  **Monitoring:** We monitor the CloudWatch metrics for the new green fleet, checking its CPU/Memory utilization, error rate, and processing latency. Alarms will be configured to automatically trigger a rollback if the canary's error rate exceeds a defined threshold.
-6.  **Gradual Rollout:** If the canary version is stable, CodeDeploy is configured to gradually shift the remaining traffic over a period of time (e.g., 10% every 5 minutes).
-7.  **Finalize & Terminate:** Once 100% of traffic is routed to the green fleet, the old blue fleet is de-registered and terminated after a "bake-in" period.
-8.  **Rollback:** If issues are detected at any point, CodeDeploy automatically and immediately rolls back by shifting 100% of traffic back to the original blue fleet.
-
-This approach provides a high degree of safety and control for releasing changes to our most critical asynchronous service.
+1.  **Automated Build & Signing:** The CI/CD pipeline (using Fastlane) will automatically build, sign, and upload the release candidate build to the respective app stores.
+    *   **Apple App Store:** Uploaded to TestFlight for internal and external beta testing.
+    *   **Google Play Store:** Deployed to the "Internal testing" track.
+2.  **Beta Testing:** Once the build is available, it is distributed to a pool of internal employees and external beta testers. Feedback is collected for one week.
+3.  **Submission for Review:** After the "hardening" period, the final build is submitted for review to both Apple and Google.
+4.  **Staged Rollout:** Once approved, the release will use the stores' native "staged rollout" capabilities.
+    *   **Day 1:** 1% of users
+    *   **Day 2:** 10% of users
+    *   **Day 3:** 50% of users
+    *   **Day 4:** 100% of users
+    *   **Monitoring:** During the staged rollout, mobile analytics (Firebase Crashlytics) will be monitored closely for any regressions or spikes in crashes.
+    *   **Halt Rollout:** If a critical issue is discovered, the staged rollout will be halted immediately.
 
 ## 5. The Release Process & Checklist
 

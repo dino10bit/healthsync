@@ -6,9 +6,15 @@ migrated: true
 
 ## 1. Executive Summary
 
-This document outlines the technical strategy for migrating the SyncWell user authentication system from **Firebase Authentication** to **Amazon Cognito**. This plan addresses the strategic risk **[RISK-HIGH-03]** of relying on a non-AWS service for a critical function. The migration is designed to be executed in phases to minimize user disruption and risk. The end state will be a unified, AWS-native architecture that improves security posture, simplifies operational management, and aligns with our long-term technical vision.
+This document outlines two potential strategies for mitigating the strategic risk **[RISK-HIGH-03]** of relying on Firebase Authentication as a single point of failure.
 
-The core of the strategy is a **phased, dual-write migration**. For a period, both Firebase and Cognito will be treated as valid authentication systems, with a preference to migrate users to Cognito over time. This approach avoids a single, high-risk "big bang" migration.
+### Strategy 1: Full Migration to Amazon Cognito
+This strategy involves a complete migration from Firebase to Amazon Cognito. The end state will be a unified, AWS-native architecture that improves security posture and simplifies operational management. The core of this strategy is a **phased, dual-write migration** to be executed over several months to minimize user disruption.
+
+### Strategy 2: Implement a Secondary Fallback Provider
+This strategy involves keeping Firebase as the primary authentication provider but implementing a secondary provider (e.g., Auth0, or a self-hosted solution) as a "hot spare". In the event of a prolonged Firebase outage, traffic could be redirected to the fallback provider. This approach reduces the immediate risk of an outage but increases long-term operational complexity by requiring the maintenance of two parallel systems.
+
+**Decision:** For the long-term health of the project, **Strategy 1 (Full Migration)** is the recommended approach. The remainder of this document details the plan for executing this migration.
 
 ## 2. Migration Goals & Success Metrics
 

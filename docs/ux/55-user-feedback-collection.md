@@ -16,6 +16,14 @@
 ## 1. Introduction
 Collecting and acting on user feedback is the most critical input to our product development lifecycle. This document provides a granular breakdown of the channels, processes, and tools for managing user feedback, ensuring a tight loop between our users and our development team.
 
+## 1a. Beta Program Feedback Process
+A dedicated process will be used for feedback collected from our external beta testers via TestFlight and the Google Play Beta Program.
+
+-   **Channel:** Beta testers will be instructed to send all feedback to a dedicated email address: `beta-feedback@syncwell.com`. This ensures that beta feedback is clearly separated from general user feedback.
+-   **Triage:** The Product Manager is responsible for personally reviewing all incoming beta feedback within **24 hours**.
+-   **Prioritization:** Bugs reported by beta testers that are related to the feature currently under test are considered high priority and will be fast-tracked in Jira.
+-   **Communication:** The Product Manager will reply directly to beta testers to acknowledge their feedback, ask clarifying questions, and notify them when a bug they reported has been fixed. This high-touch engagement is critical for maintaining a healthy and active beta testing community.
+
 ## 2. Feedback Channels & Processes
 
 ### 2.1. In-App Feedback Form - UI/UX Deep Dive
