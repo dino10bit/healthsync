@@ -377,15 +377,17 @@ sequenceDiagram
     participant Redis as "ElastiCache for Redis\n(Rate Limiter)"
     participant SQS as "SQS Queue"
     participant ThirdParty as "Third-Party API"
-    Worker->>+Redis: Atomically check & decrement token
+
+    Worker->>Redis: Atomically check & decrement token
+
     alt Token Available
-        Redis-->>-Worker: OK
-        Worker->>+ThirdParty: GET /v1/data
-        ThirdParty-->>-Worker: 200 OK
+        Redis-->>Worker: OK
+        Worker->>ThirdParty: GET /v1/data
+        ThirdParty-->>Worker: 200 OK
     else Token Not Available
-        Redis-->>-Worker: FAIL
+        Redis-->>Worker: FAIL
         Worker->>SQS: ChangeMessageVisibility(calculated_delay)
-        note right of Worker: Return job to queue with<br>exponential backoff + jitter
+        note right of Worker: Return job to queue with\nexponential backoff + jitter
     end
 ```
 
@@ -882,7 +884,7 @@ For analytics, **Amazon Kinesis Data Firehose** will be used.
             B -- Yes --> D{User is PRO Tier?};
             D -- Yes --> E[Get PRO Sampling Rate<br>e.g., 1/100];
             D -- No --> F[Get FREE Sampling Rate<br>e.g., 1/10,000];
-            E --> G{Apply Sampling Logic<br>hash(jobId) % rate == 0?};
+            E --> G{Apply Sampling Logic\nhash of jobId % rate == 0?}
             F --> G;
             G -- Yes --> H[Ingest Buffered Logs<br>to CloudWatch];
             G -- No --> I[Discard Logs];
