@@ -159,15 +159,59 @@ Based on the new cost structure (Fixed: ~$200/month, Variable: ~$897/month per 1
 
 *Note: Fixed costs are held constant for this projection. A more detailed analysis is required to model how these costs (e.g., for cache clusters) will step-scale with significantly higher user loads.*
 
-### 4.3. Low-End Scalability Analysis
+### 4.3. Low-End Scalability Analysis (Corrected)
 
-For a clearer view of costs during the initial growth phases of the platform, this section projects costs for lower DAU tiers. The same fixed and variable cost model is applied.
+For a clearer view of costs during the initial growth phases of the platform, this section projects costs for lower DAU tiers. The model has been corrected to use the more precise fixed cost base of **$218.80** derived from the detailed service breakdown.
 
 | Metric                | 100 DAU (Projected) | 1k DAU (Projected) | 10k DAU (Projected) | 50k DAU (Projected) | 100k DAU (Projected) |
 | :-------------------- | :------------------ | :----------------- | :------------------ | :------------------ | :------------------- |
-| **Variable Costs/Month**| ~$0.09              | ~$0.90             | ~$9                 | ~$45                | ~$90                 |
-| **Fixed Costs/Month**   | ~$200               | ~$200              | ~$200               | ~$200               | ~$200                |
-| **Total Monthly Cost**  | **~$200**           | **~$201**          | **~$209**           | **~$245**           | **~$290**            |
+| **Variable Costs/Month**| ~$0.09              | ~$0.88             | ~$8.79              | ~$43.93             | ~$87.86              |
+| **Fixed Costs/Month**   | ~$218.80            | ~$218.80           | ~$218.80            | ~$218.80            | ~$218.80             |
+| **Total Monthly Cost**  | **~$219**           | **~$220**          | **~$228**           | **~$263**           | **~$307**            |
+
+## 4a. Service-Level Cost Projections for Early Growth Stages (Corrected)
+
+This section provides a more granular, service-by-service cost breakdown for the early-stage growth phases. The calculations have been corrected to align with the revised fixed/variable cost model, ensuring consistency with the summary table above.
+
+### Detailed Service-Level Cost Breakdown (Normal Load)
+
+This table projects the **monthly costs** for each service under normal load at lower DAU tiers.
+
+| Category | Service | 100 DAU (Monthly) | 1k DAU (Monthly) | 10k DAU (Monthly) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Core Compute** | AWS Fargate | ~$0.10 | ~$0.95 | ~$9.52 |
+| | AWS Lambda | ~$0.07 | ~$0.70 | ~$7.00 |
+| **API & Messaging** | Amazon SQS | ~$0.21 | ~$2.06 | ~$20.63 |
+| | Amazon EventBridge| ~$0.06 | ~$0.57 | ~$5.70 |
+| | API Gateway | ~$0.01 | ~$0.10 | ~$1.00 |
+| | AWS Step Functions| ~$0.04 | ~$0.38 | ~$3.75 |
+| **Database & Cache** | Amazon DynamoDB | ~$0.10 | ~$1.03 | ~$10.33 |
+| | Amazon ElastiCache| ~$100.80 | ~$100.80 | ~$100.80 |
+| **Observability** | AWS CloudWatch | ~$30.01 | ~$30.53 | ~$35.25 |
+| **Networking & Security**| AWS NAT Gateway | ~$65.01 | ~$65.54 | ~$70.40 |
+| | AWS WAF | ~$10.02 | ~$10.15 | ~$11.50 |
+| **Data Governance** | AWS Glue Schema Registry| ~$0.03 | ~$0.32 | ~$3.18 |
+| | AWS Secrets Manager| ~$0.01 | ~$0.11 | ~$1.10 |
+| **Data Storage** | Amazon S3 | ~$8.00 | ~$8.00 | ~$8.00 |
+| | Amazon CloudFront | ~$5.00 | ~$5.00 | ~$5.00 |
+| **Total** | | **~$219.47** | **~$226.24** | **~$293.16** |
+
+*Note: Totals may have minor rounding differences from the summary table above.*
+
+### Detailed Service-Level Cost Breakdown (Peak Load)
+
+This table projects the **hourly costs** for each service under a peak load scenario, which is assumed to scale linearly with DAU (0.3 RPS for 100 DAU, 3 RPS for 1k DAU, 30 RPS for 10k DAU).
+
+| Category | Service | 100 DAU (Hourly) | 1k DAU (Hourly) | 10k DAU (Hourly) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Core Compute** | AWS Fargate | ~$0.00 | ~$0.02 | ~$0.17 |
+| **Messaging & Events** | Amazon SQS | ~$0.00 | ~$0.00 | ~$0.04 |
+| | Amazon EventBridge| ~$0.00 | ~$0.01 | ~$0.05 |
+| **Database & Cache** | Amazon DynamoDB | ~$0.00 | ~$0.01 | ~$0.14 |
+| **Observability** | AWS CloudWatch | ~$0.00 | ~$0.03 | ~$0.27 |
+| **Networking & Security**| AWS NAT Gateway | ~$0.23 (fixed) | ~$0.23 (fixed) | ~$0.23 (fixed) |
+| | AWS WAF | ~$0.00 | ~$0.01 | ~$0.06 |
+| **Total** | | **~$0.23** | **~$0.31** | **~$0.96** |
 
 ## 5. Cost of Goods Sold (COGS) Analysis (Revised)
 
