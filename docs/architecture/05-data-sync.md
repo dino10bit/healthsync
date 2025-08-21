@@ -13,9 +13,9 @@ migrated: true
 
 ### Strategic / Indirect Dependencies
 - `../prd/01-context-vision.md` - Context & Vision
-- `../../16-performance-optimization.md` - Performance & Scalability
+- `../ops/16-performance-optimization.md` - Performance & Scalability
 - `../prd/31-historical-data.md` - Historical Data Handling
-- `../../40-error-recovery.md` - Error Recovery & Troubleshooting
+- `../ux/40-error-recovery.md` - Error Recovery & Troubleshooting
 
 ---
 
@@ -59,6 +59,16 @@ The algorithm uses an **"intelligent hydration"** model to minimize data transfe
 3.  **Fetch New Data Metadata:** The worker calls `fetchMetadata(since: lastSyncTime)` on the source `DataProvider`. This returns a list of lightweight objects containing only metadata (IDs, timestamps), not heavy payloads (like GPX files).
 4.  **Handle Empty Source:** If the metadata list is empty, the job is considered complete. The worker updates the `lastSyncTime`, deletes the SQS message, and stops. This is a critical cost-saving step.
 5.  **Algorithmic Optimization ("Sync Confidence" Check):** Before fetching from the destination, the worker checks the "Sync Confidence" cache (Redis). If the conflict strategy is `Prioritize Source` or the confidence counter is high, the destination fetch is skipped.
+
+    *   **Detailed "Sync Confidence" Implementation:** To improve the efficiency of the core sync algorithm, the system employs this "Sync Confidence" caching strategy. The default sync behavior fetches data from the destination provider to perform conflict resolution. However, this destination fetch is often unnecessary, and this optimization avoids that fetch under specific conditions.
+        *   **Redis Cache:** The `WorkerFargateTask` will use Redis to store a simple integer counter.
+        *   **Cache Key Schema:** The key will follow the format `sync:confidence:{userId}:{destinationProvider}`.
+        *   **Logic:**
+            1.  **Strategy-Based Elimination:** Before a sync job, the worker will check the user's conflict resolution strategy. If it is `source_wins` (the new default, formerly `Prioritize Source`), the destination API call will be skipped entirely.
+            2.  **Pattern-Based Elimination:** If the strategy requires a destination check, the worker will check the value of the Redis key. If the counter exceeds a configured threshold of **10**, the destination API call will be skipped.
+            3.  **Counter Management:** If the destination API is called and returns data, the counter is reset to 0. If it returns no data, the counter is incremented. If a `pushData` operation later fails due to a conflict (indicating the cache was wrong), the counter is also reset to zero, forcing a re-fetch on the next attempt.
+        *   **Configuration:** The threshold for consecutive empty polls (10) will be managed as an environment variable in the `WorkerFargateTask` to allow for tuning without code redeployment.
+
 6.  **Fetch Destination Data for Conflict Resolution (Conditional):** If the confidence check does not result in a skip, the worker fetches potentially overlapping data from the destination `DataProvider`.
 7.  **Conflict Resolution on Metadata:** The `Conflict Resolution Engine` is invoked. It compares the source and destination **metadata** and applies the user's chosen strategy. It returns a definitive list of `sourceRecordIds` that need to be written to the destination.
 8.  **Intelligent Hydration:** If the list of `sourceRecordIds` to write is not empty, the worker now calls `fetchPayloads(recordIds: sourceRecordIds)` on the source `DataProvider`. This fetches the full, heavy data payloads **only for the records that will actually be written**.
@@ -89,11 +99,11 @@ A conflict is detected if a `source` activity and a `destination` activity have 
 *   **Transactional State:** State updates in DynamoDB are atomic. The `lastSyncTime` is only updated if the entire write operation to the destination platform succeeds.
 *   **Dead Letter Queue (DLQ):** If a job fails repeatedly (e.g., due to a persistent third-party API error), SQS will automatically move it to a DLQ. This allows for manual inspection and debugging without blocking the main queue.
 
-## 5a. Historical Data Sync (Post-MVP)
+## 6. Historical Data Sync (Post-MVP)
 
 Handling a user's request to sync several years of historical data is a key feature planned for a post-MVP release. It requires a more complex "Cold Path" architecture using AWS Step Functions to ensure reliability over long-running jobs. The detailed specification for this feature is deferred and captured in `../prd/45-future-enhancements.md`.
 
-## 5b. User Support Flow for DLQ Messages
+## 7. User Support Flow for DLQ Messages
 
 When a sync job permanently fails and is moved to the Dead-Letter Queue (DLQ), it represents a failure that the system could not automatically resolve. These cases require manual intervention and clear user communication.
 
@@ -120,12 +130,6 @@ When a sync job permanently fails and is moved to the Dead-Letter Queue (DLQ), i
         *   **Initial Contact (24hr SLA):** "Hi [User], we're writing to let you know that a recent data sync from [Source] to [Destination] failed due to an unexpected error. Our engineering team is investigating the issue. We will update you as soon as we have more information. We apologize for the inconvenience."
         *   **Resolution (Bug Fix):** "Hi [User], we've resolved the issue that caused your sync to fail. We have re-processed the data, and everything should now be up to date. Please let us know if you see any other problems."
         *   **Resolution (User Action Needed):** "Hi [User], to resolve the issue with your [Source] connection, please go to Settings > Connected Apps in the SyncWell app, disconnect [Source], and then reconnect it. This will refresh your credentials and should fix the problem."
-
-## 6. Functional & Non-Functional Requirements
-*(Unchanged)*
-
-## 7. Risk Analysis & Mitigation
-*(Unchanged)*
 
 ## 8. Visual Diagrams
 
