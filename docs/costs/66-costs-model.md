@@ -56,7 +56,7 @@ This section provides a detailed, bottom-up cost estimation based on the final, 
 | **Core Compute** | AWS Fargate | 90% Spot, Graviton, Batching, Hydration | $95.17 |
 | | AWS Lambda | Authorizer, Pre-flight Checks, etc. | $70.00 |
 | **API & Messaging** | Amazon SQS | FIFO & Standard Queues (~421M messages total) | $206.34 |
-| | Amazon EventBridge| Bus (~57M events post-coalescing) | $57.00 |
+| | Amazon EventBridge| Bus (~40M events post-coalescing & direct integration) | $40.00 |
 | | API Gateway | WebSocket API for hot users | $10.00 |
 | | AWS Step Functions| Scheduling state machine: ~1.5M transitions | $37.50 |
 | **Database & Cache** | Amazon DynamoDB | On-demand, reduced reads from pre-flight | $103.29 |
@@ -67,20 +67,21 @@ This section provides a detailed, bottom-up cost estimation based on the final, 
 | **Data Governance** | AWS Glue Schema Registry| 100 versions + 218M requests | $31.80 |
 | | AWS Secrets Manager| App secrets + cached API calls | $11.00 |
 | **Data Storage** | Amazon S3 | Log & backup storage with lifecycle policies | $8.00 |
-| | Amazon CloudFront | CDN for static assets | $5.00 |
-| **Total** | | | **~$1,097.40** |
+| | Amazon CloudFront | CDN for APIs & static assets | $55.00 |
+| **Total** | | | **~$1,120.23** |
 
 ### 2.1. Analysis of Deep Cost Model
-This detailed, bottom-up analysis reveals that the true operational cost is approximately **$1,097 per month**. This model is the result of a comprehensive, multi-layered optimization strategy that combines efficient infrastructure choices with intelligent, application-aware logic to minimize waste.
+This detailed, bottom-up analysis reveals that the true operational cost is approximately **$1,120 per month**. This model is the result of a comprehensive, multi-layered optimization strategy that combines efficient infrastructure choices with intelligent, application-aware logic to minimize waste.
 
 *   **Key Cost Drivers:** After extensive optimization, the remaining primary cost drivers are messaging (SQS), security (WAF), networking (NAT Gateway), and core database/cache services.
 *   **Integrated Optimizations:** The cost figures in the table above are achieved through several key strategies:
+    *   **API & Ingress Path:** The architecture uses **CloudFront** to cache API requests and **a direct API Gateway-to-SQS integration**, which significantly reduces costs. The CloudFront cost of **~$55.00** reflects its role serving both static assets and API traffic, which in turn reduces the load and cost on the downstream API Gateway and compute services. The EventBridge cost of **~$40.00** is lower due to the direct SQS integration for high-volume paths.
     *   **Tiered Observability:** The CloudWatch cost of **~$82.50** is significantly reduced by implementing tiered log sampling. Log data for `FREE` users is sampled aggressively, while `PRO` users receive higher fidelity, aligning cost with revenue.
     *   **Pre-flight Checks:** The Fargate, Lambda, and DynamoDB costs are optimized via a pre-flight check for polling-based syncs. A lightweight Lambda (**~$17/month** of the total Lambda cost) checks for new data first, avoiding an estimated **61 million** unnecessary Fargate task invocations per month and their associated database reads. This accounts for the lower Fargate and DynamoDB costs.
     *   **Intelligent Data Hydration:** The NAT Gateway and Fargate costs are further reduced by fetching heavyweight data payloads only when necessary, minimizing data transfer and processing. This accounts for the **~$18/month** reduction in NAT Gateway data processing charges.
 *   **Fixed vs. Variable Costs:**
     *   **Fixed:** The largest fixed costs are the hourly charges for the NAT Gateway (~$65) and the ElastiCache cluster (~$101). Total fixed costs are approximately **$200/month**.
-    *   **Variable:** The remaining **~$897/month** are variable costs that scale directly with user activity.
+    *   **Variable:** The remaining **~$920/month** are variable costs that scale directly with user activity.
 
 ### 2.2. Granular Analysis of Key Cost Drivers
 To better understand the cost structure, this section provides a deeper look into the key cost drivers.
@@ -95,18 +96,18 @@ The observability suite cost is heavily optimized via the **Tiered Observability
 | **Custom Metrics & Alarms**| Placeholder for various metrics and alarms | $30.00 |
 | **Total** | | **~$82.50** |
 
-#### Amazon EventBridge & SQS Costs (~$263/month)
+#### Amazon EventBridge & SQS Costs (~$246/month)
 The eventing and messaging layer is a critical part of the architecture. Costs are driven by the high volume of events flowing through the system. The following optimizations are in place:
 *   The expensive EventBridge Scheduler has been replaced by a more cost-effective SQS-based delayed polling mechanism.
-*   The highest-volume ingestion path (API Gateway -> SQS) now bypasses EventBridge entirely.
+*   **Direct Ingress Path:** The highest-volume ingestion path from API Gateway now sends jobs directly to SQS, bypassing EventBridge. This architectural change accounts for the significant reduction in EventBridge events and costs.
 *   The core `HotPathSyncQueue` uses SQS FIFO, which has a different pricing model than Standard queues.
 *   Event coalescing is used on webhook events to dramatically reduce the number of events sent to EventBridge.
 
 | Service | Component | Calculation | Estimated Cost (per Month) |
 | :--- | :--- | :--- | :--- |
-| **EventBridge** | Custom Event Puts | ~57M events * $1.00/M | $57.00 |
+| **EventBridge** | Custom Event Puts | ~40M events * $1.00/M | $40.00 |
 | **SQS** | FIFO & Standard Queues | ~421M messages * $0.50/M (avg) | $206.34 |
-| **Total** | | | **~$263.34** |
+| **Total** | | | **~$246.34** |
 
 ## 3. Cost Analysis: Peak Load
 
@@ -142,20 +143,20 @@ Under a sustained peak load of 3,000 RPS, the estimated cost for the infrastruct
 
 ## 4. Financial Projections & Scalability (Revised)
 
-This section is revised based on the new, fully-optimized cost model of **~$1,097/month**.
+This section is revised based on the new, fully-optimized cost model of **~$1,120/month**.
 
 ### 4.1. Annual Cost Projection (1M DAU)
-*   **Calculation:** $1,097/month * 12 months = **$13,164**
-*   **Projected Annual Cost:** Approximately **$13,200 per year**.
+*   **Calculation:** $1,120/month * 12 months = **$13,440**
+*   **Projected Annual Cost:** Approximately **$13,500 per year**.
 
 ### 4.2. Revised Scalability Analysis
-Based on the new cost structure (Fixed: ~$200/month, Variable: ~$897/month per 1M DAU). This table projects the costs for different user load scenarios.
+Based on the new cost structure (Fixed: ~$200/month, Variable: ~$920/month per 1M DAU). This table projects the costs for different user load scenarios.
 
 | Metric | 250k DAU (Projected) | 1M DAU (Baseline) | 5M DAU (Projected) | 10M DAU (Projected) | 20M DAU (Projected) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Variable Costs/Month**| ~$224 | ~$897 | ~$4,485 | ~$8,970 | ~$17,940 |
+| **Variable Costs/Month**| ~$230 | ~$920 | ~$4,600 | ~$9,200 | ~$18,400 |
 | **Fixed Costs/Month** | ~$200 | ~$200 | ~$200 | ~$200 | ~$200 |
-| **Total Monthly Cost**| **~$424** | **~$1,097** | **~$4,685** | **~$9,170** | **~$18,140** |
+| **Total Monthly Cost**| **~$430** | **~$1,120** | **~$4,800** | **~$9,400** | **~$18,600** |
 
 *Note: Fixed costs are held constant for this projection. A more detailed analysis is required to model how these costs (e.g., for cache clusters) will step-scale with significantly higher user loads.*
 
@@ -215,19 +216,19 @@ This table projects the **hourly costs** for each service under a peak load scen
 
 ## 5. Cost of Goods Sold (COGS) Analysis (Revised)
 
-This analysis is updated with the new total monthly cost of ~$1,097.
+This analysis is updated with the new total monthly cost of ~$1,120.
 
-*   **Blended Average Cost Per User (ACPU):** $1,097 / 1,000,000 DAU = **$0.0011 per user per month**.
-*   **Tier-Specific Cost:** A Pro user now costs approximately **$0.0036 per month**, while a Free user costs **$0.00027 per month**.
+*   **Blended Average Cost Per User (ACPU):** $1,120 / 1,000,000 DAU = **$0.00112 per user per month**.
+*   **Tier-Specific Cost:** A Pro user now costs approximately **$0.0037 per month**, while a Free user costs **$0.00028 per month**.
 
 ## 6. Break-Even Analysis (Revised)
 
 With the fully optimized cost base, the break-even point is calculated.
 
 *   **Assumption:** Pro Tier Price of $2.99/month.
-*   **Calculation:** `P * $2.99/month = $1,097/month`
-*   **Result:** `P ≈ 367`
-*   **Analysis:** The revenue from approximately **367 Pro subscribers** is required to cover the entire monthly infrastructure cost. This represents only **0.18%** of the 200,000 Pro users projected at the 1M DAU mark, indicating an extremely robust and profitable business model.
+*   **Calculation:** `P * $2.99/month = $1,120/month`
+*   **Result:** `P ≈ 375`
+*   **Analysis:** The revenue from approximately **375 Pro subscribers** is required to cover the entire monthly infrastructure cost. This represents only **0.19%** of the 200,000 Pro users projected at the 1M DAU mark, indicating an extremely robust and profitable business model.
 
 ## 7. Long-Term Data Storage Costs
 *(This analysis is still valid and integrated into the main table, but is kept for its detailed breakdown.)*
@@ -336,7 +337,7 @@ This change has a significant impact on cost, as the primary data-generating com
 | **Data Processing Cost (1.6TB)** | ~$104 | ~$72 |
 | **Total Monthly Cost**| **~$673** | **~$137** |
 
-By routing the 1.6TB of Fargate traffic through the NAT Gateway, the monthly cost for this component is reduced from ~$673 to **~$137**, saving over $530 per month. This is a pragmatic optimization, as the destinations for this traffic are well-known and can be secured effectively with network ACLs and security groups, making the Network Firewall's advanced features unnecessary for this specific workload.
+By routing the 1.6TB of Fargate traffic through the NAT Gateway, the monthly cost for this component is reduced from ~$673 to **~$137**, saving over $530 per month. The main architecture diagram (`06-technical-architecture.md`) has been updated to reflect this superior hybrid model. This is a pragmatic optimization, as the destinations for this traffic are well-known and can be secured effectively with network ACLs and security groups, making the Network Firewall's advanced features unnecessary for this specific workload.
 
 ### 10.3. Cross-AZ Data Transfer
 
