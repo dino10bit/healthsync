@@ -44,24 +44,25 @@ The core components for the MVP are:
 *   **`Conflict Resolution Engine`:** A component within the worker that resolves data conflicts using simple, deterministic rules.
 *   **`DynamoDB`:** The `SyncWellMetadata` table stores all essential state for the sync process.
 
-## 3. The Synchronization Algorithm (Server-Side Delta Sync for MVP)
+## 3. The Synchronization Algorithm
 
-The `Worker Fargate Task` will follow this algorithm for each job pulled from the SQS queue:
+The core sync logic resides within the `Worker Fargate Task`. This logic is invoked for webhook-driven events and user-initiated syncs. For polling-based providers, this full algorithm is only triggered after a lightweight **"pre-flight check"** confirms that new data is available, preventing wasted work.
 
-1.  **Job Dequeue:** The Fargate task receives a job message (e.g., "Sync Steps for User X from Fitbit to Google Fit").
-2.  **Get State from DynamoDB:** The worker task performs a `GetItem` call on the `SyncWellMetadata` table to retrieve the `SyncConfig` item. This read provides the `lastSyncTime` and the user's chosen `conflictResolutionStrategy`.
-3.  **Fetch New Data:** It calls the `fetchData(since: lastSyncTime, dataType: job.dataType)` method on the source `DataProvider`. The `dataType` (e.g., "steps", "workouts") is retrieved from the job payload.
-4.  **Algorithmic Optimization ("Sync Confidence" Check):** Before fetching from the destination, the worker performs a check against the "Sync Confidence" cache (Redis).
-    *   If the user's conflict strategy is `Prioritize Source`, the destination fetch is skipped entirely.
-    *   If the confidence counter for the user/provider pair exceeds a configured threshold (indicating a pattern of no-conflict syncs), the destination fetch is also skipped.
-    *   If the check is skipped, proceed directly to Step 6.
-5.  **Fetch Destination Data for Conflict Resolution:** To enable conflict resolution, the worker fetches potentially overlapping data from the destination `DataProvider`, again specifying the `dataType`. The time range for this query will be the exact time range of the new data fetched from the source.
-6.  **Conflict Resolution:** The `Conflict Resolution Engine` is invoked. It compares the source and destination data (if fetched) and applies the user's chosen strategy (e.g., "Prioritize Source").
-7.  **Write Data:** The worker calls the generic `pushData(data: conflictFreeData)` method on the destination provider.
-8.  **Handle Partial Failures:** The worker **must** inspect the `PushResult` returned from the `pushData` call. For the MVP, if the push is not completely successful, the entire job will be considered failed. The worker will throw an error, allowing SQS to retry the job. This is a safe-by-default strategy. It is expected that on the subsequent retry, the entire batch of data will be re-processed. Destination systems are responsible for providing their own idempotency (e.g., based on activity timestamp and source ID) to prevent data duplication.
-9.  **Update State in DynamoDB:** Only upon full successful completion, the worker performs an `UpdateItem` call on the `SyncConfig` item in `SyncWellMetadata` to set the new `lastSyncTime`.
-10. **Update "Sync Confidence" Cache:** If the destination API call was skipped (Step 4) and the write failed due to a conflict, the confidence counter in Redis **must** be reset to zero. If the destination API was called and returned no data, the counter is incremented.
-11. **Delete Job Message:** The worker deletes the job message from the SQS queue to mark it as complete.
+The algorithm uses an **"intelligent hydration"** model to minimize data transfer.
+
+1.  **Job Dequeue:** The Fargate task receives a job message (e.g., "Sync Workouts for User X from Strava to Garmin").
+2.  **Get State from DynamoDB:** The worker retrieves the `SyncConfig` item to get the `lastSyncTime` and the user's chosen `conflictResolutionStrategy`.
+3.  **Fetch New Data Metadata:** The worker calls `fetchMetadata(since: lastSyncTime)` on the source `DataProvider`. This returns a list of lightweight objects containing only metadata (IDs, timestamps), not heavy payloads (like GPX files).
+4.  **Handle Empty Source:** If the metadata list is empty, the job is considered complete. The worker updates the `lastSyncTime`, deletes the SQS message, and stops. This is a critical cost-saving step.
+5.  **Algorithmic Optimization ("Sync Confidence" Check):** Before fetching from the destination, the worker checks the "Sync Confidence" cache (Redis). If the conflict strategy is `Prioritize Source` or the confidence counter is high, the destination fetch is skipped.
+6.  **Fetch Destination Data for Conflict Resolution (Conditional):** If the confidence check does not result in a skip, the worker fetches potentially overlapping data from the destination `DataProvider`.
+7.  **Conflict Resolution on Metadata:** The `Conflict Resolution Engine` is invoked. It compares the source and destination **metadata** and applies the user's chosen strategy. It returns a definitive list of `sourceRecordIds` that need to be written to the destination.
+8.  **Intelligent Hydration:** If the list of `sourceRecordIds` to write is not empty, the worker now calls `fetchPayloads(recordIds: sourceRecordIds)` on the source `DataProvider`. This fetches the full, heavy data payloads **only for the records that will actually be written**.
+9.  **Write Data:** The worker calls `pushData(data: hydratedData)` on the destination provider with the fully hydrated data objects.
+10. **Handle Partial Failures:** The worker inspects the `PushResult`. For the MVP, if the push is not completely successful, the entire job is considered failed. The worker throws an error, allowing SQS to retry the job.
+11. **Update State in DynamoDB:** Only upon full successful completion, the worker performs an `UpdateItem` call to set the new `lastSyncTime`.
+12. **Update "Sync Confidence" Cache:** The confidence counter in Redis is updated based on the sync outcome to inform future jobs.
+13. **Delete Job Message:** The worker deletes the job message from the SQS queue to mark it as complete.
 
 ## 4. Conflict Resolution Engine (MVP)
 
