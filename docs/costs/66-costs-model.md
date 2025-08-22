@@ -36,78 +36,40 @@ This document lists the key assumptions used to generate the cost models and fin
 
 This document provides an exhaustive, bottom-up financial analysis for the SyncWell backend architecture, grounded in the detailed specifications of `06-technical-architecture.md`.
 
-The fully-optimized model estimates a total monthly cost of **~$1,130** for supporting 1 million Daily Active Users ("Normal Load"). This figure is the result of a multi-layered cost optimization strategy, including architectural choices like leveraging Fargate Spot for compute, and application-aware logic such as tiered observability and intelligent data fetching.
+The reconciled model, based on using **AWS Lambda** for the primary workload, estimates a total monthly cost of **~$7,914** for supporting 1 million Daily Active Users ("Normal Load"). This figure is significantly higher than previous estimates which were based on an incorrect compute model (Fargate). The analysis has been updated to reflect the production-ready architecture.
 
 The analysis extends into a full financial forecast, covering:
-*   **Detailed Cost Breakdown:** A granular, service-by-service cost breakdown, with explanations of the key optimizations that contribute to the final cost figures.
-*   **Scalability & Projections:** Revised annual costs and scalability models based on the final, optimized cost structure.
-*   **Business Viability:** An updated Cost of Goods Sold (COGS) and a **Break-Even Analysis**, which shows that only **~367 Pro users** are required to cover the entire monthly infrastructure cost.
-*   **Architectural & Networking Analysis:** A **comparative TCO analysis of Fargate vs. EC2** and a detailed breakdown of **networking costs and trade-offs** (Network Firewall vs. NAT Gateway).
+*   **Detailed Cost Breakdown:** A granular, service-by-service cost breakdown based on the reconciled architecture.
+*   **Scalability & Projections:** Revised annual costs and scalability models.
+*   **Business Viability:** An updated Cost of Goods Sold (COGS) and a **Break-Even Analysis**.
+*   **Architectural & Networking Analysis:** A comparative TCO analysis and a detailed breakdown of networking costs.
 *   **Risk & Strategy:** A sensitivity analysis of key cost drivers.
 
-The analysis concludes that the architecture is highly cost-effective and the business model is robust, with a clear path to profitability.
+The analysis concludes that while the costs are higher than initially projected, the business model remains robust with a clear path to profitability.
 
-## 2. Detailed Service-Level Cost Breakdown (Normal Load)
+## 2. Reconciled Production Monthly Cost Estimate (Nominal Scenario)
 
-This section provides a detailed, bottom-up cost estimation based on the final, fully-optimized technical architecture for the "Normal Load" scenario (1M DAU, 7.6M jobs/day, ~228M jobs/month).
+**BLOCKER:** The previous cost model was invalid as it was based on a Fargate compute model for the hot path and incorrect network egress assumptions. It has been replaced with this reconciled estimate from the Production-Readiness Review, which uses AWS Lambda and the corrected traffic model, resulting in a revised estimate of **~$7,914/month**.
 
-| Category | Service | Component & Calculation | Estimated Cost (per Month) |
-| :--- | :--- | :--- | :--- |
-| **Core Compute** | AWS Fargate | 90% Spot, Graviton, Batching, Hydration | $95.17 |
-| | AWS Lambda | Authorizer, Pre-flight Checks, etc. | $70.00 |
-| **API & Messaging** | Amazon SQS | FIFO & Standard Queues (~421M messages total) | $206.34 |
-| | Amazon EventBridge| Bus (~40M events post-coalescing & direct integration) | $40.00 |
-| | API Gateway | WebSocket API for hot users | $10.00 |
-| | AWS Step Functions| Scheduling state machine: ~1.5M transitions | $37.50 |
-| **Database & Cache** | Amazon DynamoDB | On-demand, reduced reads from pre-flight | $103.29 |
-| | Amazon ElastiCache| 2x `cache.t4g.medium` nodes for Redis | $100.80 |
-| **Observability** | AWS CloudWatch | Tiered Sampling for Logs & Traces | $82.50 |
-| **Networking & Security**| AWS NAT Gateway | Reduced egress from data hydration | $119.00 |
-| | AWS WAF | Web ACL, rules, and 250M requests | $160.00 |
-| **Data Governance** | AWS Glue Schema Registry| 100 versions + 218M requests | $31.80 |
-| | AWS Secrets Manager| App secrets + cached API calls | $11.00 |
-| **Data Storage** | Amazon S3 | Log & backup storage with lifecycle policies | $8.00 |
-| | Amazon CloudFront | CDN for APIs & static assets | $55.00 |
-| **Total** | | | **~$1,130.40** |
+This table presents a re-calculated, bottom-up cost estimate based on the **recommended architecture** and the **Nominal traffic model** (1M DAU, 7.6M syncs/day).
 
-### 2.1. Analysis of Deep Cost Model
-This detailed, bottom-up analysis reveals that the true operational cost is approximately **$1,130 per month**.
+| Component | Service | Unit Cost | Units (Monthly) | Reconciled Cost |
+| :--- | :--- | :--- | :--- | :--- |
+| **Compute** | AWS Lambda (Graviton) | `$0.00001333/GB-s` | 228M invocations, 1024MB, 1.5s avg duration | **$4,561** |
+| | | `$0.20/M invokes` | 228M invocations | **$46** |
+| **Database** | DynamoDB (On-Demand) | `$1.25/M WCU` | 456M WCUs (Global Table x2) | **$570** |
+| | | `$0.25/M RCU` | 456M RCUs | **$114** |
+| **Caching** | ElastiCache for Redis | `$0.266/hr` | 2x `cache.m6g.large` nodes | **$383** |
+| **Network/Egress**| NAT Gateway | `$0.045/GB` | 9,100 GB processed | **$410** |
+| | | `$0.045/hr` | 2x NAT Gateways (Multi-AZ) | **$65** |
+| **Messaging** | Amazon SQS (Standard) | `$0.40/M requests` | ~500M requests | **$200** |
+| | API Gateway | `$1.00/M requests` | 228M requests | **$228** |
+| **Observability**| CloudWatch | (Logs, Metrics, Alarms) | Based on Lambda/API volume | **$1,250** |
+| **Security** | AWS WAF | `$0.60/M requests` | 228M requests | **$137** |
+| **Other** | (S3, Secrets Manager, etc.) | - | - | **$50** |
+| **TOTAL** | | | | **~$7,914 / month** |
 
-*   **Key Cost Drivers:** After extensive optimization, the remaining primary cost drivers are messaging (SQS), security (WAF), networking (NAT Gateway), and core database/cache services.
-*   **Integrated Optimizations:** The cost figures in the table above are achieved through several key strategies:
-    *   **API & Ingress Path:** The architecture uses **CloudFront** to cache API requests and **direct API Gateway-to-SQS integrations**, which significantly reduces costs. The CloudFront cost of **~$55.00** reflects its role serving both static assets and API traffic, which in turn reduces the load and cost on the downstream API Gateway and compute services. The EventBridge cost of **~$40.00** is significantly lower because two high-volume paths (API Gateway ingress and webhook coalescing) send messages directly to SQS, bypassing the event bus entirely.
-    *   **Tiered Observability:** The CloudWatch cost of **~$82.50** is significantly reduced by implementing tiered log sampling. Log data for `FREE` users is sampled aggressively, while `PRO` users receive higher fidelity, aligning cost with revenue.
-    *   **Pre-flight Checks:** The Fargate, Lambda, and DynamoDB costs are optimized via a pre-flight check for polling-based syncs. A lightweight Lambda (**~$17/month** of the total Lambda cost) checks for new data first, avoiding an estimated **61 million** unnecessary Fargate task invocations per month and their associated database reads. This accounts for the lower Fargate and DynamoDB costs.
-    *   **Intelligent Data Hydration:** The NAT Gateway and Fargate costs are further reduced by fetching heavyweight data payloads only when necessary, minimizing data transfer and processing. This accounts for the **~$18/month** reduction in NAT Gateway data processing charges.
-*   **Fixed vs. Variable Costs:**
-    *   **Fixed:** The largest fixed costs are the hourly charges for the NAT Gateway (~$65) and the ElastiCache cluster (~$101). Total fixed costs are approximately **$200/month**.
-    *   **Variable:** The remaining **~$920/month** are variable costs that scale directly with user activity.
-
-### 2.2. Granular Analysis of Key Cost Drivers
-To better understand the cost structure, this section provides a deeper look into the key cost drivers.
-
-#### Amazon CloudWatch Costs (~$82.50/month)
-The observability suite cost is heavily optimized via the **Tiered Observability** strategy.
-
-| CloudWatch Component | Calculation | Estimated Cost (per Month) |
-| :--- | :--- | :--- |
-| **Log Ingestion** | Tiered sampling reduces volume by ~30% | $40.00 |
-| **X-Ray Traces** | Dynamic sampling is in place | $12.50 |
-| **Custom Metrics & Alarms**| Placeholder for various metrics and alarms | $30.00 |
-| **Total** | | **~$82.50** |
-
-#### Amazon EventBridge & SQS Costs (~$246/month)
-The eventing and messaging layer is a critical part of the architecture. Costs are driven by the high volume of events flowing through the system. The following optimizations are in place:
-*   The expensive EventBridge Scheduler has been replaced by a more cost-effective SQS-based delayed polling mechanism.
-*   **Direct Ingress Path:** The highest-volume ingestion path from API Gateway now sends jobs directly to SQS, bypassing EventBridge. This architectural change accounts for the significant reduction in EventBridge events and costs.
-*   The core `HotPathSyncQueue` uses SQS FIFO, which has a different pricing model than Standard queues.
-*   Event coalescing is used on webhook events to dramatically reduce the number of events sent to EventBridge.
-
-| Service | Component | Calculation | Estimated Cost (per Month) |
-| :--- | :--- | :--- | :--- |
-| **EventBridge** | Custom Event Puts | ~40M events * $1.00/M | $40.00 |
-| **SQS** | FIFO & Standard Queues | ~421M messages * $0.50/M (avg) | $206.34 |
-| **Total** | | | **~$246.34** |
+**Analysis:** The reconciled monthly cost is **~$7,914**, which is nearly **7 times higher** than the original estimate of $1,130. The primary drivers of this increase are using the correct compute service (Lambda) and the more realistic network egress data volume.
 
 ## 3. Cost Analysis: Peak Load
 

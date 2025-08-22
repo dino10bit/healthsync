@@ -315,7 +315,7 @@ To ensure "exactly-once" processing semantics in a distributed system, a multi-l
 *   **Key Generation:** The mobile client is responsible for generating a unique `Idempotency-Key` (e.g., a UUIDv4) for each new state-changing operation. This same key **must** be used for any client-side retries of that same operation.
 
 *   **Authoritative Mechanism ("Hot Path"): DynamoDB-based Locking**
-    *   For the real-time "Hot Path" syncs processed by AWS Lambda, the authoritative mechanism is a **distributed lock using a DynamoDB table**. This provides a persistent, reliable lock that is not subject to the 5-minute limitation of SQS FIFO deduplication.
+    *   The **sole authoritative** idempotency mechanism for the "Hot Path" is a distributed lock using a DynamoDB table. All other potential mechanisms (e.g., SQS FIFO MessageDeduplicationId) **must not** be relied upon for idempotency logic and should be removed from documentation to avoid confusion. This provides a persistent, reliable lock that is not subject to the 5-minute limitation of SQS FIFO deduplication.
     *   **Workflow:**
         1.  The `WorkerLambda` receives a job containing the `Idempotency-Key`.
         2.  It attempts to write an item to the `SyncWellMetadata` table with a primary key of `IDEM##{Idempotency-Key}` and a `status` of `INPROGRESS`, using a **condition expression** to fail if the item already exists.
@@ -337,12 +337,8 @@ To reliably serve 1 million Daily Active Users, the architecture incorporates sp
 
 ### High Availability Strategy
 
-#### MVP: Single-Region Architecture
-To balance cost, complexity, and time-to-market for the MVP, the SyncWell backend will be deployed to a **single AWS region** (`us-east-1`).
-
-*   **Intra-Region High Availability:** High availability will be achieved *within* the single region by deploying services across multiple Availability Zones (AZs).
-    *   **Stateless Services:** API Gateway and AWS Lambda are inherently highly available across AZs.
-    *   **Stateful Services:** The DynamoDB table and ElastiCache for Redis cluster will be configured for Multi-AZ deployment. This ensures that the failure of a single AZ does not result in a service outage. **Cost Impact:** This configuration increases infrastructure costs compared to a single-AZ deployment, but is a necessary trade-off to meet the system's high availability requirements and mitigate the significant business cost of a service outage.
+#### MVP: High Availability Strategy
+To meet the 99.9% availability SLO, the backend **must** be deployed with full Multi-AZ redundancy from day one. This includes deploying a Multi-AZ ElastiCache for Redis cluster. For Disaster Recovery, the `SyncWellMetadata` table **must** be configured as a DynamoDB Global Table with a replica in a DR region (e.g., `us-west-2`).
 
 #### Future: Multi-Region Architecture
 The architecture is designed with a future multi-region deployment in mind. Prioritization of this work will be triggered by **business expansion into new geographic markets (e.g., the EU) or reaching 500,000 DAU**. Key considerations for this evolution include:
@@ -813,7 +809,7 @@ This strategy ensures that the app remains responsive and that user actions are 
 
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
-| **Authentication Service** | **Firebase Authentication** | **Rationale vs. Amazon Cognito:** While Amazon Cognito is a native AWS service, Firebase Authentication has been chosen for the MVP due to its superior developer experience, higher-quality client-side SDKs (especially for social logins on iOS and Android), and more generous free tier. This choice prioritizes rapid development and a smooth user onboarding experience. The cross-cloud dependency is an acceptable trade-off for the MVP, but a migration to Cognito could be considered in the future if the benefits of a single-cloud solution outweigh the advantages of Firebase's SDKs. **Dependency Risk:** This introduces a hard dependency on Google Cloud. An outage in Firebase Authentication would prevent all users from logging in, even if the AWS backend is healthy. This risk is formally accepted by the product owner. **Data Residency:** User identity data will be stored in Google Cloud, which has data residency implications that must be clearly communicated in the privacy policy. |
+| **Authentication Service** | **Firebase Authentication** | **Rationale vs. Amazon Cognito:** While Amazon Cognito is a native AWS service, Firebase Authentication has been chosen for the MVP due to its superior developer experience, higher-quality client-side SDKs (especially for social logins on iOS and Android), and more generous free tier. This choice prioritizes rapid development and a smooth user onboarding experience.<br>**Dependency Risk & Mitigation:** Firebase Authentication presents a critical single point of failure. To mitigate this, the API Gateway Authorizer **must** be updated to accept JWTs from both Firebase and a new Amazon Cognito User Pool. This provides a clear migration path and a DR option without requiring an immediate client-side change. This risk has been formally accepted by the product owner.<br>**Data Residency:** User identity data will be stored in Google Cloud, which has data residency implications that must be clearly communicated in the privacy policy. |
 | **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. For latency-sensitive functions that are not part of the worker fleet (e.g., the `AuthorizerLambda`), a faster-starting runtime like TypeScript must be used to meet strict latency SLOs. This is a formally accepted technical trade-off. |
 | **On-Device Database** | **SQLDelight 2.0.0** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Primary Database** | **Amazon DynamoDB** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance. For the MVP, it will be deployed in a single region. It will use a hybrid capacity model (a baseline of Provisioned Capacity with On-Demand for scaling) to balance cost and performance, as detailed in Section 3b.** |
