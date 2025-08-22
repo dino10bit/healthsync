@@ -1058,13 +1058,14 @@ A project-wide glossary of all business and technical terms is maintained in the
 
 ## 13. Visual Diagrams
 
-This section contains all the architectural diagrams referenced in this document.
+This section contains all the architectural diagrams referenced in this document. To improve clarity, the primary container diagram has been decoupled into a series of smaller, more focused diagrams that each illustrate a specific architectural flow or concern. All diagrams are versioned `v1.5` as of `2025-08-22`.
 
 ### Diagram 1: System Context
+This C4 Level 1 diagram shows the SyncWell system in its environment, illustrating its relationship with users and the major external systems it depends on.
 
 ```mermaid
 ---
-title: "System Context Diagram for SyncWell (v1.4 as of 2025-08-22)"
+title: "Diagram 1: System Context (v1.5)"
 ---
 graph TD
     subgraph SyncWell Ecosystem
@@ -1076,133 +1077,150 @@ graph TD
         C[Health-Conscious User]
     end
 
-    subgraph External Systems
-        D["Third-Party Health Platforms<br>(Fitbit, Strava, Garmin)"]
-        D2["On-Device Health Platforms<br>(Apple Health, Google Health Connect)"]
+    subgraph "External Systems & Services"
+        D["Third-Party Health Platforms<br>(e.g., Fitbit, Strava)"]
+        D2["On-Device Health Platforms<br>(e.g., Apple HealthKit)"]
         E[Platform App Stores]
         F[Platform Notification Services]
         G["Identity Providers<br>(Firebase, Cognito)"]
     end
 
-    C -- "Views, configures, and<br>initiates syncs via" --> A
-    A -- "Authenticates user with" --> G
-    A -- "Initiates cloud sync jobs via API" --> B
-    A -- "Reads/writes local health data from/to" --> D2
-    A -- "Is distributed through" --> E
-    B -- "Fetches and pushes data to" --> D
+    C -- "Uses" --> A
+    A -- "Authenticates with" --> G
+    A -- "Initiates syncs via API" --> B
+    A -- "Reads/writes local data from/to" --> D2
+    A -- "Distributed by" --> E
+    B -- "Syncs data with" --> D
     B -- "Sends push notifications via" --> F
-    B -- "Validates JWTs with public keys from" --> G
+    B -- "Validates JWTs using" --> G
 ```
 
-### Diagram 2: Container Diagram (MVP)
+### Decoupled Container Diagrams (C4 Level 2)
+
+The following set of diagrams replaces a single, monolithic container diagram. By decoupling the architecture into specific flows, each diagram becomes easier to understand and reason about.
+
+---
+#### Diagram 2a: Ingress & Authentication Flow
+This diagram shows how requests from both end-users and third-party webhooks enter the system through the edge network and are authenticated.
 
 ```mermaid
 ---
-title: "Container Diagram for SyncWell (MVP, v1.4 as of 2025-08-22)<br>Note: This diagram includes the Cognito fallback for authentication."
+title: "Diagram 2a: Ingress & Authentication Flow (v1.5)"
 ---
-graph TD
-    subgraph "User's Device"
-        MobileApp[Mobile Application w/ KMP Module]
+graph TB
+    subgraph "External"
+        MobileApp[Mobile App]
+        ThirdParty[Third-Party Service]
     end
 
-    subgraph "Third-Party Identity"
-        FirebaseAuth["Firebase Authentication<br>(Primary IdP)"]
+    subgraph "AWS Edge"
+        style "AWS Edge" fill:#e6f3ff
+        CloudFront[CloudFront CDN]
+        WAF[AWS WAF]
     end
 
-    subgraph "External Services"
-        ThirdPartyAPIs["Third-Party Health APIs"]
+    subgraph "AWS API Gateway"
+        style "AWS API Gateway" fill:#fffbe6
+        RestApi[REST API]
+        AuthorizerLambda["Authorizer Lambda<br><i>Validates JWT from<br>Firebase OR Cognito</i>"]
     end
 
-    subgraph "AWS Cloud"
-        subgraph "Authentication & Ingress"
-            style "Authentication & Ingress" fill:#e6f3ff,stroke:#0073bb
-            CloudFront[CloudFront CDN]
-            WAF[AWS WAF]
-            RestApi[REST API Gateway]
-            WebSocketApi[WebSocket API Gateway]
-            AuthorizerLambda["Authorizer Lambda<br><i>Validates JWT from<br>Firebase OR Cognito</i>"]
-            Cognito["Amazon Cognito<br>(Fallback IdP)"]
-        end
+    subgraph "Identity Providers"
+        FirebaseAuth["Firebase Auth"]
+        Cognito["Amazon Cognito"]
+    end
 
-        subgraph "Core Backend"
-            style "Core Backend" fill:#fff8e6,stroke:#ff9900
-            S3Assets[S3 Bucket for Static Assets]
-            SyncOverSocketLambda[Sync-over-Socket Lambda]
+    %% Connections
+    MobileApp -- "1. API Request" --> CloudFront
+    ThirdParty -- "Webhook" --> CloudFront
+    CloudFront --> WAF
+    WAF --> RestApi
+
+    RestApi -- "2. Validates request via" --> AuthorizerLambda
+    AuthorizerLambda -- "3a. Fetches JWKS from" --> FirebaseAuth
+    AuthorizerLambda -- "3b. Fetches JWKS from" --> Cognito
+
+    RestApi -- "4. Forwards valid Mobile App<br>request to SQS" --> HotPathSyncQueue[Hot Path SQS Queue]
+    RestApi -- "4. Forwards valid Webhook<br>to SQS" --> CoalescingBufferQueue[Coalescing SQS Queue]
+```
+---
+#### Diagram 2b: Webhook Event Coalescing Flow
+This diagram details the cost-optimization pattern used to handle "chatty" webhooks by buffering and deduplicating them before triggering a sync.
+
+```mermaid
+---
+title: "Diagram 2b: Webhook Event Coalescing Flow (v1.5)"
+---
+graph TB
+    RestApi[REST API Gateway] -- "1. Receives Webhook" --> CoalescingBufferQueue["SQS FIFO Queue<br><i>(with 60s delay)</i>"]
+    CoalescingBufferQueue -- "2. Triggers Lambda with batch of messages" --> CoalescingTriggerLambda["Coalescing Trigger<br>Lambda"]
+    CoalescingTriggerLambda -- "3. Extracts unique users and<br>sends one job per user to" --> HotPathSyncQueue[Hot Path SQS Queue]
+    HotPathSyncQueue -- "4. Triggers main worker" --> WorkerLambda["Hot Path Worker<br>Lambda"]
+```
+---
+#### Diagram 2c: Core "Hot Path" Worker Flow
+This diagram shows the main components involved in processing a standard, real-time synchronization job.
+
+```mermaid
+---
+title: "Diagram 2c: Core Hot Path Worker Flow (v1.5)"
+---
+graph TB
+    subgraph "Trigger"
+        HotPathSyncQueue[Hot Path SQS Queue]
+    end
+
+    subgraph "VPC"
+        style VPC fill:#f5f5f5
+        WorkerLambda["Hot Path Worker Lambda"]
+        subgraph "Dependencies"
+            ElastiCache[ElastiCache for Redis]
             DynamoDB[DynamoDB Table]
             SecretsManager[Secrets Manager]
-            Observability["CloudWatch Suite"]
             AppConfig[AWS AppConfig]
-            GlueRegistry[AWS Glue Schema Registry]
-            CoalescingBufferQueue[SQS: CoalescingBufferQueue]
-            CoalescingTriggerLambda[CoalescingTriggerLambda]
-            HotPathSyncQueue[SQS: HotPathSyncQueue]
-            HotPathSyncDLQ[SQS: HotPathSyncDLQ]
+            Observability[CloudWatch Suite]
         end
-
-        subgraph "VPC"
-            style VPC fill:#f5f5f5,stroke:#333
-            NetworkFirewall[AWS Network Firewall]
+        subgraph "Egress"
             NatGateway[NAT Gateway]
-            subgraph "Private Subnets"
-                WorkerLambda["Worker Lambda<br><br><i>Note: Provisioned Concurrency is used<br>to mitigate cold starts (see Sec. 3b).</i>"]
-                ElastiCache[ElastiCache for Redis]
-            end
+            NetworkFirewall[AWS Network Firewall]
         end
     end
 
-    %% --- Ingress and Authentication Flow ---
-    MobileApp -- "1. Signs up / signs in with" --> FirebaseAuth
-    MobileApp -- "2. API & WebSocket Requests" --> CloudFront
-    CloudFront -- "3. Protected by" --> WAF
-    WAF -- "4. Routes REST traffic to" --> RestApi
-    WAF -- "4. Routes WebSocket traffic to" --> WebSocketApi
-    RestApi -- "5. Validates JWT via" --> AuthorizerLambda
-    AuthorizerLambda -- "6a. Fetches public keys from" --> FirebaseAuth
-    AuthorizerLambda -- "6b. Fetches public keys from" --> Cognito
-    AuthorizerLambda -- "7. Caches public keys in" --> ElastiCache
-    CloudFront -- "Serves static assets from" --> S3Assets
+    ThirdPartyAPIs["Third-Party APIs"]
 
+    %% Connections
+    HotPathSyncQueue -- "1. Triggers" --> WorkerLambda
+    WorkerLambda -- "2. Reads/writes cache" --> ElastiCache
+    WorkerLambda -- "3. Reads/writes state" --> DynamoDB
+    WorkerLambda -- "4. Gets credentials" --> SecretsManager
+    WorkerLambda -- "5. Gets runtime config" --> AppConfig
+    WorkerLambda -- "6. Emits logs & metrics" --> Observability
 
-    %% --- WebSocket Flow ---
-    WebSocketApi -- "Routes sync requests to" --> SyncOverSocketLambda
-    SyncOverSocketLambda -- "Reads/writes state" --> DynamoDB
-    SyncOverSocketLambda -- "Reads/writes cache" --> ElastiCache
-    SyncOverSocketLambda -- "Gets credentials" --> SecretsManager
-
-    %% --- REST API Ingress Flows ---
-    ThirdPartyAPIs -- "Sends Webhook -->" --> RestApi
-    RestApi -- "Routes Webhook to" --> CoalescingBufferQueue
-    RestApi -- "<b>Direct Integration (Hot Path)</b><br>Sends sync message to" --> HotPathSyncQueue
-
-    %% --- Event Coalescing Flow ---
-    CoalescingBufferQueue -- "Triggers" --> CoalescingTriggerLambda
-    CoalescingTriggerLambda -- "Sends coalesced message directly to" --> HotPathSyncQueue
-
-    %% --- Core Worker Flow ---
-    HotPathSyncQueue -- "Triggers" --> WorkerLambda
-    HotPathSyncQueue -- "On failure, redrives to" --> HotPathSyncDLQ
-
-    WorkerLambda -- "Reads/writes state" --> DynamoDB
-    WorkerLambda -- "Gets credentials" --> SecretsManager
-    WorkerLambda -- "Reads/Writes cache" --> ElastiCache
-    WorkerLambda -- "Logs & Metrics" --> Observability
-    WorkerLambda -- "Fetches runtime config" --> AppConfig
-    WorkerLambda -- "Validates schemas with" --> GlueRegistry
-
-    %% --- Hybrid Egress Flow ---
-    subgraph "Hybrid Egress"
-        WorkerLambda -- "Trusted Partner APIs" --> NatGateway
-        WorkerLambda -- "Untrusted/Low-Volume APIs" --> NetworkFirewall
-    end
-    NatGateway -- "High-volume traffic" --> ThirdPartyAPIs
-    NetworkFirewall -- "Inspected traffic" --> ThirdPartyAPIs
+    WorkerLambda -- "7. Egress to trusted APIs via" --> NatGateway
+    WorkerLambda -- "7. Egress to untrusted APIs via" --> NetworkFirewall
+    NatGateway --> ThirdPartyAPIs
+    NetworkFirewall --> ThirdPartyAPIs
 ```
+---
+#### Diagram 2d: Real-Time WebSocket Flow
+This diagram shows the separate, low-latency path for users who are actively using the app, providing a near real-time sync experience.
 
+```mermaid
+---
+title: "Diagram 2d: Real-Time WebSocket Flow (v1.5)"
+---
+graph TB
+    MobileApp[Mobile App] -- "1. Establishes persistent connection" --> WebSocketApi[WebSocket API Gateway]
+    WebSocketApi -- "2. Routes sync request to" --> SyncOverSocketLambda["Sync-over-Socket<br>Lambda"]
+    SyncOverSocketLambda -- "3. Processes sync job" --> Dependencies["(DynamoDB, Redis, etc.)"]
+    SyncOverSocketLambda -- "4. Pushes result directly back to" --> MobileApp
+```
+---
 ### Diagram 3: ProviderManager Factory Pattern
 
 ```mermaid
 ---
-title: "Diagram 3: ProviderManager Factory Pattern (v1.4 as of 2025-08-22)"
+title: "Diagram 3: ProviderManager Factory Pattern (v1.5)"
 ---
 graph TD
     A[SyncWorker]
@@ -1222,11 +1240,11 @@ graph TD
     end
 ```
 
-### Diagram 4: Hot Path Sync Flow
+### Diagram 4: Hot Path Sync Flow (Simplified)
 
 ```mermaid
 ---
-title: "Diagram 4: Hot Path Sync Flow (v1.4 as of 2025-08-22)"
+title: "Diagram 4: Hot Path Sync Flow (Simplified, v1.5)"
 ---
 graph TD
     subgraph "Hot Path Sync Flow"
@@ -1239,13 +1257,13 @@ graph TD
     end
 ```
 
-### Diagram 5: Recommended Critical-Path Flow
+### Diagram 5: High Availability & Disaster Recovery Architecture
 
-This diagram illustrates the recommended architecture for the critical "Hot Path" sync, incorporating the changes for Multi-AZ and Multi-Region deployments and showing failover boundaries.
+This diagram illustrates the architecture for the critical "Hot Path" sync, showing how Multi-AZ and Multi-Region deployments provide resilience.
 
 ```mermaid
 ---
-title: "Diagram 5: Recommended Critical-Path Architecture (v1.4 as of 2025-08-22)"
+title: "Diagram 5: High Availability & DR Architecture (v1.5)"
 ---
 graph LR
     subgraph "User / DNS"
@@ -1290,11 +1308,11 @@ graph LR
     Route53 -- "Latency-based Routing" --> CloudFront
 ```
 
-### Diagram 6: Scheduling Infrastructure
+### Diagram 6: Tiered Fan-Out Scheduling Infrastructure
 
 ```mermaid
 ---
-title: "Diagram 6: Tiered Fan-Out Scheduling Infrastructure (v1.4 as of 2025-08-22)"
+title: "Diagram 6: Tiered Fan-Out Scheduling Infrastructure (v1.5)"
 ---
 graph TB
     subgraph "1. Scheduling Triggers"
@@ -1326,6 +1344,9 @@ graph TB
 ### Diagram 7: Device-to-Cloud Sync Flow
 
 ```mermaid
+---
+title: "Diagram 7: Device-to-Cloud Sync Flow (v1.5)"
+---
 sequenceDiagram
     participant MobileApp as "Mobile App"
     participant Backend as "SyncWell Backend"
@@ -1357,6 +1378,9 @@ sequenceDiagram
 ### Diagram 8: Cloud-to-Device Sync Flow
 
 ```mermaid
+---
+title: "Diagram 8: Cloud-to-Device Sync Flow (v1.5)"
+---
 sequenceDiagram
     participant SourceAPI as "Source Cloud API"
     participant Backend as "SyncWell Backend"
