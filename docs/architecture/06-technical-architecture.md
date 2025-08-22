@@ -1166,7 +1166,7 @@ To minimize data transfer and processing costs, the sync algorithm will employ a
     1.  **Fetch Metadata:** The worker first calls the `DataProvider` to retrieve only the lightweight metadata for new activities (e.g., timestamps, IDs, type, duration).
     2.  **Conflict Resolution on Metadata:** The Conflict Resolution Engine runs using only this metadata to determine which activities definitively need to be written to the destination.
     3.  **Hydrate on Demand:** The worker then makes a second, targeted call to the `DataProvider` to fetch the full, heavy payloads *only* for the specific activities that it needs to write.
-*   **Benefit:** This "lazy loading" of data payloads significantly reduces outbound data transfer through the NAT Gateway and lowers the memory and CPU requirements for the Lambda worker fleet. This is a crucial application-level optimization that reduces costs across multiple services.
+*   **Benefit:** This "lazy loading" of data payloads significantly reduces outbound data transfer through the NAT Gateway and lowers the memory and CPU requirements for the Lambda worker fleet. To manage egress costs effectively, this pattern is a **mandatory, non-negotiable requirement** of the architecture.
 *   **Flow Diagram:**
     ```mermaid
     %%{init: {'theme': 'neutral'}}%%
@@ -1757,6 +1757,17 @@ The `AuthorizerLambda` must inject the authenticated `userId` into the request c
     *   **Automated Rotation:** Must be enabled for all secrets that support it (e.g., RDS credentials if used in the future). The rotation cadence must be set to **90 days**.
     *   **Manual Rotation:** For other secrets (e.g., third-party API keys), a quarterly manual rotation process must be documented and tracked via recurring tickets assigned to the SRE team.
     *   **Emergency Rotation:** A runbook for out-of-band, emergency rotation must be created and placed in `../ops/runbook-emergency-secret-rotation.md`.
+
+#### **Remediation for Egress Controls (Vulnerability #5)**
+To prevent data exfiltration by a compromised worker, network egress traffic **must** be inspected and filtered.
+*   **Implementation:** **AWS Network Firewall** must be deployed into the VPC. All outbound traffic from the `WorkerLambda` fleet **must** be routed through the firewall for inspection.
+*   **Ruleset:** The firewall policy must be configured with a strict, default-deny rule. An explicit allow-list must be maintained to only permit traffic to the known, legitimate domains of the third-party APIs the system integrates with (e.g., `api.fitbit.com`, `www.strava.com`).
+
+#### **Remediation for Client-Side Hardening (Vulnerability #9)**
+To protect the mobile application from reverse engineering and tampering, client-side hardening measures should be applied as part of the release build process.
+*   **Recommended Techniques:**
+    *   **Code Obfuscation:** Use tools like ProGuard (for Android) to obfuscate the compiled code, making it more difficult for attackers to understand.
+    *   **Root/Jailbreak Detection:** The application should include logic to detect if it is running on a rooted (Android) or jailbroken (iOS) device and alter its behavior accordingly (e.g., by refusing to handle sensitive data).
 
 ### 6.3. Encryption Strategy
 
