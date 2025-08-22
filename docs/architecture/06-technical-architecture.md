@@ -396,6 +396,7 @@ The following diagram shows how a worker interacts with the distributed rate lim
 *   **[R-003] Failure Handling:** The `ChangeMessageVisibility` API call can itself fail. The worker **must** implement a retry-with-backoff loop (3 retries, exponential backoff) for this specific API call. If it repeatedly fails to return the message to the queue, it must exit with a critical error to force a redrive to the DLQ, preventing an infinite loop and ensuring the job is not lost.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 sequenceDiagram
     participant Worker as "WorkerLambda"
     participant Redis as "ElastiCache for Redis\n(Rate Limiter)"
@@ -458,6 +459,7 @@ To minimize data transfer and processing costs, the sync algorithm will employ a
 *   **Benefit:** This "lazy loading" of data payloads significantly reduces outbound data transfer through the NAT Gateway and lowers the memory and CPU requirements for the Lambda worker fleet. This is a crucial application-level optimization that reduces costs across multiple services.
 *   **Flow Diagram:**
     ```mermaid
+%%{init: {'theme': 'neutral'}}%%
     sequenceDiagram
         participant Worker as WorkerLambda
         participant Provider as DataProvider
@@ -763,6 +765,7 @@ For providers that do not support webhooks, a simple polling approach is ineffic
 *   **Benefit:** This two-tiered model is exceptionally cost-effective. Tier 1 (adaptive SQS delays) reduces the total number of polls. Tier 2 (pre-flight checks) ensures that the polls that *do* run only trigger the expensive compute and database resources when there is actual work to be done. This eliminates the vast majority of "empty" sync jobs, saving significant costs on Lambda, DynamoDB, and CloudWatch.
 *   **Flow Diagram:** The following sequence diagram illustrates this two-tiered polling flow.
     ```mermaid
+%%{init: {'theme': 'neutral'}}%%
     sequenceDiagram
         participant Scheduler as Adaptive Scheduler (SQS Delay)
         participant Checker as PollingPreflightChecker (Lambda)
@@ -942,6 +945,7 @@ For analytics, **Amazon Kinesis Data Firehose** will be used. This flow is visua
     *   **Benefit:** This tiered approach provides the greatest cost reduction by targeting the highest volume of events (successful jobs from free users) while retaining full observability for failures and for paying customers.
     *   **Logic Flow:** The following diagram illustrates the decision-making process within a worker for each completed job.
         ```mermaid
+        %%{init: {'theme': 'neutral'}}%%
         graph TD
             A[Sync Job Completes] --> B{Job Succeeded?};
             B -- No --> C[Ingest 100% of<br>Buffered Logs to CloudWatch];
@@ -1076,6 +1080,7 @@ The following conventions are used across all diagrams to ensure a consistent an
 This C4 Level 1 diagram shows the SyncWell system in its environment, illustrating its relationship with users and the major external systems it depends on.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 1: System Context (v1.6)"
 ---
@@ -1124,6 +1129,7 @@ The following set of diagrams replaces a single, monolithic container diagram. B
 This diagram shows how requests from both end-users and third-party webhooks enter the system through the edge network and are authenticated.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 2a: Ingress & Authentication Flow (v1.6)"
 ---
@@ -1178,6 +1184,7 @@ graph TB
 This diagram details the cost-optimization pattern used to handle "chatty" webhooks by buffering and deduplicating them before triggering a sync.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 2b: Webhook Event Coalescing Flow (v1.6)"
 ---
@@ -1209,6 +1216,7 @@ graph TB
 This diagram shows the main components involved in processing a standard, real-time synchronization job.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 2c: Core Hot Path Worker Flow (v1.6)"
 ---
@@ -1266,6 +1274,7 @@ graph TB
 This diagram shows the separate, low-latency path for users who are actively using the app, providing a near real-time sync experience.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 2d: Real-Time WebSocket Flow (v1.6)"
 ---
@@ -1297,6 +1306,7 @@ graph TB
 ### Diagram 3: ProviderManager Factory Pattern
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 3: ProviderManager Factory Pattern (v1.6)"
 ---
@@ -1321,6 +1331,7 @@ graph TD
 ### Diagram 4: Hot Path Sync Flow (Simplified)
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 4: Hot Path Sync Flow (Simplified, v1.6)"
 ---
@@ -1358,6 +1369,7 @@ graph TD
 This diagram illustrates the architecture for the critical "Hot Path" sync, showing how Multi-AZ and Multi-Region deployments provide resilience.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 5: High Availability & DR Architecture (v1.6)"
 ---
@@ -1407,6 +1419,7 @@ graph LR
 ### Diagram 6: Tiered Fan-Out Scheduling Infrastructure
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 6: Tiered Fan-Out Scheduling Infrastructure (v1.6)"
 ---
@@ -1450,6 +1463,7 @@ graph TB
 ### Diagram 7: Device-to-Cloud Sync Flow
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 7: Device-to-Cloud Sync Flow (v1.6)"
 ---
@@ -1484,6 +1498,7 @@ sequenceDiagram
 ### Diagram 8: Cloud-to-Device Sync Flow
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 8: Cloud-to-Device Sync Flow (v1.6)"
 ---
@@ -1542,6 +1557,7 @@ sequenceDiagram
 This sequence diagram illustrates the DynamoDB-based distributed locking mechanism used to ensure exactly-once processing for "Hot Path" sync jobs.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 9: Idempotency Check Flow (v1.6)"
 ---
@@ -1576,6 +1592,7 @@ sequenceDiagram
 This sequence diagram shows how the mobile client handles user actions while offline and reconciles them once connectivity is restored.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 10: Client-Side Offline Sync & Reconciliation (v1.6)"
 ---
@@ -1618,6 +1635,7 @@ sequenceDiagram
 This diagram shows the data flow for the batch anonymization process, ensuring user privacy is maintained before data is used for analytics.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 ---
 title: "Diagram 11: Data Anonymization & Analytics Flow (v1.6)"
 ---
