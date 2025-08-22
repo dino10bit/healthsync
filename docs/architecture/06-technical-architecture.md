@@ -212,7 +212,19 @@ A secure and scalable strategy is essential for managing provider-specific confi
 *   **Application API Credentials:** The OAuth `client_id` and `client_secret` for each third-party service are highly sensitive. These are stored securely in **AWS Secrets Manager**. The backend services retrieve these credentials at runtime using a narrowly-scoped IAM role.
 *   **User OAuth Tokens:** User-specific `access_token` and `refresh_token` are encrypted and stored in **AWS Secrets Manager**. To avoid storing a predictable secret ARN in the database, the `Connection` item in DynamoDB will store a randomly generated UUID as the pointer to the secret.
     *   **Secure ARN Mapping:** The mapping from this UUID to the full AWS Secrets Manager ARN **must** be stored securely. This mapping will be managed as a secure JSON object within the **`applications/syncwell-backend/production/arn-mappings`** configuration profile in **AWS AppConfig**.
-    *   **Dynamic IAM Policies for Least Privilege:** When a Worker Lambda processes a job, it must be granted permission to retrieve *only* the specific secret for the connection it is working on. This is a critical security control. This will be achieved by having the orchestrating service (e.g., Step Functions for the Cold Path, or the SQS poller for the Hot Path) generate a **dynamic, narrowly-scoped IAM session policy** that grants temporary access only to the specific secret ARN required for the job. This policy is then passed to the `WorkerLambda`, ensuring it operates under the principle of least privilege for every execution. The **Security Team** is responsible for auditing the policy generation logic on a quarterly basis.
+    *   **Dynamic IAM Policies for Least Privilege:** When a Worker Lambda processes a job, it must be granted permission to retrieve *only* the specific secret for the connection it is working on. This is a critical security control. This will be achieved by having the orchestrating service (e.g., Step Functions for the Cold Path, or the SQS poller for the Hot Path) generate a **dynamic, narrowly-scoped IAM session policy** that grants temporary access only to the specific secret ARN required for the job. This policy is then passed to the `WorkerLambda`, ensuring it operates under the principle of least privilege for every execution. The **Security Team** is responsible for auditing the policy generation logic on a quarterly basis. A concrete example of such a policy, which uses IAM policy variables to restrict access based on tags, is shown below. This ensures a Lambda can only access secrets tagged with the ID of the user it is processing.
+        ```json
+        {
+          "Effect": "Allow",
+          "Action": "secretsmanager:GetSecretValue",
+          "Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/syncwell/user-tokens-*",
+          "Condition": {
+            "StringEquals": {
+              "secretsmanager:ResourceTag/userId": "${aws:PrincipalTag/userId}"
+            }
+          }
+        }
+        ```
 
 ## 3. Sync Models: A Hybrid Architecture
 
@@ -858,7 +870,11 @@ A detailed financial model is a mandatory prerequisite before implementation and
     *   **High-Security Path (AWS Network Firewall):** All outbound traffic to unknown, lower-volume, or security-sensitive endpoints is routed through an **AWS Network Firewall**. This provides advanced features like intrusion prevention and deep packet inspection, ensuring the highest level of security.
     *   **Cost-Optimized Path (AWS NAT Gateway):** High-volume, trusted traffic to the primary, well-known API endpoints of major partners (e.g., Fitbit, Strava, Garmin) is routed through a separate, standard **AWS NAT Gateway**. The initial allow-list for this path is managed in the project's Terraform configuration. Additions to this list require a pull request with approval from the Security team.
     *   **Justification & Cost Impact:** This hybrid approach directly optimizes costs. The **Network Firewall introduces its own data processing costs**, which are higher than a standard NAT Gateway. By routing high-volume, trusted partner traffic through the cheaper NAT Gateway, we significantly reduce egress costs while still using the firewall's advanced inspection capabilities for untrusted destinations. This routing choice is a critical lever for cost management.
-*   **Code & Pipeline Security:** Production builds will be obfuscated. Dependency scanning (Snyk) and SAST will be integrated into the CI/CD pipeline, failing the build on critical vulnerabilities. Any new AI frameworks must undergo a formal security review, which includes threat modeling and a review by the security team, before being integrated.
+*   **Code & Pipeline Security:** Production builds will be obfuscated. Dependency scanning (Snyk) and SAST will be integrated into the CI/CD pipeline, failing the build on critical vulnerabilities. Any new AI frameworks must undergo a formal security review, which includes threat modeling and a review by the security team, before being integrated. In the event a critical vulnerability is discovered, the security on-call **must** be paged, and a hotfix deployment must be prepared and rolled out within the 72-hour SLO defined in the NFRs.
+*   **Secret Rotation Policy:** A formal policy for rotating secrets stored in AWS Secrets Manager is critical to limit the impact of a potential leak.
+    *   **Automated Rotation:** For all secrets that support it, automated rotation configured in Secrets Manager **must** be enabled. A rotation schedule of **every 90 days** is the required baseline.
+    *   **Manual Rotation Process:** For secrets that do not support automated rotation, a manual rotation process must be documented in a runbook (`../ops/RUNBOOK_MANUAL_SECRET_ROTATION.md`). This runbook must be executed on a **quarterly basis** by the SRE team.
+    *   **Emergency Rotation:** In the event of a suspected compromise, the on-call security engineer must be able to trigger an immediate, out-of-band rotation. This process must also be documented in the incident response plan.
 
 ### Compliance
 *   **Data Handling and Ephemeral Processing:** User health data is only ever processed **ephemerally in memory**. The maximum lifetime for data in-flight is guaranteed to be **under 5 minutes** by enforcing this as the maximum task duration for Lambda and Fargate tasks.
@@ -982,7 +998,7 @@ This section defines the key non-functional requirements for the SyncWell platfo
 | | Concurrent Users | Peak RPS | 3,000 RPS | P0 | The system must handle a peak load of 3,000 requests per second. |
 | **Security** | Vulnerability Patching | Time to Patch Critical CVE | < 72 hours | P0 | This policy applies 24/7, including weekends and holidays, and is managed by the on-call security team. |
 | | Secure Data Handling | `ProviderTokens` must not be serializable | Pass/Fail | P0 | The `ProviderTokens` data class must not be serializable and must redact secrets in its `toString()` method. A custom linter rule must enforce this at build time. |
-| **Scalability** | User Capacity | Daily Active Users (DAU) | 1,000,000 | P1 | The architecture must be able to support 1 million daily active users. |
+| **Scalability** | User Capacity | Daily Active Users (DAU) | 1,000,000 | P1 | The architecture must be able to support 1 million daily active users.<br>**Note:** The traffic models used for capacity planning are based on assumptions. A **private beta program** must be launched to a small user group to collect real-world metrics on user activity (e.g., syncs/day, payload size) to validate these assumptions before a full public launch. |
 | **Usability** | App Onboarding | Time to First Sync | < 3 minutes | P0 | This is a key product KPI, tracked via our analytics pipeline by measuring the median time from the `UserSignedUp` event to the first `SyncSucceeded` event for that user. |
 
 ## 9. Developer Experience
@@ -1015,6 +1031,10 @@ This section documents known limitations of the architecture and explicit trade-
 *   **Firebase Authentication Dependency:** The use of Firebase Authentication creates a hard dependency on a non-AWS service for a critical function. This is a **High** strategic risk.
     *   **Risk:** An outage in Firebase Auth would render the application unusable for all users.
     *   **[RISK-HIGH-03] Mitigation:** While accepted for the MVP to prioritize launch speed, a high-level exit strategy has been drafted. See **[`./33a-firebase-exit-strategy.md`](./33a-firebase-exit-strategy.md)** for the detailed technical plan. This risk has been formally accepted by the product owner.
+*   **AWS Vendor Lock-in:** The architecture makes extensive use of proprietary AWS services (Lambda, DynamoDB, SQS, etc.). This is a deliberate strategic trade-off.
+    *   **Rationale:** This approach significantly accelerates development velocity, reduces operational overhead, and allows the team to leverage the scalability and resilience of the AWS ecosystem.
+    *   **Risk:** This deep integration with AWS makes a future migration to a different cloud provider or an on-premise environment extremely costly and time-consuming.
+    *   **Mitigation:** This risk is formally accepted. Where feasible, vendor-neutral standards like OpenTelemetry will be used to provide a thin layer of abstraction, but the core of the system is tied to AWS.
 
 *   **MVP Scope & Phasing:** To ensure a focused and timely launch, the architecture distinguishes between core features required for the MVP and production-hardening features that can be implemented as fast-follows.
     *   **Must-have for MVP (Day 1):**
