@@ -2019,3 +2019,36 @@ This checklist must be completed and signed off by the CTO, Head of Engineering,
 ## 12. Glossary
 
 A project-wide glossary of all business and technical terms is maintained in the root [`GLOSSARY.md`](../../../GLOSSARY.md) file to ensure a single source of truth for terminology.
+
+## 13. Risks, Open Questions & Blockers
+
+This final section summarizes the most critical risks and open questions that must be addressed before proceeding with a public launch.
+
+### 13.1. Top 10 Risks (Likelihood × Impact)
+
+1.  **Financial Overrun (High × High):** The cost model is extremely sensitive to unvalidated traffic and payload assumptions. A 2x increase in "heavy" syncs could increase monthly costs by thousands.
+2.  **Third-Party Outage (Low × High):** A major, prolonged outage of Firebase Authentication would render the entire application unusable. The Cognito DR plan is a mitigation, not a preventative measure.
+3.  **Economic Denial of Service (Medium × High):** The lack of per-user rate limiting exposes the platform to financial exhaustion attacks from a single malicious or buggy authenticated client.
+4.  **Execution Complexity (High × Medium):** The architecture relies on sophisticated, custom application-level logic (tiered logging, metadata hydration). Failure to implement and test these patterns correctly will lead to significant cost and performance issues.
+5.  **Data Inconsistency (Medium × Medium):** The "newest wins" conflict resolution strategy is simple but may lead to data loss scenarios that frustrate users.
+6.  **Vendor Lock-in (High × Medium):** The architecture is deeply tied to proprietary AWS services. This is an accepted strategic risk, but it makes future platform migrations extremely costly.
+7.  **Compliance/Data Breach (Low × High):** A security breach resulting in the leak of user health data would have severe legal, financial, and reputational consequences.
+8.  **Performance Degradation (High × Low):** While provisioned concurrency helps, unexpected traffic spikes could still lead to cold starts and a degraded user experience for a subset of users.
+9.  **Alert Fatigue (High × Medium):** A poorly tuned monitoring system can generate excessive noise, causing on-call engineers to ignore critical alerts.
+10. **Scalability Bottleneck (Medium × Medium):** The "hot partition" risk for a viral user, while deferred, could cause significant performance degradation for that user and their immediate neighbors in the data store.
+
+### 13.2. Open Questions & Blockers
+
+The following questions must be answered before this project proceeds to a full public launch. They are considered **BLOCKERS** because they fundamentally impact the project's capacity, cost, and legal standing.
+
+*   **BLOCKER 1: What are the real-world traffic and payload metrics from a private beta?**
+    *   **Why it blocks:** All capacity planning and financial forecasting in this review are based on a series of nested assumptions. The financial risk of launching without validating these assumptions is unacceptably high. The team cannot make an informed budget decision without this data.
+
+*   **BLOCKER 2: Who is the assigned budget owner, and has the reconciled monthly cost model (~$13k/mo on-demand) been approved?**
+    *   **Why it blocks:** The reconciled cost is significantly higher than all previous estimates. Proceeding without formal financial approval and a named owner for the budget is fiscally irresponsible and puts the project at risk of being defunded post-launch.
+
+*   **BLOCKER 3: What is the specific, documented, and tested disaster recovery plan for a multi-hour Firebase Authentication outage?**
+    *   **Why it blocks:** The current mitigation (a dual authorizer) is a technical prerequisite but not a complete DR plan. A formal plan, including client-side failover logic, user communication strategy, and an estimated RTO, must be documented and approved by leadership.
+
+*   **BLOCKER 4: What are the specific data residency requirements for all target launch markets?**
+    *   **Why it blocks:** The current architecture stores all data in `us-east-1`. If the company plans to launch in markets with strict data residency laws (e.g., the EU/GDPR), this architecture may not be compliant. Legal and compliance teams must provide a definitive answer to this question before launch to avoid significant legal and reputational risk.

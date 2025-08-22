@@ -7,24 +7,29 @@
 
 This document provides a reconciled, bottom-up financial analysis for the SyncWell backend architecture. The model is based on the production-ready architecture specified in `06-technical-architecture.md`, which uses **AWS Lambda for the "Hot Path"** sync workload.
 
-The reconciled model estimates a total monthly on-demand cost of **~$7,914** for supporting 1 million Daily Active Users. This figure is approximately **7 times higher** than previous estimates, which were based on an incorrect compute model (Fargate) and misaligned traffic assumptions.
+The reconciled model estimates a total monthly on-demand cost of **~$12,936** for supporting 1 million Daily Active Users. This figure is significantly higher than previous estimates, which were based on an incorrect compute model (Fargate) and misaligned traffic assumptions.
 
 This document provides:
 *   A detailed, service-by-service cost breakdown for the production architecture.
 *   A sensitivity analysis showing how costs react to changes in user activity.
 *   A list of actionable cost-optimization levers to govern and reduce operational expenditure.
 
-## 2. Verification of Cost Assumptions
+## 2. T-Shirt Cost Estimate (Reconciled, On-Demand)
 
-The following table highlights the critical mismatches between the original cost model and the production architecture that have now been resolved.
+Based on the detailed analysis in Section 9, the T-shirt cost estimates for the recommended production configuration are:
 
-| Assumption Area | Original Assumption | Production Reality & Recommendation | Status |
-| :--- | :--- | :--- | :--- |
-| **Hot-Path Compute** | AWS Fargate (`~95/mo`) | **AWS Lambda** is the correct service for this workload. | **[DONE]** |
-| **Network Egress** | 1.6 TB / month | **~9.1 TB / month** based on the Nominal traffic model. | **[DONE]** |
-| **Caching Cluster** | 2x `cache.t4g.medium` (`~$101/mo`) | **2x `cache.m6g.large` Multi-AZ** is required for HA. | **[DONE]** |
-| **Database DR** | Not explicitly costed. | **DynamoDB Global Tables** are recommended, which doubles write costs. | **[DONE]** |
-| **Total Monthly Cost**| **~$1,130 / month** | The estimate was based on fundamentally incorrect inputs. | **[DONE]** |
+*   **Low (Conservative Traffic):** **~$7,000 / month**
+*   **Mid (Nominal Traffic):** **~$13,000 / month**
+*   **High (Aggressive Traffic):** **~$25,000 / month**
+
+**Cost Breakdown (Nominal Scenario):**
+*   **Compute (Lambda):** ~48%
+*   **Observability (CloudWatch):** ~27%
+*   **Database (DynamoDB):** ~8%
+*   **Network & Egress:** ~7%
+*   **Other (Cache, Messaging, Security, etc.):** ~10%
+
+**Conclusion:** Compute and Observability are the dominant cost drivers, accounting for ~75% of the total monthly spend.
 
 ## 3. Reconciled, Production-Ready Monthly Cost Table
 
@@ -67,26 +72,29 @@ The table below shows how this reconciled cost shifts under different traffic sc
 
 ## 5. Cost Optimization Levers & Governance
 
-### Recommended Cost-Optimization Levers (Prioritized)
+The following levers are essential for managing costs. They are categorized by implementation timeline.
 
-| Lever | Impact | Est. Savings | Description |
-| :--- | :--- | :--- | :--- |
-| **Implement Tiered/Sampled Logging** | **High** | $2,000+/month | **MANDATORY.** Failing to implement the tiered logging strategy will result in CloudWatch costs exceeding $5,000/month. This is the highest-impact lever. |
-| **Implement Metadata-First Hydration** | **High** | $500+/month | **MANDATORY.** This directly attacks the largest variable cost driver: network egress. Every 10% reduction in egress saves ~$75/month. |
-| **Purchase Savings Plans** | **High** | $2,500+/month | Once traffic patterns are predictable (post-beta), purchase a 3-year Compute Savings Plan covering at least 50% of baseline Lambda usage. |
-| **Enforce VPC Endpoints** | **Medium** | $200+/month | A simple, high-impact change that reduces NAT gateway data processing charges by keeping traffic on the AWS private network. |
-| **Right-size Lambda Memory** | **Medium** | $100-500/month| Use AWS Lambda Power Tuning to find the optimal memory configuration for the worker Lambda. Over-provisioning can cost hundreds per month at scale. |
-| **Adopt ARM/Graviton** | **Medium**| Varies | Ensure all applicable services (Lambda, Fargate, ElastiCache) are using the `arm64` architecture for a baseline ~20% price-performance improvement. This is assumed in the cost model but is critical to validate. |
-| **S3 Intelligent-Tiering** | **Low** | Varies | Configure this for log archive buckets to automatically optimize storage costs. |
+#### Quick Wins (Application & Infrastructure Logic)
+These are the highest priority and should be implemented before public launch.
 
-### Cost Allocation & Tagging Strategy
+*   **Tiered & Sampled Logging:** **(High Impact)** This is primarily an application logic change and is the most effective way to control observability costs.
+*   **Metadata-First Data Hydration:** **(High Impact)** This application logic change is mandatory to control network egress costs.
+*   **Enforce VPC Endpoints:** **(Medium Impact)** This is a straightforward infrastructure change that provides immediate cost savings on NAT Gateway data transfer.
 
-To enable effective cost governance, all provisioned AWS resources **must** be tagged with the following keys. This policy should be enforced via an AWS Service Control Policy (SCP) at the Organization level.
+#### Medium-Term Levers (Commercial & Tuning)
+These should be pursued post-beta, once traffic patterns are better understood.
 
-*   `sw:cost-center`: The business unit or team responsible for the cost (e.g., `engineering-syncwell`).
-*   `sw:environment`: The environment the resource belongs to (`production`, `staging`, `dev`).
-*   `sw:service-name`: The name of the microservice the resource supports (e.g., `hot-path-worker`, `auth-lambda`).
-*   `sw:feature`: The specific product feature this resource primarily supports (e.g., `core-sync`, `historical-backfill`, `ai-insights`).
-*   `sw:owner`: The email alias of the team responsible for the resource's lifecycle (e.g., `sre-team@syncwell.com`).
+*   **Purchase Savings Plans:** **(High Impact)** The single most effective way to reduce compute costs. A 3-year plan offers the best discount. This should be purchased for a baseline of observed usage after 1-2 months of stable traffic.
+*   **Right-size All Resources:** **(Medium Impact)** Continuously use tools like AWS Lambda Power Tuning and Cost Explorer Rightsizing Recommendations to eliminate waste.
+*   **S3 Intelligent-Tiering:** **(Low Impact)** Configure this for log archive buckets to automatically optimize storage costs.
 
-These tags will allow for the creation of granular reports in AWS Cost Explorer, enabling the finance and engineering teams to track spend by service, feature, and environment.
+### Cost Allocation, Tagging & Reporting
+
+*   **Tagging Policy:** The cost allocation tagging strategy proposed in `66-costs-model.md` is excellent and is adopted as a **mandatory policy**. All cloud resources **must** be tagged with:
+    *   `sw:cost-center`
+    *   `sw:environment`
+    *   `sw:service-name`
+    *   `sw:feature`
+    *   `sw:owner`
+*   **Enforcement:** This policy must be enforced automatically using an **AWS Service Control Policy (SCP)** applied at the root of the AWS Organization.
+*   **Reporting:** The finance lead and engineering manager are jointly responsible for creating and reviewing a monthly cost report in AWS Cost Explorer, grouped by the `sw:service-name` and `sw:feature` tags to track spend against budget.
