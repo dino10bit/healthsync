@@ -333,7 +333,7 @@ To ensure "exactly-once" processing semantics in a distributed system, a multi-l
         2.  It attempts to write an item to the `SyncWellMetadata` table with a primary key of `IDEM##{Idempotency-Key}` and a `status` of `INPROGRESS`, using a **condition expression** to fail if the item already exists.
         3.  If the write succeeds, the Lambda executes the business logic. Upon completion, it updates the item's `status` to `COMPLETED` and sets a **24-hour TTL**.
         4.  If the write fails because the item exists, the Lambda checks the item's `status`. If `COMPLETED`, it can safely discard the current job and return success. If `INPROGRESS`, it indicates a concurrent execution, and the current job should be dropped or retried with a delay.
-    *   **Benefit:** This approach provides a robust, end-to-end guarantee of exactly-once processing for the lifetime of the idempotency key, managed by the TTL.
+    *   **Benefit:** This approach provides a robust, end-to-end guarantee of exactly-once processing for the lifetime of the idempotency key, managed by the TTL. The exact sequence is detailed in **Diagram 9** in the Visual Diagrams section.
 
 *   **Authoritative Mechanism ("Cold Path"): Step Functions Execution Naming**
     *   For long-running historical syncs orchestrated by Step Functions, the idempotency mechanism is to use the client-provided `Idempotency-Key` as the unique `name` for the Step Function execution.
@@ -1536,3 +1536,35 @@ sequenceDiagram
 ```
 *Note: The `Fan-Out Lambda` in Diagram 6 has the following technical specifications: Language/Runtime: TypeScript on NodeJS, Memory: 256MB.*
 *Note: The `Shard Processor Lambda` in Diagram 6 has the following technical specifications: Language/Runtime: TypeScript on NodeJS, Memory: 256MB.*
+
+### Diagram 9: Idempotency Check Flow
+
+This sequence diagram illustrates the DynamoDB-based distributed locking mechanism used to ensure exactly-once processing for "Hot Path" sync jobs.
+
+```mermaid
+---
+title: "Diagram 9: Idempotency Check Flow (v1.6)"
+---
+sequenceDiagram
+    actor Worker as Worker Lambda
+    participant DynamoDB as DynamoDB
+
+    Worker->>+DynamoDB: PutItem(IDEM##{key}, status=IN_PROGRESS) with ConditionExpression
+
+    alt Lock Acquired (PutItem Succeeded)
+        DynamoDB-->>-Worker: 200 OK
+        Worker->>Worker: Execute Business Logic
+        Worker->>+DynamoDB: UpdateItem(IDEM##{key}, status=COMPLETED, ttl=24h)
+        DynamoDB-->>-Worker: 200 OK
+    else Lock Not Acquired (ConditionalCheckFailedException)
+        DynamoDB-->>-Worker: 400 ConditionalCheckFailedException
+        Worker->>+DynamoDB: GetItem(IDEM##{key})
+        DynamoDB-->>-Worker: Return item with status
+
+        alt Item status is COMPLETED
+            Worker->>Worker: Discard current job, return success
+        else Item status is IN_PROGRESS
+            Worker->>Worker: Retry job with exponential backoff
+        end
+    end
+```
