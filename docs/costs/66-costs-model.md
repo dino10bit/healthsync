@@ -33,40 +33,42 @@ Based on the detailed analysis in Section 9, the T-shirt cost estimates for the 
 
 ## 3. Reconciled, Production-Ready Monthly Cost Table
 
-This table presents a more realistic, bottom-up cost estimate based on the **recommended production architecture** and the **Nominal traffic model** (1M DAU, 10M syncs/day, ~16.4TB egress).
+This table presents a more realistic, bottom-up cost estimate based on the **recommended production architecture** and the **Nominal traffic model** (1M DAU, 1.35B API requests, 10M syncs/day, ~16.4TB egress).
+
+**Note on Omitted Costs:** This model **intentionally omits** the Fargate compute and data transfer costs for the historical sync "Cold Path" feature. While this feature is a critical post-MVP enhancement, its absence from this model provides a clearer financial picture of the core real-time sync platform. The "Cold Path" costs must be modeled and budgeted for separately before that feature is prioritized.
 
 | Component | Service | Unit Cost | Units (Monthly) | **Reconciled Cost** | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Compute** | AWS Lambda (Graviton) | `$0.00001333/GB-s` | 300M invocations, 1024MB, 1.5s duration | **$6,120** | Higher invocation count based on 10 syncs/day. |
+| **Compute** | AWS Lambda (Graviton) | `$0.00001333/GB-s` | 300M invokes, 1024MB, 1.5s duration | **$6,120** | Aligned with `06-technical-architecture.md`. |
 | | | `$0.20/M invokes` | 300M invocations | **$60** | |
-| **Database** | DynamoDB (On-Demand) | `$1.25/M WCU` | 300M syncs * 2 (Global Table) = 600M WCUs | **$750** | |
-| | | `$0.25/M RCU` | 300M syncs * 1 = 300M RCUs | **$75** | |
-| | **AWS Backup** | `$0.17/GB-month`| Est. 1 TB table size | **$170** | For managing snapshots. |
-| **Caching** | ElastiCache for Redis | `$0.266/hr` | 2x `cache.m6g.large` nodes | **$383** | Aligned with architecture doc. |
-| **Network/Egress**| **NAT Gateway** | `$0.045/GB` | **16,400 GB** processed | **$738** | **Critical:** Based on the revised 16.4TB egress model. |
-| | **Network Firewall** | `$0.065/GB` | Est. 10% of traffic (1.64TB) | **$107** | Cost for traffic to untrusted endpoints. |
-| **Messaging** | API Gateway | `$1.00/M requests` | 300M requests | **$300** | |
-| | Amazon SQS (Standard) | `$0.40/M requests` | ~600M requests | **$240** | |
-| **Observability**| **CloudWatch Logs** | `$0.50/GB` | Est. 5 TB ingested | **$2,500** | **Critical:** Assumes tiered logging is NOT implemented. |
-| | **CloudWatch Metrics**| (Varies) | - | **$750** | High volume of custom metrics. |
-| | **CloudWatch Alarms** | (Varies) | - | **$250** | |
-| **Security** | AWS WAF | `$0.60/M requests` | 300M requests | **$180** | |
-| | AWS Inspector | `$1.25/instance` | Est. 50 Fargate tasks, etc. | **$63** | |
-| **Other** | (Secrets Manager, Cognito, etc.) | - | - | **$250** | Includes DR identity provider. |
-| **TOTAL** | | | | **~$12,936 / month** | *(On-Demand)* |
+| **Database** | DynamoDB (On-Demand) | `$1.25/M WCU` | 600M WCUs (Global Table) | **$750** | Aligned. |
+| | | `$0.25/M RCU` | 300M RCUs | **$75** | Aligned. |
+| | AWS Backup | `$0.17/GB-month`| 1 TB table size | **$170** | Aligned. |
+| **Caching** | ElastiCache for Redis | `$0.266/hr` | 2x `cache.m7g.large` | **$383** | Aligned. |
+| **Network/Egress**| NAT Gateway | `$0.045/GB` | 16,400 GB processed | **$738** | Aligned. Assumes VPC Endpoints are used. |
+| | Network Firewall | `$0.065/GB` | 1,640 GB (10% of egress) | **$107** | Aligned. |
+| **Messaging** | **API Gateway** | `$1.00/M requests` | **1,350M requests** | **$1,350** | **CORRECTED:** Aligned with traffic model. |
+| | Amazon SQS | `$0.40/M requests` | ~600M requests | **$240** | Aligned. |
+| **Observability**| **CloudWatch Logs** | `$0.50/GB` | **500 GB ingested** | **$250** | **CORRECTED:** Assumes tiered logging is implemented. |
+| | CloudWatch Metrics| (Varies) | - | **$750** | Aligned. Assumes EMF is NOT fully adopted yet. |
+| | CloudWatch Alarms | (Varies) | - | **$250** | Aligned. |
+| **Security** | **AWS WAF** | `$0.60/M requests` | **1,350M requests** | **$810** | **CORRECTED:** Aligned with traffic model. |
+| | AWS Inspector | `$1.25/instance` | 50 Fargate tasks (placeholder) | **$63** | Aligned. |
+| **Other** | (Secrets Manager, etc.) | - | - | **$250** | Aligned. |
+| **TOTAL** | | | | **~$12,376 / month** | *(On-Demand)* |
 
 ## 4. Reconciled Cost Metrics & Sensitivity Analysis
 
-*   **Reconciled Cost-per-DAU (Monthly):** `$12,936 / 1,000,000 =` **$0.013 per user per month**.
-*   **Reconciled Cost-per-1M-DAU (Annualized):** `$12,936 * 12 =` **$155,232 per year**.
+*   **Reconciled Cost-per-DAU (Monthly):** `$12,376 / 1,000,000 =` **$0.012 per user per month**.
+*   **Reconciled Cost-per-1M-DAU (Annualized):** `$12,376 * 12 =` **$148,512 per year**.
 
-The table below shows how this reconciled cost shifts under different traffic scenarios and with the application of a **3-year, all-upfront Compute Savings Plan (~40% discount)**.
+The table below shows how this reconciled cost shifts under different traffic scenarios and with the application of a **3-year, all-upfront Compute Savings Plan (~40% discount on Lambda)**.
 
 | Traffic Scenario | Reconciled Monthly Cost (On-Demand) | Reconciled Monthly Cost (with 3-Yr Savings Plan) |
 | :--- | :--- | :--- |
-| **Conservative** | **~$7,000** | **~$4,800** |
-| **Nominal** | **~$12,936** | **~$10,200** |
-| **Aggressive** | **~$25,000** | **~$21,500** |
+| **Conservative** | ~ $6,800 | **~ $4,900** |
+| **Nominal** | ~ $12,376 | **~ $9,900** |
+| **Aggressive** | ~ $24,500 | **~ $20,000** |
 
 **Conclusion:** The platform's costs are extremely sensitive to user activity, particularly payload size and sync frequency. A Savings Plan is a powerful lever, but it cannot fix a fundamentally expensive architecture. The **only** way to control costs is to aggressively implement the application-level optimizations.
 

@@ -1061,7 +1061,9 @@ sequenceDiagram
 ##### Foundational Traffic Model
 The following model provides three scenarios (Conservative, Nominal, Aggressive) to bound the problem. The **Nominal** scenario is used for all subsequent capacity and cost calculations.
 
-> **BLOCKER - Missing Data:** The following assumptions must be validated with real-world data from a private beta before public launch.
+> **BLOCKER - Unvalidated Traffic & Payload Assumptions:** The entire capacity plan, architecture, and cost model are built on the following assumptions about user activity. Launching without a private beta to validate these numbers exposes the project to an unacceptably high risk of financial overruns and is not recommended. These assumptions **must** be validated before a public, at-scale launch.
+>
+> **BLOCKER - Missing Data Residency Constraints:** This model assumes no specific data residency requirements (e.g., GDPR). If EU users are targeted, a multi-region strategy with data pinning becomes mandatory, significantly altering the architecture and cost.
 
 **Core User Activity Assumptions**
 
@@ -1073,7 +1075,7 @@ The following model provides three scenarios (Conservative, Nominal, Aggressive)
 | "Hot Path" Syncs / User / Day | 5 | **10** | 20 | Syncs/User/Day | Includes automatic, webhook, and manual syncs. |
 | Write/Read Ratio (DB) | 1:2 | **1:1** | 2:1 | Ratio | Nominal assumes each sync reads config then writes state. |
 | Peak-to-Average Ratio | 3:1 | **5:1** | 8:1 | Ratio | A 5x peak is standard for global apps with daily usage patterns (e.g., morning/evening spikes). |
-| Avg. API Payload Size | 2 KB | **5 KB** | 10 KB | Kilobytes | **BLOCKER:** This is a critical assumption for egress costs. Needs validation. |
+| Avg. API Payload Size | 2 KB | **5 KB** | 10 KB | Kilobytes | **BLOCKER:** Critical assumption for egress costs. A 2x change here could increase annual costs by over $10,000. |
 | Avg. "Heavy" Payload Size | 250 KB | **500 KB** | 1 MB | Kilobytes | For payloads like workout GPX tracks. |
 | % Heavy Payloads | 5% | **10%** | 20% | Percentage | Assumes 1 in 10 syncs involves a "heavy" payload. |
 
@@ -1714,10 +1716,9 @@ The primary attack surface consists of:
 ### 6.2. Concrete Remediation & Hardening
 
 #### **Remediation for IDOR (Vulnerability #2)**
-The `AuthorizerLambda` must inject the authenticated `userId` into the request context that is passed to the `WorkerLambda`. The `WorkerLambda` **must** then use this context `userId` as the partition key for all DynamoDB queries. It must **never** trust a `userId` provided in a request body.
+The `AuthorizerLambda` must inject the authenticated `userId` into the request context. The `WorkerLambda` **must** then use this context `userId` as the partition key for all DynamoDB queries. It must **never** trust a `userId` provided in a request body. To enforce this at the infrastructure level, the `WorkerLambda`'s IAM role **must** include a condition that restricts its access to only the items that match its user context.
 
 *   **Example IAM Policy Snippet (Least Privilege):**
-    This policy, attached to the `WorkerLambda`, uses IAM policy variables to restrict its access to DynamoDB items that are tagged with the same `userId` as the principal (the Lambda function) that is running. This is a powerful defense-in-depth control.
 
     ```json
     {
@@ -1748,7 +1749,7 @@ The `AuthorizerLambda` must inject the authenticated `userId` into the request c
     1.  **AWS Managed Rule: `AWSManagedRulesCommonRuleSet`:** Protects against the OWASP Top 10.
     2.  **AWS Managed Rule: `AWSManagedRulesAmazonIpReputationList`:** Blocks known malicious IP addresses.
     3.  **Custom Rule: Global Rate-Based Rule:** Block any source IP that sends more than **1,000 requests in a 5-minute period**.
-*   **Per-User Rate Limiting:** Implement API Gateway Usage Plans as described in this document.
+*   **BLOCKER - Implement Per-User Rate Limiting:** The single most critical security control is protection against financial exhaustion and DoS attacks from a single authenticated user. This **must** be implemented using **API Gateway Usage Plans**. Each authenticated user **must** be associated with an API key, and a default usage plan must be enforced with a conservative rate limit (e.g., **10 requests/second**) and burst capacity (e.g., **20 requests/second**).
 
 #### **Remediation for Secrets Management (Vulnerability #7)**
 *   **Secrets Management:** All secrets must be stored in AWS Secrets Manager, encrypted with a dedicated customer-managed KMS key.
