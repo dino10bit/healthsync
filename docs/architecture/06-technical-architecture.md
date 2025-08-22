@@ -918,7 +918,7 @@ A dedicated **Anonymizer Proxy Lambda** will be used for real-time operational f
 *   **Privacy Guarantee:** This proxy-based architecture provides a strong guarantee that no raw user PII is ever processed by the AI models.
 
 #### Batch Anonymization for Analytics
-For analytics, **Amazon Kinesis Data Firehose** will be used.
+For analytics, **Amazon Kinesis Data Firehose** will be used. This flow is visualized in **Diagram 11**.
 *   **Buffering and Batching:** Firehose will be configured with a **buffer interval of 60 seconds**, a **buffer size of 5MB**, **GZIP compression**, and **encryption with an AWS-managed KMS key**.
 *   **On-the-fly Transformation:** Before delivery, Firehose will invoke an Anonymization Lambda to strip PII from each record.
     *   **Technical Specifications:**
@@ -1609,4 +1609,30 @@ sequenceDiagram
     Backend-->>-MobileApp: Return latest source-of-truth state
     MobileApp->>MobileApp: Refresh UI with latest state
     deactivate MobileApp
+```
+
+### Diagram 11: Data Anonymization & Analytics Flow
+
+This diagram shows the data flow for the batch anonymization process, ensuring user privacy is maintained before data is used for analytics.
+
+```mermaid
+---
+title: "Diagram 11: Data Anonymization & Analytics Flow (v1.6)"
+---
+graph TD
+    %% Define Styles
+    classDef compute fill:#fff8e6,stroke:#ff9900;
+    classDef messaging fill:#f3e6ff,stroke:#8a3ffc;
+    classDef datastore fill:#e6ffed,stroke:#2d9a41;
+
+    A["`fa:fa-bolt Worker Lambda`"] -- "1. Emits events with<br>raw user data" --> B["`fa:fa-comments Amazon Kinesis<br>Data Firehose`"];
+    B -- "2. Buffers data and invokes<br>transformation Lambda" --> C["`fa:fa-bolt Anonymizer Lambda`"];
+    C -- "3. Strips/hashes PII" --> C;
+    B -- "4. Delivers clean data" --> D["`fa:fa-archive Analytics S3 Bucket`"];
+    D --> E["`fa:fa-brain AWS SageMaker`"];
+
+    %% Apply Styles
+    class A,C,E compute;
+    class B messaging;
+    class D datastore;
 ```
