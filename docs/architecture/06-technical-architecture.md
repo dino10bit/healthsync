@@ -91,6 +91,8 @@ Designs for post-MVP features like the "cold path" for historical syncs have bee
 
 **Note on Diagram Clarity:** The following diagram is a high-level overview for the MVP. It omits secondary components like the S3 bucket for archiving DLQ messages (`syncwell-prod-dlq-archive`) and post-MVP components like the AI Insights Service. The DLQ archive bucket will be configured with a specific lifecycle policy: **transition objects to S3 Glacier Instant Retrieval after 90 days and delete them after 365 days.**
 
+**Security Note:** To avoid clutter, IAM roles are not explicitly drawn. However, a foundational security principle of this architecture is that *all inter-service communication is secured via least-privilege IAM roles*.
+
 *(See Diagram 2 in the "Visual Diagrams" section below.)*
 
 1.  **Mobile Application (Kotlin Multiplatform & Native UI)**
@@ -340,7 +342,7 @@ To balance cost, complexity, and time-to-market for the MVP, the SyncWell backen
 
 *   **Intra-Region High Availability:** High availability will be achieved *within* the single region by deploying services across multiple Availability Zones (AZs).
     *   **Stateless Services:** API Gateway and AWS Lambda are inherently highly available across AZs.
-    *   **Stateful Services:** The DynamoDB table and ElastiCache for Redis cluster will be configured for Multi-AZ deployment. This ensures that the failure of a single AZ does not result in a service outage.
+    *   **Stateful Services:** The DynamoDB table and ElastiCache for Redis cluster will be configured for Multi-AZ deployment. This ensures that the failure of a single AZ does not result in a service outage. **Cost Impact:** This configuration increases infrastructure costs compared to a single-AZ deployment, but is a necessary trade-off to meet the system's high availability requirements and mitigate the significant business cost of a service outage.
 
 #### Future: Multi-Region Architecture
 The architecture is designed with a future multi-region deployment in mind. Prioritization of this work will be triggered by **business expansion into new geographic markets (e.g., the EU) or reaching 500,000 DAU**. Key considerations for this evolution include:
@@ -429,11 +431,11 @@ To further enhance performance and resilience, the `WorkerLambda` will implement
 *   **Benefits:** This pattern significantly reduces API calls to Secrets Manager, which lowers direct costs, decreases job latency, and makes the worker fleet more resilient to transient issues with the Secrets Manager service.
 
 #### Lambda "Warm Pool" (Provisioned Concurrency)
-To eliminate cold start latency for critical user-facing workflows, the architecture will use **Provisioned Concurrency** for the `WorkerLambda`.
+To eliminate cold start latency for critical user-facing workflows, the architecture will use **Provisioned Concurrency** for the `WorkerLambda`. This is a key **performance tuning consideration**.
 
 *   **Mechanism:** A configured number of Lambda execution environments will be pre-initialized and kept "warm," ready to respond instantly to invocations. The initial value for the MVP will be **50**.
 *   **Behavior:** When a job arrives, it is routed to a warm instance, avoiding the multi-second latency of a cold start (which includes JVM startup and KMP module initialization). If traffic exceeds the provisioned level, Lambda will scale up standard, on-demand instances.
-*   **Benefit:** This provides a consistent, low-latency experience for the "Hot Path" syncs, which is critical for user satisfaction with manual syncs. It trades a predictable hourly cost for guaranteed performance. The amount of Provisioned Concurrency will be tuned based on production traffic patterns.
+*   **Benefit & Cost Impact:** This provides a consistent, low-latency experience for the "Hot Path" syncs, which is critical for user satisfaction with manual syncs. It trades a predictable hourly cost for guaranteed performance. The amount of Provisioned Concurrency will be tuned based on production traffic patterns and cost models.
 
 #### Intelligent Data Hydration (Metadata-First Fetch)
 To minimize data transfer and processing costs, the sync algorithm will employ an "intelligent hydration" or "metadata-first" fetching strategy. This is particularly effective for data types with large, heavy payloads (e.g., GPX track for a workout, detailed heart rate time series).
@@ -471,7 +473,7 @@ We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** 
 #### Networking Optimization with VPC Endpoints
 To enhance security and reduce costs, the architecture will use **VPC Endpoints** for all internal AWS service communication. This allows Lambda functions in the VPC to communicate with other AWS services using private IP addresses.
 *   **Services:** Endpoints will be created for S3, DynamoDB, SQS, Secrets Manager, AppConfig, EventBridge, and Lambda.
-*   **Benefit:** This improves security by keeping traffic off the public internet and provides direct cost savings by minimizing billable traffic through the NAT Gateway. While interface endpoints have a small hourly cost, this is significantly cheaper than NAT Gateway data processing charges at scale.
+*   **Benefit & Cost Impact:** This improves security by keeping traffic off the public internet. Critically, it also **reduces data processing costs** by minimizing billable traffic that would otherwise be routed through a NAT Gateway. While interface endpoints have a small hourly cost, this is significantly cheaper than NAT Gateway data processing charges at scale, making them a key cost-optimization strategy.
 
 ## 3c. DynamoDB Data Modeling & Access Patterns
 
@@ -857,7 +859,7 @@ A detailed financial model is a mandatory prerequisite before implementation and
 *   **Egress Traffic Control (Hybrid Firewall Model):** To balance cost and security, outbound traffic from the VPC is routed through a hybrid firewall model. This model uses separate egress paths depending on the destination's trust level and traffic volume.
     *   **High-Security Path (AWS Network Firewall):** All outbound traffic to unknown, lower-volume, or security-sensitive endpoints is routed through an **AWS Network Firewall**. This provides advanced features like intrusion prevention and deep packet inspection, ensuring the highest level of security.
     *   **Cost-Optimized Path (AWS NAT Gateway):** High-volume, trusted traffic to the primary, well-known API endpoints of major partners (e.g., Fitbit, Strava, Garmin) is routed through a separate, standard **AWS NAT Gateway**. The initial allow-list for this path is managed in the project's Terraform configuration. Additions to this list require a pull request with approval from the Security team.
-    *   **Justification:** This hybrid approach provides significant cost savings by routing the bulk of the data through the much cheaper NAT Gateway, while preserving the advanced security features of the Network Firewall for traffic that requires it. This is a pragmatic trade-off between cost and risk.
+    *   **Justification & Cost Impact:** This hybrid approach directly optimizes costs. The **Network Firewall introduces its own data processing costs**, which are higher than a standard NAT Gateway. By routing high-volume, trusted partner traffic through the cheaper NAT Gateway, we significantly reduce egress costs while still using the firewall's advanced inspection capabilities for untrusted destinations. This routing choice is a critical lever for cost management.
 *   **Code & Pipeline Security:** Production builds will be obfuscated. Dependency scanning (Snyk) and SAST will be integrated into the CI/CD pipeline, failing the build on critical vulnerabilities. Any new AI frameworks must undergo a formal security review, which includes threat modeling and a review by the security team, before being integrated.
 
 ### Compliance
@@ -1015,6 +1017,16 @@ This section documents known limitations of the architecture and explicit trade-
 *   **Firebase Authentication Dependency:** The use of Firebase Authentication creates a hard dependency on a non-AWS service for a critical function. This is a **High** strategic risk.
     *   **Risk:** An outage in Firebase Auth would render the application unusable for all users.
     *   **[RISK-HIGH-03] Mitigation:** While accepted for the MVP to prioritize launch speed, a high-level exit strategy has been drafted. See **[`./33a-firebase-exit-strategy.md`](./33a-firebase-exit-strategy.md)** for the detailed technical plan. This risk has been formally accepted by the product owner.
+
+*   **MVP Scope & Phasing:** To ensure a focused and timely launch, the architecture distinguishes between core features required for the MVP and production-hardening features that can be implemented as fast-follows.
+    *   **Must-have for MVP (Day 1):**
+        *   **Single-Region Deployment:** Core infrastructure will be deployed in a single AWS region (`us-east-1`) to optimize for cost and simplicity at launch.
+        *   **VPC Endpoints:** Deployed for all internal AWS service communication to ensure security and reduce NAT Gateway data transfer costs from day one.
+        *   **Core Security Features:** Foundational security measures like AWS WAF, granular IAM roles, and encryption at rest/in-transit are non-negotiable for the MVP.
+    *   **Fast-follow Post-Launch (Production Hardening):**
+        *   **Multi-AZ ElastiCache:** While the MVP will launch with a single-node ElastiCache cluster to manage costs, it will be scaled to a Multi-AZ deployment shortly after launch to improve resilience.
+        *   **Comprehensive Chaos Engineering:** The full suite of chaos engineering experiments will be built out and automated post-launch.
+        *   **Multi-Region Architecture:** Expansion to a multi-region architecture is a post-MVP consideration, to be prioritized based on user growth or geographic expansion.
 
 ## 11. Appendices
 
