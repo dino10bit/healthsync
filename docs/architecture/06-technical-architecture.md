@@ -357,9 +357,57 @@ graph TB
         *   Powers the rate-limiting engine to manage calls to third-party APIs.
 
 5.  **Monitoring & Observability (AWS CloudWatch)**
-    *   **Description:** A centralized system for collecting logs, metrics, and traces from all backend services.
+    *   **Description:** A centralized system for collecting logs, metrics, and traces from all backend services. A robust observability strategy is critical for operating this system reliably and cost-effectively.
     *   **Technology:** AWS CloudWatch (Logs, Metrics, Alarms), AWS X-Ray.
     *   **Responsibilities:** Provides insights into system health, performance, and error rates. Triggers alarms for critical issues.
+
+    ### Required Telemetry
+
+    *   **Metrics:**
+        *   **Standard:** All Lambda functions must use the **CloudWatch Embedded Metric Format (EMF)** to publish custom business and operational metrics (e.g., `SyncSuccessRate`, `CacheHitRate`). This is more cost-effective than making individual `PutMetricData` API calls.
+        *   **Cardinality Guidance:** High-cardinality dimensions (like `userId` or `jobId`) **must not** be used in CloudWatch metrics as this will lead to exorbitant costs. Use low-cardinality dimensions like `Tier: [PRO|FREE]`, `Outcome: [SUCCESS|FAILURE]`, `Provider: [Fitbit|Strava]`.
+    *   **Distributed Tracing:**
+        *   **Standard:** **OpenTelemetry** must be adopted as the standard for instrumenting all services.
+        *   **Correlation ID:** A `correlationId` (the trace ID) must be generated at the edge (API Gateway) for every request. This ID **must** be propagated through all services (SQS, Lambda) and **must** be included in every log line. This is non-negotiable for enabling distributed tracing.
+    *   **Structured Logging:**
+        *   All log output **must** be structured JSON.
+        *   The **AWS Lambda Powertools** library should be used as it provides out-of-the-box support for structured logging, tracing, and metrics.
+        *   Every log entry must contain the `correlationId`.
+
+    ### SLI/SLO Examples & Alerting
+
+    The SLOs are defined in Section 3b. The following are examples of the alerts that must be configured to monitor them.
+
+    *   **High-Severity Alert (Pages On-Call Engineer):**
+        *   **Name:** `P0 - Core API Availability Below SLO`
+        *   **Metric:** `(count(non-5xx responses) / count(total responses)) * 100`
+        *   **Threshold:** `Value < 99.95%`
+        *   **Evaluation Period:** For 5 consecutive periods of 1 minute.
+        *   **Action:** Page the SRE on-call via PagerDuty.
+
+    *   **Low-Severity Alert (Creates a Ticket):**
+        *   **Name:** `P2 - Cache Latency Nearing SLO`
+        *   **Metric:** `p99(ElastiCache_Latency)`
+        *   **Threshold:** `Value > 10ms`
+        *   **Evaluation Period:** For 30 consecutive periods of 1 minute.
+        *   **Action:** Create a `P2-High` ticket in Jira assigned to the core backend team.
+
+    ### Must-Have Dashboards & Runbooks
+
+    *   **Required Dashboards:**
+        1.  **API Gateway Health:** RPS, 4xx/5xx error rates, p95/p99 latency, per-endpoint breakdown.
+        2.  **Lambda Worker Health:** Invocation count, throttles, error rate, average/p99 duration, provisioned vs. on-demand concurrency.
+        3.  **Business KPIs:** DAU, `SyncSuccessRate`, new user signups, Pro tier conversion rate, churn rate.
+        4.  **Database Health:** Consumed vs. provisioned RCU/WCU, throttle count, latency, GSI utilization.
+        5.  **Cost Analysis:** Real-time estimated cost by service (via AWS Cost Explorer), with alerts for anomalies.
+        6.  **Security Operations:** WAF blocked requests, API key usage patterns, suspicious IAM activity from CloudTrail.
+
+    *   **Required Runbooks:**
+        1.  `runbook-region-failover.md` (Created in Section 3b)
+        2.  `runbook-db-cache-failure.md` (Created in Section 3b, expanded to include cache)
+        3.  `runbook-traffic-spike.md` (Created in Section 3b)
+        4.  **`runbook-third-party-outage.md`:** Steps to identify and isolate a failing third-party API, including how to disable a specific provider via AppConfig to prevent cascading failures.
+        5.  **`runbook-deployment-rollback.md`:** Step-by-step guide for rolling back a failed canary deployment, including how to analyze canary metrics and how to force a full rollback via the CI/CD system.
 
 6.  **Data Governance & Schema Registry (AWS Glue Schema Registry)**
     *   **Description:** To manage the evolution of our canonical data models (e.g., `CanonicalWorkout`), we will use the AWS Glue Schema Registry. It acts as a central, versioned repository for our data schemas.
@@ -778,59 +826,72 @@ To reliably serve 1 million Daily Active Users, the architecture incorporates sp
 ### High Availability Strategy
 
 #### MVP: High Availability Strategy
-To meet the 99.9% availability SLO, the backend **must** be deployed with full Multi-AZ redundancy from day one. This includes deploying a Multi-AZ ElastiCache for Redis cluster. For Disaster Recovery, the `SyncWellMetadata` table **must** be configured as a DynamoDB Global Table with a replica in a DR region (e.g., `us-west-2`).
+To meet the 99.9% availability SLO, the backend **must** be deployed with full Multi-AZ redundancy from day one. This includes deploying a Multi-AZ ElastiCache for Redis cluster. For Disaster Recovery, the `SyncWellMetadata` table **must** be configured as a DynamoDB Global Table with a replica in a DR region (e.g., `us-west-2`). **Point-in-Time Recovery (PITR) must also be enabled** on the table as a non-negotiable requirement to protect against data corruption events.
 
 <details>
-<summary>Diagram 5: High Availability & Disaster Recovery Architecture</summary>
+<summary>Diagram 5: Recommended Critical Path (Multi-AZ & Multi-Region)</summary>
 
-This diagram illustrates the architecture for the critical "Hot Path" sync, showing how Multi-AZ and Multi-Region deployments provide resilience.
+This diagram illustrates the recommended end-to-end flow, incorporating multi-AZ and multi-region resilience boundaries.
 
 ```mermaid
 ---
-title: "Diagram 5: High Availability & DR Architecture (v1.6)"
+title: "Recommended Critical Path (Multi-AZ & Multi-Region)"
 ---
-%%{init: {'theme': 'neutral'}}%%
-graph LR
-    subgraph "User / DNS"
-        direction LR
-        User("`fa:fa-user User`") --> Route53("`fa:fa-route Route 53`")
+graph TD
+    subgraph "Global / DNS"
+        User("`fa:fa-user User`")
+        Route53("`fa:fa-route Route 53`")
     end
 
-    subgraph "AWS Region 1: us-east-1 (Primary)"
-        direction TB
-        style us-east-1 fill:#e6f3ff,stroke:#0073bb
+    subgraph "AWS Region: us-east-1 (Primary)"
+        style `AWS Region: us-east-1 (Primary)` fill:#e6f3ff,stroke:#0073bb
 
-        subgraph Ingress
-            direction LR
-            CloudFront("`fa:fa-globe-americas<br>CloudFront`") --> WAF("`fa:fa-shield-alt<br>WAF`") --> ApiGateway("`fa:fa-server<br>API Gateway`")
+        subgraph "Edge"
+            CloudFront("`fa:fa-globe-americas CloudFront`")
+            WAF("`fa:fa-shield-alt WAF`")
         end
 
-        ApiGateway -- "Enqueues job in" --> SQS("`fa:fa-inbox SQS`")
-
-        subgraph "Compute & Cache (Multi-AZ)"
-            direction TB
-            subgraph "AZ 1: use1-az1"
-                style use1-az1 fill:#ffffff,stroke-dasharray: 5 5
-                Lambda_A("`fa:fa-bolt Lambda`") --> Redis_A("`fa:fa-memory Redis<br>(Primary)`")
-            end
-            subgraph "AZ 2: use1-az2"
-                style use1-az2 fill:#ffffff,stroke-dasharray: 5 5
-                Lambda_B("`fa:fa-bolt Lambda`") --> Redis_B("`fa:fa-memory Redis<br>(Replica)`")
-            end
+        subgraph "API Layer"
+            ApiGateway("`fa:fa-server API Gateway`")
+            Authorizer("`fa:fa-bolt Authorizer Lambda`")
+            UsagePlan("`fa:fa-tachometer-alt Usage Plan<br>(Per-User Rate Limit)`")
         end
 
-        SQS -- Triggers --> Lambda_A & Lambda_B
-        Redis_A -- "Replicates to" <--> Redis_B
-
-        subgraph "Database (Multi-Region)"
-            direction LR
-            DynamoDB_Global("`fa:fa-database DynamoDB<br>(Primary)`") -- "Replicates to" --> DynamoDB_DR["`fa:fa-database DynamoDB<br>(Replica in us-west-2)`"]
+        subgraph "Availability Zone 1"
+            style `Availability Zone 1` fill:#ffffff,stroke-dasharray: 5 5
+            Lambda_A("`fa:fa-bolt Worker Lambda`")
+            Redis_A("`fa:fa-memory Redis Primary`")
         end
 
-        Lambda_A & Lambda_B -- "Read/Write State" --> DynamoDB_Global
+        subgraph "Availability Zone 2"
+            style `Availability Zone 2` fill:#ffffff,stroke-dasharray: 5 5
+            Lambda_B("`fa:fa-bolt Worker Lambda`")
+            Redis_B("`fa:fa-memory Redis Replica`")
+        end
+
+        SQS("`fa:fa-inbox SQS Queue`")
+        Dynamo_P["`fa:fa-database DynamoDB<br>(Primary)`"]
     end
 
-    Route53 -- "Latency-based Routing" --> CloudFront
+    subgraph "AWS Region: us-west-2 (DR)"
+        style `AWS Region: us-west-2 (DR)` fill:#fde4d8,stroke:#d95300
+        Dynamo_DR["`fa:fa-database DynamoDB<br>(Replica)`"]
+    end
+
+    %% Connections
+    User --> Route53
+    Route53 -- "Latency Routing" --> CloudFront
+    CloudFront --> WAF
+    WAF --> ApiGateway
+    ApiGateway -- "Authorizes via" --> Authorizer
+    ApiGateway -- "Enforces" --> UsagePlan
+    ApiGateway -- "Enqueues job" --> SQS
+
+    SQS -- "Triggers" --> Lambda_A & Lambda_B
+    Lambda_A & Lambda_B -- "Read/Write" --> Redis_A
+    Redis_A -- "Replicates to" --> Redis_B
+    Lambda_A & Lambda_B -- "Read/Write State" --> Dynamo_P
+    Dynamo_P -- "Global Table Replication" --> Dynamo_DR
 ```
 
 </details>
@@ -841,19 +902,110 @@ The architecture is designed with a future multi-region deployment in mind. Prio
 *   **Request Routing:** Implementing latency-based routing with Amazon Route 53.
 *   **Data Residency & Compliance (GDPR):** The future multi-region strategy **must** include a comprehensive plan for data residency, likely involving region-specific infrastructure silos or fine-grained data routing policies to ensure compliance. This will be a primary workstream when the multi-region expansion is prioritized.
 
-### Resilience Testing (Chaos Engineering)
+### Resilience Testing (Chaos & Load Testing Program)
 
-The practice of chaos engineering is critical. We will use the **AWS Fault Injection Simulator (FIS)** to validate our high availability.
+The practice of chaos and load testing is critical to validate our high availability and scalability claims.
 
-*   **Ownership and Frequency:** Experiments will be owned by the **Core Backend team**, who are also responsible for remediating any issues found. Experiments will be executed on a **bi-weekly basis** in the `staging` environment as part of the standard release cycle.
-*   **MVP Experiment Catalog:**
-    *   **Lambda Failure:** Terminate a random percentage (10-50%) of `WorkerLambda` invocations to ensure SQS retries and the remaining fleet can handle the load. Hypothesis: The SQS DLQ will capture failed messages after retries, and overall `SyncSuccessRate` will dip but recover.
-    *   **API Latency:** Inject a 500ms latency into calls from a worker Lambda to a third-party API endpoint. Hypothesis: The `P95_ManualSyncLatency` will increase but stay within its SLO of 15 seconds.
-    *   **DynamoDB Latency:** Inject latency on DynamoDB reads/writes to test application-level timeouts. Hypothesis: The Lambda will time out gracefully and the job will be retried.
-    *   **Secrets Manager Unavailability:** Block access to AWS Secrets Manager to verify graceful failure and retry. Hypothesis: Syncs requiring new tokens will fail with a specific error, while syncs with cached tokens continue.
-    *   **Availability Zone Failure:** Simulate the failure of a single AZ to validate Multi-AZ configurations. Hypothesis: The service will remain available with no user-visible impact.
-    *   **Cache Cluster Failure:** Simulate a full failure of the ElastiCache cluster to verify that the system enters a safe, degraded mode. Hypothesis: The system will continue to function but with higher latency and increased DynamoDB load.
+*   **Tools:**
+    *   **Chaos Engineering:** **AWS Fault Injection Simulator (FIS)**.
+    *   **Load Testing:** **k6** (scripts must be stored in the `/load-testing` directory of the repository).
+
+*   **Ownership:** Experiments will be owned by the **Core Backend team**, who are also responsible for remediating any issues found.
+
+*   **Schedule:**
+    *   **Load Testing:** A suite of k6 tests must be run against the `staging` environment as a required gate in the CI/CD pipeline before any production deployment.
+    *   **Chaos Engineering:**
+        *   Automated chaos experiments must be run **weekly** in the `staging` environment.
+        *   A formal "gameday" where chaos experiments are run manually in the **production** environment must be conducted **quarterly**.
+
+*   **Experiment Catalog:** The catalog of experiments must include, at a minimum:
+    *   **AZ failure:** Terminate all instances in one AZ to validate multi-AZ failover.
+    *   **Lambda function failure:** Inject failure/exceptions into the Lambda runtime.
+    *   **API latency injection:** Add delay to calls to critical third-party APIs.
+    *   **Dependency failure:** Block access to DynamoDB, SQS, or Secrets Manager to test graceful degradation.
+    *   **Cache cluster failure:** Reboot the ElastiCache cluster to ensure the application can function without its cache.
+    *   **DNS failure:** Simulate failure to resolve a critical internal or external endpoint.
+
 *   **Results & Action:** The results of each experiment (e.g., observed impact on latency, error rates) **must** be documented in a central location: [`../ops/chaos-engineering-results.md`](../ops/chaos-engineering-results.md). This file must be created and maintained. Any discovered regressions or unexpected failures must be logged as high-priority bugs in the issue tracker and addressed before the next release.
+
+### Service Level Objectives (SLOs) & Error Budget Policy
+
+*   **SLOs (Service Level Objectives):**
+    *   **Availability:**
+        *   **Core API:** `99.95%` of requests to `/v1/` endpoints, measured over a 28-day window, return a non-5xx response.
+        *   **Hot-Path Sync Success:** `99.9%` of `HotPathSyncRequested` jobs complete successfully (i.e., do not end in the DLQ).
+    *   **Latency:**
+        *   **API Gateway (p99):** `< 500ms` for all synchronous API calls.
+        *   **Manual Sync (p95):** `< 15 seconds` from user request to success confirmation.
+
+*   **SLIs (Service Level Indicators):**
+    *   **Availability:** `(count(non-5xx responses) / count(total responses)) * 100`
+    *   **Latency:** `histogram_quantile(0.99, sum(rate(api_latency_bucket[5m])))`
+
+*   **Error Budget Policy:**
+    *   An error budget is the inverse of the SLO (e.g., `100% - 99.95% = 0.05%` budget).
+    *   **If 50% of the 28-day error budget is consumed in any 7-day period:** An automatic, high-severity alert is sent to the on-call lead and engineering manager. A retrospective is required.
+    *   **If 100% of the 28-day error budget is consumed:** All new feature development for the affected service is frozen. Engineering efforts must be redirected to reliability improvements until the service is back within SLO.
+
+### RTO/RPO Targets & DR Strategy
+
+*   **RTO (Recovery Time Objective):** `< 4 hours`. This is the target time to restore service after a declared disaster (e.g., full region outage).
+*   **RPO (Recovery Point Objective):** `< 15 minutes`. This is the maximum acceptable data loss. This is primarily governed by DynamoDB Point-in-Time Recovery (PITR) and Global Table replication lag.
+*   **DR Strategy:**
+    *   **Primary Failure Domain:** A single AWS Availability Zone.
+        *   **Mitigation:** All critical services (Lambda, ElastiCache, NAT Gateway) must be deployed in a multi-AZ configuration. An AZ failure should be a non-event with no user impact.
+    *   **Secondary Failure Domain:** A full AWS Region (`us-east-1`).
+        *   **Mitigation:** The primary DR strategy relies on failing over to the `us-west-2` region.
+        *   **Failover Mechanics:**
+            1.  **Data:** The DynamoDB Global Table replica in `us-west-2` is promoted to be the new primary.
+            2.  **Traffic:** Amazon Route 53 health checks will detect the failure of the primary region's API endpoints and automatically change DNS records to route all traffic to a standby API Gateway deployment in `us-west-2`.
+            3.  **Compute:** The Lambda functions and other compute resources will be deployed in the DR region (ideally via IaC) and will be activated to handle the traffic.
+
+### High-Level Emergency Runbooks
+
+These are short, actionable guides for on-call engineers.
+
+#### **Runbook 1: Sudden 5x-10x Traffic Spike**
+1.  **Acknowledge Alert:** Acknowledge the CloudWatch alarm for "High API Gateway 5xx Errors" or "High Lambda Throttles".
+2.  **Verify Autoscaling:**
+    *   Check the CloudWatch dashboard for "Lambda Concurrent Executions". Verify that the number is scaling up to meet demand.
+    *   Check the "DynamoDB Throttled Requests" metric. Verify it is zero, indicating On-Demand capacity is scaling correctly.
+3.  **Identify Source:**
+    *   Check the AWS WAF dashboard for anomalous traffic patterns from specific IPs or regions.
+    *   Check API Gateway logs for a spike in requests to a specific endpoint or from a specific user (if per-user logging is available).
+4.  **Mitigate:**
+    *   **If Malicious:** Use AWS WAF to block the offending IP addresses or apply a more aggressive rate-based rule.
+    *   **If Legitimate (e.g., viral event):**
+        *   If Lambda is throttling, manually increase the "Provisioned Concurrency" reservation in the AWS console as a temporary measure.
+        *   Post a notification to the public status page acknowledging a high-traffic event and potential for degraded performance.
+5.  **Escalate:** If the situation is not controlled within 15 minutes, escalate to the Head of Engineering.
+
+#### **Runbook 2: Primary Region (`us-east-1`) Outage**
+1.  **Acknowledge Alert:** Acknowledge the Route 53 Health Check failure alarm and PagerDuty alert for "Primary Region Unresponsive".
+2.  **Confirm Outage:** Verify the outage via the official AWS Status page.
+3.  **Initiate Failover Procedure:**
+    *   In the Route 53 console, confirm that traffic has been automatically failed over to the `us-west-2` endpoints. If not, manually trigger the failover.
+    *   In the DynamoDB console, verify that the `us-west-2` replica table is now handling all read/write traffic.
+    *   Verify that the Lambda functions and API Gateway in `us-west-2` are processing requests by checking their logs and metrics.
+4.  **Communicate:**
+    *   Update the public status page to "Major Outage" and indicate that the system is operating in a degraded state from the DR region.
+    *   Notify the Head of Engineering and Product leadership.
+5.  **Plan for Failback:** Once the primary region is restored (as confirmed by the AWS Status page), plan a maintenance window to fail back traffic and data replication to `us-east-1`.
+
+#### **Runbook 3: Master Database Failure (DynamoDB Unavailability in Primary AZ)**
+*Note: With DynamoDB, a "master" failure is not the right model. This runbook addresses the unavailability of the DynamoDB endpoint in a single AZ or the entire primary region.*
+
+1.  **Acknowledge Alert:** Acknowledge the CloudWatch alarm for "High DynamoDB Read/Write Errors" or "High DynamoDB Latency".
+2.  **Assess Impact:**
+    *   Check if the errors are isolated to a single AZ. If so, the multi-AZ Lambda deployment should handle this gracefully by routing requests to healthy AZs. Monitor the error rate to ensure it does not escalate.
+    *   Check if the errors are region-wide. This indicates a larger-scale problem.
+3.  **Verify Application Behavior:**
+    *   Check if sync jobs are being correctly retried and eventually sent to the DLQ.
+    *   Confirm that the application is failing "open" or "closed" as expected (e.g., returning a 503 error to clients).
+4.  **Trigger Manual Failover (if region-wide):**
+    *   If DynamoDB is unavailable across the entire `us-east-1` region, the incident becomes a "Region Outage".
+    *   **Immediately escalate to the "Primary Region Outage" runbook.** The procedure is the same: fail over DNS and data plane to the `us-west-2` DR site.
+5.  **Communicate:** Keep the status page and internal stakeholders updated on the impact and mitigation steps.
 
 ### Performance & Scalability
 
@@ -900,6 +1052,66 @@ sequenceDiagram
 #### Load Projections & Scalability Model
 
 *   **Governing NFR:** The system must be designed and load-tested to handle a peak load of **3,000 requests per second (RPS)**.
+
+##### Foundational Traffic Model
+The following model provides three scenarios (Conservative, Nominal, Aggressive) to bound the problem. The **Nominal** scenario is used for all subsequent capacity and cost calculations.
+
+> **BLOCKER - Missing Data:** The following assumptions must be validated with real-world data from a private beta before public launch.
+
+**Core User Activity Assumptions**
+
+| Metric | Conservative | **Nominal (Used for Review)** | Aggressive | Unit | Rationale / Source |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Daily Active Users (DAU) | 1,000,000 | **1,000,000** | 1,000,000 | Users | Target specified in prompt. |
+| User Sessions / Day | 2 | **3** | 5 | Sessions/User | Industry standard for a health/fitness app. |
+| API Requests / Session | 10 | **15** | 25 | Requests/Session | Assumes a mix of foreground/background activity. |
+| "Hot Path" Syncs / User / Day | 5 | **10** | 20 | Syncs/User/Day | Includes automatic, webhook, and manual syncs. |
+| Write/Read Ratio (DB) | 1:2 | **1:1** | 2:1 | Ratio | Nominal assumes each sync reads config then writes state. |
+| Peak-to-Average Ratio | 3:1 | **5:1** | 8:1 | Ratio | A 5x peak is standard for global apps with daily usage patterns (e.g., morning/evening spikes). |
+| Avg. API Payload Size | 2 KB | **5 KB** | 10 KB | Kilobytes | **BLOCKER:** This is a critical assumption for egress costs. Needs validation. |
+| Avg. "Heavy" Payload Size | 250 KB | **500 KB** | 1 MB | Kilobytes | For payloads like workout GPX tracks. |
+| % Heavy Payloads | 5% | **10%** | 20% | Percentage | Assumes 1 in 10 syncs involves a "heavy" payload. |
+
+**Capacity Calculations (Derived from Nominal Assumptions)**
+
+Here we derive the core capacity requirements based on the **Nominal** scenario.
+
+*   **API Request Load**
+    *   Total Daily Requests: 1,000,000 DAU * 3 sessions/day * 15 requests/session = **45,000,000 requests/day**
+    *   Average Requests Per Second (RPS): 45,000,000 / (24 * 3600) = **~520 RPS**
+    *   Peak Requests Per Second (RPS): 520 RPS * 5 (Peak/Avg Ratio) = **2,600 RPS**
+        *   *Sanity Check:* This aligns with the NFR of 3,000 RPS specified in this document.
+
+*   **"Hot Path" Sync Job Load**
+    *   Total Daily Syncs: 1,000,000 DAU * 10 syncs/day = **10,000,000 syncs/day**
+    *   Average Syncs Per Second: 10,000,000 / (24 * 3600) = **~115 syncs/sec**
+    *   Peak Syncs Per Second: 115 syncs/sec * 5 (Peak/Avg Ratio) = **~575 syncs/sec**
+
+*   **Database Query Load (DynamoDB QPS)**
+    *   Assumption: Each sync job performs 1 read (e.g., get config) and 1 write (e.g., update state).
+    *   Average Read QPS: 115 syncs/sec * 1 read/sync = **115 R-QPS**
+    *   Average Write QPS: 115 syncs/sec * 1 write/sync = **115 W-QPS**
+    *   Peak Read QPS: 575 syncs/sec * 1 read/sync = **575 R-QPS**
+    *   Peak Write QPS: 575 syncs/sec * 1 write/sync = **575 W-QPS**
+        *   *Note on Global Tables:* With a Global Table for DR, the effective write QPS for billing purposes is doubled to **1,150 W-QPS** at peak.
+
+*   **Cache Throughput (Redis)**
+    *   Assumption: The cache handles config reads, rate limiting, and session data. We'll model this as 2 cache operations per sync.
+    *   Peak Cache Ops/Sec: 575 syncs/sec * 2 ops/sync = **1,150 ops/sec**
+        *   *Sanity Check:* The architecture doc specifies a target of 5,000 RPS for the cache, which provides a healthy >4x headroom.
+
+*   **Network Egress Bandwidth**
+    *   This is a critical, cost-driving calculation.
+    *   Light Payload Egress:
+        *   90% of syncs are "light": 10,000,000 * 0.90 = 9,000,000 syncs/day
+        *   Data per day: 9,000,000 syncs * 5 KB/sync = 45,000,000 KB = **45 GB/day**
+    *   Heavy Payload Egress:
+        *   10% of syncs are "heavy": 10,000,000 * 0.10 = 1,000,000 syncs/day
+        *   Data per day: 1,000,000 syncs * 500 KB/sync = 500,000,000 KB = **500 GB/day**
+    *   Total Daily Egress: 45 GB + 500 GB = **545 GB/day**
+    *   Total Monthly Egress: 545 GB/day * 30 days = **16,350 GB/month = ~16 TB/month**
+        *   **Conclusion:** This egress volume highlights the extreme sensitivity of the cost model to payload size and is a major financial risk. The "metadata-first" hydration pattern is not just an optimization; it is a **mandatory architectural requirement** to control costs.
+
 *   **Compute Model:** The "Hot Path" sync engine's worker fleet will be implemented using **AWS Lambda**. This serverless, event-driven approach is ideally suited for the workload, providing automatic scaling to handle massive concurrency while remaining cost-effective.
 *   **Scalability Strategy:** The `WorkerLambda` will be triggered by messages arriving in the `HotPathSyncQueue` with a configured **batch size of 10**. AWS Lambda will automatically scale the number of concurrent executions based on the number of messages in the queue, ensuring that we have enough capacity to handle peak load while scaling down to zero to eliminate costs during idle periods.
 
@@ -928,6 +1140,16 @@ To eliminate cold start latency for critical user-facing workflows, the architec
 *   **Mechanism:** A configured number of Lambda execution environments will be pre-initialized and kept "warm," ready to respond instantly to invocations. The initial value for the MVP will be **50**.
 *   **Behavior:** When a job arrives, it is routed to a warm instance, avoiding the multi-second latency of a cold start (which includes JVM startup and KMP module initialization). If traffic exceeds the provisioned level, Lambda will scale up standard, on-demand instances.
 *   **Benefit & Cost Impact:** This provides a consistent, low-latency experience for the "Hot Path" syncs, which is critical for user satisfaction with manual syncs. It trades a predictable hourly cost for guaranteed performance. The amount of Provisioned Concurrency will be tuned based on production traffic patterns and cost models.
+
+#### Lambda Hardening for Cost & Performance
+The following configurations are mandatory to ensure the Lambda fleet is cost-effective and performant at scale.
+
+1.  **Standardize on ARM64:** All Lambda functions must use the Graviton2 (`arm64`) architecture for a ~20% price-performance benefit. This is a non-negotiable standard for all compute services in this architecture.
+2.  **Set Provisioned Concurrency:** To meet the P99 latency SLO of <500ms for the API, the `AuthorizerLambda` and any other synchronous Lambdas connected to API Gateway must have **Provisioned Concurrency** enabled. Start with a value of **100** and tune based on traffic. For the main `WorkerLambda`, start with **50** to ensure fast manual syncs.
+3.  **Memory Configuration:**
+    *   `AuthorizerLambda`: 256MB.
+    *   `WorkerLambda`: **1024MB**. This is a starting point and must be tuned using AWS Lambda Power Tuning to find the optimal cost-performance ratio.
+4.  **Enforce Tiered Logging:** The tiered logging strategy described in the Observability section is **not optional**. It is a mandatory requirement to control CloudWatch costs and must be enforced via code reviews and specific tests.
 
 #### Intelligent Data Hydration (Metadata-First Fetch)
 To minimize data transfer and processing costs, the sync algorithm will employ an "intelligent hydration" or "metadata-first" fetching strategy. This is particularly effective for data types with large, heavy payloads (e.g., GPX track for a workout, detailed heart rate time series).
@@ -964,9 +1186,11 @@ To minimize data transfer and processing costs, the sync algorithm will employ a
 We will use a **hybrid capacity model**. A baseline of **Provisioned Capacity** will be purchased (e.g., via a Savings Plan) to handle the predictable average load, with an initial estimate of **1000 RCU / 500 WCU**. This estimate is based on a model of 1M DAU, with each user performing an average of 10 syncs per day, and each sync requiring 2 reads and 1 write. **On-Demand Capacity** will handle any traffic that exceeds this provisioned throughput. This ratio will be tuned based on production traffic patterns.
 
 #### Networking Optimization with VPC Endpoints
-To enhance security and reduce costs, the architecture will use **VPC Endpoints** for all internal AWS service communication. This allows Lambda functions in the VPC to communicate with other AWS services using private IP addresses.
-*   **Services:** Endpoints will be created for S3, DynamoDB, SQS, Secrets Manager, AppConfig, EventBridge, and Lambda.
-*   **Benefit & Cost Impact:** This improves security by keeping traffic off the public internet. Critically, it also **reduces data processing costs** by minimizing billable traffic that would otherwise be routed through a NAT Gateway. While interface endpoints have a small hourly cost, this is significantly cheaper than NAT Gateway data processing charges at scale, making them a key cost-optimization strategy.
+To enhance security and reduce costs, the use of VPC Endpoints is **mandatory** for all internal AWS service communication. This allows Lambda functions in the VPC to communicate with other AWS services (S3, SQS, DynamoDB, Secrets Manager, AppConfig) using private IP addresses instead of traversing the public internet.
+
+*   **Security Benefit:** Keeps all internal traffic within the AWS private network, dramatically reducing the attack surface.
+*   **Cost Benefit:** This is a **critical cost-optimization lever.** Data transfer to VPC Gateway Endpoints (for S3 and DynamoDB) is free. Data transfer to VPC Interface Endpoints (for other services) is significantly cheaper per-GB than data processed by a NAT Gateway. At scale, this strategy will save thousands of dollars per month in data transfer costs.
+*   **Implementation:** VPC Gateway and Interface Endpoints **must** be created for all AWS services that the Lambda functions communicate with. Routing all internal traffic through a NAT Gateway is not an acceptable fallback as it would incur significant and unnecessary data transfer costs.
 
 ## 3c. DynamoDB Data Modeling & Access Patterns
 
@@ -1000,17 +1224,40 @@ Our primary data table will be named **`SyncWellMetadata`**. It will use a compo
 
 **Note on Historical Sync Job Items:** Storing a potentially large number of `HISTORICAL` items for a post-MVP feature can degrade performance of core user profile lookups. The design for this is deferred to `45-future-enhancements.md`.
 
-### Supporting Operational Access Patterns
+### Data Partitioning & Indexing Strategy
 
-Finding all connections that need re-authentication is a key operational requirement. A full table scan is inefficient and costly at scale. A GSI on a low-cardinality attribute like `Status` is also an anti-pattern.
-*   **Optimized Strategy (Sparse GSI):** The best practice is to create a **sparse Global Secondary Index (GSI)**. We will add a `ReAuthStatus` attribute to `Connection` items only when `Status` becomes `needs_reauth`. The GSI will be keyed on this sparse `ReAuthStatus` attribute, making the query to find all affected users extremely fast and cost-effective.
-*   **Fallback Strategy (Throttled Scan):** A scheduled, weekly background process will perform a low-priority, throttled `Scan` as a fallback mechanism to ensure no records are missed. The **Support team** is responsible for monitoring the results of this scan.
-    *   **[T-003] Implementation:** The scan will be throttled by setting a small page size (e.g., 100 items) and introducing a fixed delay of **1 second** between each page request to consume minimal read capacity.
+*   **Partitioning Plan:** The single-table design using `PK = USER#{userId}` is the correct approach. This co-locates all data for a single user, making most queries highly efficient.
+    *   **Hot Partition Risk:** As noted in the architecture doc, this design carries a risk of "hot partitions" if a single user becomes extremely active. The proposed post-MVP mitigation (migrating the user to a dedicated table) is appropriate, but a detection mechanism must be built.
+    *   **Detection:** Configure a CloudWatch Contributor Insights rule on the `SyncWellMetadata` table to identify the most frequently accessed keys. An alarm should be set to trigger if a single partition key accounts for >1% of total table traffic for a sustained period (e.g., 1 hour).
+*   **Indexing Strategy:** The use of a **sparse GSI** on the `ReAuthStatus` attribute is a critical and correct implementation detail for efficiently finding users who need to re-authenticate without scanning the entire table. This pattern should be considered the default for any future operational query needs.
 
-### Data Consistency and Conflict Resolution
+### Backup/Restore & Snapshot Cadence
 
-*   **Application-Level Locking:** The `IDEM#` item type provides the application-level distributed lock required for the "Hot Path" idempotency strategy, as defined in Section 3a.
-*   **Optimistic Locking with Versioning:** To prevent lost updates during concurrent writes, optimistic locking **must** be used for all updates to `PROFILE` and `SYNCCONFIG` items. This will be implemented by adding a `version` number attribute and using a condition expression on update to ensure the `version` has not changed since the item was read. On a conflict, the operation will be retried up to 3 times with exponential backoff. If all retries fail, the operation will fail and log a critical error.
+While the Global Table provides DR, a robust backup strategy is still required to protect against data corruption or catastrophic operator error.
+
+*   **Backup Service:** **AWS Backup** must be used to centrally manage and automate all backup and retention policies for DynamoDB.
+*   **Backup Cadence:**
+    *   **Point-in-Time Recovery (PITR):** Must be **enabled** on the `SyncWellMetadata` table. This provides continuous backups and allows for restoration to any point in the preceding 35 days.
+    *   **Daily Snapshots:** AWS Backup will be configured to take a daily snapshot of the table.
+*   **Retention Policy:**
+    *   **PITR backups:** Retained for **35 days**.
+    *   **Daily snapshots:** Retained for **35 days**.
+    *   **Monthly snapshots:** A monthly snapshot will be archived for **1 year** for compliance purposes.
+*   **Restore Time Estimates:**
+    *   A full restore from a snapshot for a 1TB table can take several hours. This procedure is for **catastrophic data loss**, not for HA/DR.
+    *   **Restore Drills:** The SRE team must conduct a restore drill **quarterly** to validate the backup integrity and document the end-to-end restore time. The results must be logged in `../ops/dr-test-results.md`.
+
+### Transactional Patterns & Decision Guidance
+
+The architecture employs several implicit transactional patterns that must be understood and managed.
+
+*   **Idempotency:** The DynamoDB-based distributed lock (`IDEM##{key}`) is the **sole authoritative** mechanism for ensuring exactly-once processing in the "Hot Path". This is a critical control and must not be compromised.
+*   **Optimistic Locking:** The use of a `version` attribute and condition expressions for updating user profiles and configurations is a non-negotiable requirement to prevent lost updates from concurrent operations.
+*   **CQRS (Command Query Responsibility Segregation):** The system implicitly uses a CQRS pattern.
+    *   **Commands:** Writing a message to the `HotPathSyncQueue` is a "command" to change the system's state.
+    *   **Queries:** Reading user configuration or sync status from DynamoDB is a "query".
+    *   **Guidance:** This separation is a strength. The team should avoid adding synchronous "read-your-writes" logic to the command path, as this would increase coupling and reduce scalability. Instead, the client should be designed to poll for the result of a command or receive a push notification.
+*   **Batching:** The use of DynamoDB's `BatchWriteItem` operation within the worker Lambda is a critical performance and cost optimization. Code reviews should verify that individual `PutItem` calls are not being made inside a loop where a batch operation would be more efficient.
 
 ### Mitigating "Viral User" Hot Partitions
 
@@ -1401,7 +1648,7 @@ sequenceDiagram
 
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
-| **Authentication Service** | **Firebase Authentication** | **Rationale vs. Amazon Cognito:** While Amazon Cognito is a native AWS service, Firebase Authentication has been chosen for the MVP due to its superior developer experience, higher-quality client-side SDKs (especially for social logins on iOS and Android), and more generous free tier. This choice prioritizes rapid development and a smooth user onboarding experience.<br>**Dependency Risk & Mitigation:** Firebase Authentication presents a critical single point of failure. To mitigate this, the API Gateway Authorizer **must** be updated to accept JWTs from both Firebase and a new Amazon Cognito User Pool. This provides a clear migration path and a DR option without requiring an immediate client-side change. This risk has been formally accepted by the product owner.<br>**Data Residency:** User identity data will be stored in Google Cloud, which has data residency implications that must be clearly communicated in the privacy policy. |
+| **Authentication Service** | **Firebase Authentication** | **Rationale vs. Amazon Cognito:** While Amazon Cognito is a native AWS service, Firebase Authentication has been chosen for the MVP due to its superior developer experience. **However, this creates a critical single-vendor dependency.** To mitigate this, a **dual-authorizer strategy must be implemented.** The API Gateway Authorizer will be configured to validate JWTs from both Firebase and a standby Amazon Cognito User Pool. A runbook and configuration flag must exist to failover to Cognito in a DR scenario. This risk has been formally accepted by the product owner.<br>**Data Residency:** User identity data will be stored in Google Cloud, which has data residency implications that must be clearly communicated in the privacy policy. |
 | **Cross-Platform Framework** | **Kotlin Multiplatform (KMP)** | **Code Reuse & Performance.** KMP allows sharing the complex business logic (sync engine, data providers) between the mobile clients and the backend. For latency-sensitive functions that are not part of the worker fleet (e.g., the `AuthorizerLambda`), a faster-starting runtime like TypeScript must be used to meet strict latency SLOs. This is a formally accepted technical trade-off. |
 | **On-Device Database** | **SQLDelight 2.0.0** | **Cross-Platform & Type-Safe.** Generates type-safe Kotlin APIs from SQL, ensuring data consistency across iOS and Android. |
 | **Primary Database** | **Amazon DynamoDB** | **Chosen for its virtually unlimited scalability and single-digit millisecond performance. For the MVP, it will be deployed in a single region. It will use a hybrid capacity model (a baseline of Provisioned Capacity with On-Demand for scaling) to balance cost and performance, as detailed in Section 3b.** |
@@ -1434,147 +1681,94 @@ A detailed financial model is a mandatory prerequisite before implementation and
 *   **Cost Anomaly Detection:** Configure AWS Cost Anomaly Detection to automatically alert the team to unexpected spending.
 *   **Optimize VPC Networking:** Implement VPC Endpoints for all internal AWS service communication to minimize data transfer costs through the NAT Gateway.
 
-## 6. Security, Privacy, and Compliance
+## 6. Security & Compliance
 
-### Security Measures
+This section provides a prioritized list of vulnerabilities and concrete controls required to harden the system for production.
 
-*   **Data Encryption in Transit:** All network traffic will use TLS 1.2+. Certificate Pinning is deferred for the MVP due to the operational overhead of key rotation. The rationale is that the risk is partially mitigated by using well-known, trusted CAs.
-*   **Data Encryption at Rest:** All data at rest in AWS is encrypted by default using AWS-managed keys (KMS). This includes DynamoDB tables, S3 buckets, and ElastiCache snapshots. On-device, sensitive data is stored in the native Keychain (iOS) or Keystore (Android).
-*   **Access Control and Least Privilege:**
-    *   **Secure Authorizer Implementation:** The `AuthorizerLambda` **must** use **AWS Lambda Powertools** to handle the complexities of JWT validation, including fetching the JWKS, validating the signature, and checking standard claims.
-    *   **Granular IAM Roles:** Each compute component has its own unique IAM role with a narrowly scoped policy.
-    *   **Resource-Based Policies:** Where applicable, resource-based policies are used as an additional layer of defense.
-*   **Protection Against Denial of Service (DoS):** To mitigate the risk of abuse and financial exhaustion from DoS attacks, the architecture will leverage **AWS WAF**. In addition to protecting against common exploits, a **rate-based rule** will be configured to automatically block IP addresses that exceed a reasonable request threshold. The initial rule will be: **Block any source IP that sends more than 1,000 requests in a 5-minute period.** This threshold will be monitored and tuned based on production traffic patterns.
-*   **Per-User Rate Limiting:** To protect against abusive behavior from a single malicious or buggy client, the architecture **must** implement per-user rate limiting. This will be achieved using **API Gateway Usage Plans** associated with API keys that are unique to each user. This provides a crucial layer of defense against a single user overwhelming the system. The initial limit will be **100 requests per minute** with a burst capacity, and will be tuned based on observed user behavior.
-*   **Egress Traffic Control (Hybrid Firewall Model):** To balance cost and security, outbound traffic from the VPC is routed through a hybrid firewall model. This model uses separate egress paths depending on the destination's trust level and traffic volume.
-    *   **High-Security Path (AWS Network Firewall):** All outbound traffic to unknown, lower-volume, or security-sensitive endpoints is routed through an **AWS Network Firewall**. This provides advanced features like intrusion prevention and deep packet inspection, ensuring the highest level of security.
-    *   **Cost-Optimized Path (AWS NAT Gateway):** High-volume, trusted traffic to the primary, well-known API endpoints of major partners (e.g., Fitbit, Strava, Garmin) is routed through a separate, standard **AWS NAT Gateway**. The initial allow-list for this path is managed in the project's Terraform configuration. Additions to this list require a pull request with approval from the Security team.
-    *   **Justification & Cost Impact:** This hybrid approach directly optimizes costs. The **Network Firewall introduces its own data processing costs**, which are higher than a standard NAT Gateway. By routing high-volume, trusted partner traffic through the cheaper NAT Gateway, we significantly reduce egress costs while still using the firewall's advanced inspection capabilities for untrusted destinations. This routing choice is a critical lever for cost management.
-*   **Code & Pipeline Security:** Production builds will be obfuscated. Dependency scanning (Snyk) and SAST will be integrated into the CI/CD pipeline, failing the build on critical vulnerabilities. Any new AI frameworks must undergo a formal security review, which includes threat modeling and a review by the security team, before being integrated. In the event a critical vulnerability is discovered, the security on-call **must** be paged, and a hotfix deployment must be prepared and rolled out within the 72-hour SLO defined in the NFRs.
-*   **Secret Rotation Policy:** A formal policy for rotating secrets stored in AWS Secrets Manager is critical to limit the impact of a potential leak.
-    *   **Automated Rotation:** For all secrets that support it, automated rotation configured in Secrets Manager **must** be enabled. A rotation schedule of **every 90 days** is the required baseline.
-    *   **Manual Rotation Process:** For secrets that do not support automated rotation, a manual rotation process must be documented in a runbook (`../ops/RUNBOOK_MANUAL_SECRET_ROTATION.md`). This runbook must be executed on a **quarterly basis** by the SRE team.
-    *   **Emergency Rotation:** In the event of a suspected compromise, the on-call security engineer must be able to trigger an immediate, out-of-band rotation. This process must also be documented in the incident response plan.
+### 6.1. Attack-Surface Summary & Top 10 Vulnerabilities
 
-### Compliance
-*   **Data Handling and Ephemeral Processing:** User health data is only ever processed **ephemerally in memory**. The maximum lifetime for data in-flight is guaranteed to be **under 5 minutes** by enforcing this as the maximum task duration for Lambda and Fargate tasks.
-*   **HIPAA Alignment:** While not formally HIPAA certified, the architecture is designed to align with HIPAA's technical safeguards, specifically: unique user identification, automatic logoff, encryption of data at rest and in transit, and audit controls via CloudTrail. The **CTO** is responsible for commissioning a third-party compliance validation before any public statements are made.
-*   **GDPR & CCPA:** The architecture is designed to be compliant by enforcing data minimization and user control.
-*   **Audit Trails:** All administrative actions are logged via **AWS CloudTrail**. Critical alerts **must** be configured for suspicious administrative actions (e.g., disabling CloudTrail, modifying critical IAM policies).
+The primary attack surface consists of:
+1.  **The Public API Gateway:** Exposed to the internet, it is the main entry point for attacks against the backend logic.
+2.  **Third-Party Webhooks:** An ingress point that can be used for DoS or to inject malicious data if not properly validated.
+3.  **The Mobile Client:** Can be reverse-engineered, and vulnerabilities could lead to client-side data leakage or abuse of the backend API.
+4.  **Third-Party Dependencies:** Vulnerabilities in open-source packages (NPM, Maven) are a major source of risk.
 
-### Data Anonymization for Analytics and AI
+**Top 10 Prioritized Vulnerabilities & Missing Controls:**
 
-A dual-pronged data anonymization strategy will be implemented.
+1.  **BLOCKER - Missing Per-User Rate Limiting:** The lack of per-user abuse protection is the single most critical security gap. A single malicious or buggy authenticated user could cause a massive DoS or financial exhaustion attack.
+2.  **BLOCKER - Insecure Direct Object Reference (IDOR) Risk:** The architecture relies on the authorizer to control access, but there is no explicit mention of how a worker Lambda is prevented from accessing data belonging to another user *after* it has been authorized.
+3.  **High - Single Point of Failure for Auth (Firebase):** As noted previously, the dependency on a single external identity provider is a high-impact availability and security risk.
+4.  **High - Risk of PII Leakage in Logs:** The tiered logging strategy is excellent for cost but increases the risk that sensitive data from `PRO` users could be logged. The proposed CloudWatch Logs Data Protection is a good control but needs to be explicitly configured and tested.
+5.  **Medium - Insufficient Egress Controls:** The hybrid firewall model is advanced but complex. A misconfiguration could allow a compromised worker to exfiltrate data to an untrusted destination.
+6.  **Medium - Lack of Automated Dependency Scanning:** The document mentions Snyk/Dependabot, but this is not optional. An automated dependency scanning tool that fails the build on critical vulnerabilities must be integrated into the CI/CD pipeline.
+7.  **Medium - No Formal Secrets Rotation Policy:** The document mentions secret rotation but does not define a formal cadence or an emergency procedure.
+8.  **Medium - No Web Application Firewall (WAF) Rule Details:** The architecture specifies AWS WAF but provides no detail on the rules to be configured.
+9.  **Low - No Client-Side Hardening Mentioned:** The focus is on the backend, but the mobile client should be hardened against reverse engineering (e.g., via code obfuscation) and tampering.
+10. **Low - Lack of Security-Specific Logging & Alerting:** The observability plan is focused on performance and availability. It needs to be augmented with security-specific alerts (e.g., for WAF rule triggers, suspicious IAM activity).
 
-#### Real-Time Anonymization for Operational AI
-A dedicated **Anonymizer Proxy Lambda** will be used for real-time operational features.
-*   **Testability and Observability:** The Anonymizer Proxy is a critical component and **must** have its own suite of unit and integration tests. Its latency and error rate will be monitored with dedicated CloudWatch Alarms.
-*   **Latency SLO:** The P99 latency for the proxy itself is an SLO that **must be under 50ms** and will be tracked on a dashboard at [`../ops/41-metrics-dashboards.md#security-dashboard`](../ops/41-metrics-dashboards.md#security-dashboard).
-*   **PII Stripping Strategy:** The following table defines the PII stripping strategy. **[C-006]** This list represents the comprehensive set of rules to be applied across all canonical models before any user data is processed by an AI service. This process is a critical security control.
+### 6.2. Concrete Remediation & Hardening
 
-| Field (from any Canonical Model)                | Action      | Rationale                                                                                                                              |
-| :---------------------------------------------- | :---------- | :------------------------------------------------------------------------------------------------------------------------------------- |
-| `userId`                                        | **Remove**  | The internal user ID is a direct identifier and must be removed. The AI service should operate on data from a single user at a time, without needing to know their ID. |
-| `sourceId`                                      | **Hash**    | Hashed with a per-user salt to prevent reverse-engineering while maintaining referential integrity for a given user's data.              |
-| `recordId`                                      | **Remove**  | The unique ID for a specific data record (e.g., a single workout) is an unnecessary tracking vector and must be removed.                 |
-| `title`                                         | **Remove**  | High-risk for free-text PII (e.g., "Run with Jane Doe").                                                                                 |
-| `notes`                                         | **Remove**  | High-risk for free-text PII.                                                                                                           |
-| `latitude`, `longitude` (and all other location data) | **Generalize**| Convert specific GPS coordinates to the nearest city (e.g., "San Francisco, CA") to obscure exact locations. Start and end points of a workout are especially sensitive. |
-| `startTime`, `endTime`                          | **Generalize**| Round timestamps to the nearest 15 minutes to obscure precise start/end times of activities, which can reveal sensitive user patterns. |
-| `heartRateSamples`                              | **Aggregate** | Replace detailed timeseries data with summary statistics (e.g., `avg`, `min`, `max`). The raw series could potentially be used to identify a user.                    |
-| `stepsTimeseries`                               | **Aggregate** | Replace detailed intra-day step counts with hourly or daily totals to obscure fine-grained activity patterns.                            |
-| `sleepStages`                                   | **Aggregate** | Replace detailed sleep stage data (e.g., timestamps of REM, deep, light) with total durations for each stage.                            |
-| `calories`                                      | **Keep**    | Generally not considered PII in isolation.                                                                                             |
-| `steps` (daily total)                           | **Keep**    | Generally not considered PII in isolation.                                                                                             |
-| `distance`                                      | **Keep**    | Generally not considered PII in isolation.                                                                                             |
-| `weightKg`                                      | **Keep**    | A user's weight is not considered PII in isolation.                                                                                    |
-| `bodyFatPercentage`                             | **Keep**    | A user's body fat percentage is not considered PII in isolation.                                                                       |
-| `bmi`                                           | **Keep**    | A user's BMI is not considered PII in isolation.                                                                                       |
-| `deviceName`                                    | **Remove**  | Can contain user's name (e.g., "John's iPhone").                                                                                       |
-| `weatherInfo`                                   | **Generalize**| Keep general weather (e.g., "Cloudy"), but remove specific temperature or location details that could narrow down the user's location. |
-| `sourcePayload`                                 | **Remove**  | The original, raw payload from the third-party provider must be removed as it may contain unexpected PII not mapped to the canonical model. |
-*   **Privacy Guarantee:** This proxy-based architecture provides a strong guarantee that no raw user PII is ever processed by the AI models.
+#### **Remediation for IDOR (Vulnerability #2)**
+The `AuthorizerLambda` must inject the authenticated `userId` into the request context that is passed to the `WorkerLambda`. The `WorkerLambda` **must** then use this context `userId` as the partition key for all DynamoDB queries. It must **never** trust a `userId` provided in a request body.
 
-#### Batch Anonymization for Analytics
-For analytics, **Amazon Kinesis Data Firehose** will be used.
-*   **Buffering and Batching:** Firehose will be configured with a **buffer interval of 60 seconds**, a **buffer size of 5MB**, **GZIP compression**, and **encryption with an AWS-managed KMS key**.
-*   **On-the-fly Transformation:** Before delivery, Firehose will invoke an Anonymization Lambda to strip PII from each record.
-    *   **Technical Specifications:**
-        *   **Language/Runtime:** TypeScript on NodeJS
-        *   **Memory:** 256MB
+*   **Example IAM Policy Snippet (Least Privilege):**
+    This policy, attached to the `WorkerLambda`, uses IAM policy variables to restrict its access to DynamoDB items that are tagged with the same `userId` as the principal (the Lambda function) that is running. This is a powerful defense-in-depth control.
 
-<details>
-<summary>Diagram 11: Data Anonymization & Analytics Flow</summary>
+    ```json
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem"
+          ],
+          "Resource": "arn:aws:dynamodb:us-east-1:123456789012:table/SyncWellMetadata",
+          "Condition": {
+            "ForAllValues:StringEquals": {
+              "dynamodb:LeadingKeys": [
+                "USER#${aws:PrincipalTag/userId}"
+              ]
+            }
+          }
+        }
+      ]
+    }
+    ```
 
-This diagram shows the data flow for the batch anonymization process, ensuring user privacy is maintained before data is used for analytics.
+#### **Remediation for WAF & Rate Limiting (Vulnerabilities #1 & #8)**
+*   **AWS WAF Configuration:** The WAF WebACL associated with the API Gateway must have the following rules, in this order:
+    1.  **AWS Managed Rule: `AWSManagedRulesCommonRuleSet`:** Protects against the OWASP Top 10.
+    2.  **AWS Managed Rule: `AWSManagedRulesAmazonIpReputationList`:** Blocks known malicious IP addresses.
+    3.  **Custom Rule: Global Rate-Based Rule:** Block any source IP that sends more than **1,000 requests in a 5-minute period**.
+*   **Per-User Rate Limiting:** Implement API Gateway Usage Plans as described in this document.
 
-```mermaid
----
-title: "Diagram 11: Data Anonymization & Analytics Flow (v1.6)"
----
-%%{init: {'theme': 'neutral'}}%%
-graph TD
-    %% Define Styles
-    classDef compute fill:#fff8e6,stroke:#ff9900;
-    classDef messaging fill:#f3e6ff,stroke:#8a3ffc;
-    classDef datastore fill:#e6ffed,stroke:#2d9a41;
+#### **Remediation for Secrets Management (Vulnerability #7)**
+*   **Secrets Management:** All secrets must be stored in AWS Secrets Manager, encrypted with a dedicated customer-managed KMS key.
+*   **Rotation Policy:**
+    *   **Automated Rotation:** Must be enabled for all secrets that support it (e.g., RDS credentials if used in the future). The rotation cadence must be set to **90 days**.
+    *   **Manual Rotation:** For other secrets (e.g., third-party API keys), a quarterly manual rotation process must be documented and tracked via recurring tickets assigned to the SRE team.
+    *   **Emergency Rotation:** A runbook for out-of-band, emergency rotation must be created and placed in `../ops/runbook-emergency-secret-rotation.md`.
 
-    A["`fa:fa-bolt Worker Lambda`"] -- "1. Emits events with<br>raw user data" --> B["`fa:fa-comments Amazon Kinesis<br>Data Firehose`"];
-    B -- "2. Buffers data and invokes<br>transformation Lambda" --> C["`fa:fa-bolt Anonymizer Lambda`"];
-    C -- "3. Strips/hashes PII" --> C;
-    B -- "4. Delivers clean data" --> D["`fa:fa-archive Analytics S3 Bucket`"];
-    D --> E["`fa:fa-brain AWS SageMaker`"];
+### 6.3. Encryption Strategy
 
-    %% Apply Styles
-    class A,C,E compute;
-    class B messaging;
-    class D datastore;
-```
+*   **Encryption in Transit:** All public endpoints (API Gateway, CloudFront) must be configured with a security policy that enforces **TLS 1.2 or higher**. All internal traffic between services must also be encrypted.
+*   **Encryption at Rest:** All AWS services that store data (DynamoDB, S3, ElastiCache snapshots, SQS queues) must have server-side encryption **enabled**. Where possible, this should use a customer-managed KMS key instead of an AWS-managed key to provide a stronger audit trail.
+*   **KMS Key Rotation:** The KMS keys used for at-rest encryption must have **automated annual rotation enabled**.
 
-</details>
+### 6.4. Compliance Controls
 
-### Comprehensive Monitoring, Logging, and Alerting Framework
-
-*   **Logging Strategy:**
-    *   A standardized, **structured JSON logging** format will be enforced using **AWS Lambda Powertools**.
-    *   **Log Schema:** The core JSON schema will include: `timestamp`, `level` (e.g., INFO, ERROR), `service` (e.g., "worker-lambda"), `correlationId`, `message`, and a `payload` object for contextual data.
-    *   **Automated PII Masking:** To prevent accidental leakage of Personally Identifiable Information (PII) in logs, the system **must** use **CloudWatch Logs Data Protection**. This feature will be configured with policies to automatically identify and mask common PII data patterns (e.g., email addresses, phone numbers) in log groups in real-time. This automated, real-time control replaces the need for manual, periodic log audits for PII.
-
-*   **Tiered & Sampled Log Ingestion:** To manage the significant cost of log ingestion at scale, the system will implement a context-aware, tiered sampling strategy. This approach directly links observability costs to revenue by providing different levels of logging fidelity for different user tiers, while ensuring full diagnostic data is always available for failures.
-    *   **Baseline Strategy (Head/Tail Sampling):** The core of the strategy is "head/tail" sampling. Logs for each job are buffered in memory within the worker. If the job fails at any point, all buffered logs for that specific execution are ingested into CloudWatch. This guarantees 100% diagnostic visibility for all errors, for all users.
-    *   **Tiered Sampling for Success Cases:** For jobs that complete successfully, the decision to ingest the buffered logs is based on the user's subscription tier.
-        *   **`PRO` Tier:** Sampling rate is **1 in 100** successful jobs.
-        *   **`FREE` Tier:** Sampling rate is **1 in 10,000** successful jobs.
-    *   **Dynamic Configuration:** The specific sampling rates for each tier (`pro`, `free`) **must** be managed via AWS AppConfig, allowing for dynamic tuning without a code deployment.
-    *   **Auditability:** The sampling decision itself (i.e., "this job's logs were sampled/not sampled") will be logged for every job to provide an audit trail.
-    *   **Benefit:** This tiered approach provides the greatest cost reduction by targeting the highest volume of events (successful jobs from free users) while retaining full observability for failures and for paying customers.
-    *   **Logic Flow:** The following diagram illustrates the decision-making process within a worker for each completed job.
-        ```mermaid
-        %%{init: {'theme': 'neutral'}}%%
-        graph TD
-            A[Sync Job Completes] --> B{Job Succeeded?};
-            B -- No --> C[Ingest 100% of<br>Buffered Logs to CloudWatch];
-            B -- Yes --> D{User is PRO Tier?};
-            D -- Yes --> E[Get PRO Sampling Rate<br>e.g., 1/100];
-            D -- No --> F[Get FREE Sampling Rate<br>e.g., 1/10,000];
-            E --> G{Apply Sampling Logic\nhash of jobId % rate == 0?}
-            F --> G;
-            G -- Yes --> H[Ingest Buffered Logs<br>to CloudWatch];
-            G -- No --> I[Discard Logs];
-        ```
-*   **Dynamic X-Ray Trace Sampling:** By default, AWS X-Ray traces every request, which can be costly at scale. To manage this, the system will implement dynamic sampling. A low default sampling rate (e.g., 1 request per second and 5% of all requests) will be configured for the main API Gateway stage. Additionally, specific, higher-volume sampling rules will be applied to critical user flows (e.g., 10% sampling for `/v1/users/me/settings`).
-*   **Key Metrics & Alerting:**
-    *   **Idempotency Key Collisions:** This will be tracked via a custom CloudWatch metric published using the **Embedded Metric Format (EMF)** from the worker Lambda. An alarm will trigger on any anomalous spike.
-    *   **KPIs:** In addition to system metrics, we will track business and product KPIs. The following table provides a more complete view.
-
-| KPI Metric Name | User Story | Business Goal | Description | Threshold / Alert |
-| :--- | :--- | :--- | :--- | :--- |
-| `ActivationRate` | US-01 | Growth | % of new users who complete onboarding (defined as successfully connecting one provider). | Track weekly cohort data. |
-| `ProTierConversionRate`| US-20 | Monetization | % of free users who convert to the Pro tier within 30 days. | Track monthly cohort data. |
-| `SyncSuccessRate` | US-05 | Trust & Reliability | % of sync jobs that complete successfully. | Alert if < 99.9% over 15 mins. |
-| `P95_ManualSyncLatency` | US-06 | Engagement | 95th percentile latency for a manual sync. | Alert if > 15 seconds. |
-| `HistoricalSyncThroughput`| US-10 | Retention | Days of data processed per minute during historical sync. | Alert if drops by >25% WoW. |
-| `ChurnRate` | - | Retention | % of users who uninstall or delete their account. | Track monthly. |
+This architecture provides a strong foundation for future compliance audits but does not constitute certification.
+*   **GDPR:** The architecture supports key GDPR principles:
+    *   **Data Minimization:** The ephemeral processing of health data adheres to this.
+    *   **Right to Access/Erasure:** The implementation of the `POST /v1/export-jobs` and `DELETE /v1/users/me` endpoints are necessary controls for this.
+*   **SOC 2:** The controls recommended in this review map directly to SOC 2 trust service criteria:
+    *   **Security:** IAM policies, WAF, encryption, vulnerability scanning.
+    *   **Availability:** Multi-AZ/Multi-Region architecture, DR plans, SLO monitoring.
+    *   **Confidentiality:** Encryption at rest and in transit, strict access controls.
+    *   **Change Management:** The CI/CD pipeline with automated testing and approval gates is a required control.
 
 ## 7. Open-Source Tools and Packages
 
@@ -1612,26 +1806,101 @@ This section defines the key non-functional requirements for the SyncWell platfo
 | **Scalability** | User Capacity | Daily Active Users (DAU) | 1,000,000 | P1 | The architecture must be able to support 1 million daily active users.<br>**Note:** The traffic models used for capacity planning are based on assumptions. A **private beta program** must be launched to a small user group to collect real-world metrics on user activity (e.g., syncs/day, payload size) to validate these assumptions before a full public launch. |
 | **Usability** | App Onboarding | Time to First Sync | < 3 minutes | P0 | This is a key product KPI, tracked via our analytics pipeline by measuring the median time from the `UserSignedUp` event to the first `SyncSucceeded` event for that user. |
 
-## 9. Developer Experience
+## 9. CI/CD, Release Strategy & Runbook Automation
 
-To ensure high development velocity and code quality, we will establish a streamlined and automated developer experience.
+A mature CI/CD process is non-negotiable for deploying changes to this complex system safely and frequently.
 
-*   **Local Development:** Engineers must be able to run and test the entire application stack locally using LocalStack and Docker Compose.
-*   **Test Data Management:**
-    *   A pool of permanent test accounts will be created in Firebase Authentication.
-    *   The **E2E test reset script** for DynamoDB will be an idempotent script managed in the backend repository at `scripts/reset-e2e-data.sh`, owned by the core backend team. This script must be created.
-*   **Testing Strategy:** We will employ a multi-layered testing strategy.
-    *   **Contract Tests (Pact):** A failure in the Pact verification step in a provider's (e.g., backend) CI pipeline **must** block the build from proceeding.
-    *   **Load Tests (`k6`):** To validate performance and scalability against a dedicated staging environment.
-*   **Continuous Integration & Delivery (CI/CD):** Our CI/CD pipeline, managed with **GitHub Actions**, automates quality checks and deployments.
-    *   **CI/CD for KMP Shared Module:** A dedicated pipeline will manage the shared KMP module. A breaking change in the shared module (i.e., a major version bump) **must** be communicated to consumer teams (mobile, backend) via the dedicated **`#eng-mobile-backend-sync`** Slack channel and a formal announcement.
-*   **Deployment Strategy (Canary Releases):** Backend services will be deployed to production using a **canary release strategy**.
-    *   **Process:** A new version is deployed, and **10%** of production traffic is routed to it.
-    *   **Monitoring & Rollout:** The canary is monitored for **30 minutes**. The key metrics for evaluating the canary are **API P99 latency, error rate, and sync success rate**. If these metrics remain stable relative to the baseline, traffic is gradually shifted until it serves 100% of requests. A manual approval step is required before promoting the release to 100% of traffic.
-    *   **[C-005] Automatic Rollback Triggers:** An automatic rollback **must** be triggered if any of the following deviations are observed in the canary group compared to the baseline group over 5 consecutive 1-minute evaluation periods:
-        *   A **>10% increase** in the P99 API Gateway latency.
-        *   A **>1% absolute increase** in the overall API error rate (4xx or 5xx).
-        *   A **>2% absolute decrease** in the `SyncSuccessRate` business metric.
+### Branching, Testing Gates & Release Strategy
+
+*   **Branching Strategy:** A **trunk-based development** model is recommended for services, with short-lived feature branches.
+    *   `main`: The trunk. Represents the latest production-ready code.
+    *   `feature/<ticket-id>-<description>`: Short-lived branches for new development. Must be merged to `main` via a Pull Request with mandatory reviews and passing checks.
+    *   Hotfixes are created from a tag on `main` and merged back in.
+*   **Release Strategy (Canary Deployments):** All backend services **must** be deployed to production using a **canary release strategy** managed by AWS CodeDeploy or a similar tool.
+    *   **Process:**
+        1.  Deploy the new version to a small percentage of the fleet (the "canary"), e.g., **5%**.
+        2.  Route **10%** of production traffic to the canary.
+        3.  **Bake Time:** Monitor the canary for **30 minutes**.
+        4.  **Automated Rollback:** An automatic rollback **must** be triggered if key canary metrics (error rate, latency) deviate significantly from the baseline fleet, as defined in the architecture document.
+        5.  **Gradual Rollout:** If the canary is healthy, gradually shift traffic and deploy to the rest of the fleet over a defined period (e.g., 1 hour).
+*   **Database Migration Pattern:** For any changes to the DynamoDB schema (e.g., adding a new attribute that code depends on), the **expand/contract pattern** must be used to ensure zero-downtime deployments.
+    *   **Release 1 (Expand):** Deploy code that can read both the old and new schema but only writes the old schema. Deploy code to start writing the new schema in addition to the old.
+    *   **Release 2 (Migrate):** Run a data migration script to backfill the new schema for all existing items.
+    *   **Release 3 (Contract):** Deploy code that now only reads/writes the new schema. Remove the code that handles the old schema.
+
+### Required Automated Tests & Pre-Deploy Gates
+
+The following checks **must** be automated in the CI/CD pipeline and must pass before a deployment to production can occur. A failure in any of these gates must fail the build.
+
+1.  **Static Analysis:** Detekt (Kotlin) and SwiftLint (iOS) with project-specific rules.
+2.  **Unit Tests:** A minimum of **80% line coverage** must be maintained for all new code.
+3.  **Security Scans:**
+    *   **SAST (Static Application Security Testing):** Snyk Code or similar.
+    *   **Dependency Scanning:** Snyk Open Source or GitHub Dependabot. Must fail the build for any `Critical` or `High` severity vulnerabilities.
+4.  **Integration Tests:** A suite of tests that run against a live `staging` environment.
+5.  **Contract Tests (Pact):** The backend provider pipeline must run a Pact verification check. A failure here indicates a breaking change and must block the deployment.
+6.  **Load Tests (k6):** The k6 performance test suite must be run against the `staging` environment. The deployment is blocked if p99 latency exceeds the SLO or if the error rate is >1%.
+
+### Example CI/CD Pipeline Snippet (GitHub Actions)
+
+This snippet illustrates a simplified deployment pipeline for a backend service, showing the key gates and the canary deployment strategy.
+
+```yaml
+# .github/workflows/deploy-worker.yml
+name: Deploy Worker Service
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run unit tests
+        run: ./gradlew test
+
+      - name: Run Snyk security scan
+        uses: snyk/actions/golang@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: Build and push container image
+        run: |
+          # Build, tag, and push Docker image to ECR
+          # ...
+
+  deploy-to-prod:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Define the canary and full rollout weights
+        rollout: [10, 100]
+    steps:
+      - name: Deploy to Production (Canary: ${{ matrix.rollout }}%)
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          # ... task definition, cluster, service ...
+          wait-for-service-stability: true
+          codedeploy-app-name: my-app
+          codedeploy-deployment-group-name: my-deployment-group
+          codedeploy-deployment-config-name: CodeDeployDefault.LambdaCanary${{ matrix.rollout }}Percent5Minutes
+
+      - name: Monitor bake time
+        if: matrix.rollout == 10
+        run: sleep 300 # 5 minutes bake time
+
+      - name: Check CloudWatch alarms
+        if: matrix.rollout == 10
+        # Script to check if any critical alarms have fired for the canary
+        # If so, exit 1 to trigger a rollback
+        run: ./scripts/check-canary-alarms.sh
+```
 
 ## 10. Known Limitations & Architectural Trade-offs
 
@@ -1660,6 +1929,92 @@ This section documents known limitations of the architecture and explicit trade-
 
 *   **Appendix A: Technology Radar:** See the dedicated [`./21-technology-radar.md`](./21-technology-radar.md) document.
 *   **Appendix B: Operational Policies:** See the dedicated [`../ops/20-operational-policies.md`](../ops/20-operational-policies.md) document.
+
+### Appendix C: Prioritized Implementation Roadmap
+
+| Priority | Task | Effort | Owner |
+| :--- | :--- | :--- | :--- |
+| **Must** | **BLOCKER:** Launch private beta to validate traffic & payload assumptions. | M | Product |
+| **Must** | **BLOCKER:** Implement Per-User Rate Limiting (API Gateway Usage Plans). | M | Backend |
+| **Must** | **BLOCKER:** Implement application-level Tiered & Sampled Logging. | L | Backend |
+| **Must** | **BLOCKER:** Implement Metadata-First Data Hydration pattern. | M | Backend |
+| **Must** | Formalize CI/CD pipeline with all required testing gates (Security, Load). | L | SRE/DevOps|
+| **Must** | Implement least-privilege IAM policies with IDOR protection. | M | Security |
+| **Should** | Implement dual-authorizer (Cognito DR) strategy. | L | Backend |
+| **Should** | Establish formal Chaos Engineering program and run first gameday. | M | SRE |
+| **Should** | Purchase Compute Savings Plan (after beta validates usage). | S | Finance |
+| **Should** | Create all required Dashboards and Runbooks. | M | SRE |
+| **Can** | Implement client-side hardening (code obfuscation). | M | Mobile |
+| **Can** | Conduct full-table restore drill from AWS Backup. | S | SRE |
+
+### Appendix D: IaC Snippet: Autoscaled Lambda Worker (Terraform)
+
+This snippet defines the core `WorkerLambda`, including configuration for ARM64 architecture and Provisioned Concurrency for performance, with variants for cost optimization.
+
+```terraform
+# terraform/lambda.tf
+
+resource "aws_lambda_function" "worker_lambda" {
+  function_name = "syncwell-prod-worker"
+  role          = aws_iam_role.worker_lambda_role.arn
+  package_type  = "Image"
+  image_uri     = "123456789012.dkr.ecr.us-east-1.amazonaws.com/syncwell-worker:latest"
+
+  # Use ARM64 for better price-performance
+  architectures = ["arm64"]
+  memory_size   = 1024 # Tuned via Lambda Power Tuning
+  timeout       = 300  # 5 minutes
+
+  environment {
+    variables = {
+      # ... env vars ...
+    }
+  }
+
+  # Cost Optimization: To eliminate cold starts for performance, uncomment below.
+  # This adds a fixed cost but guarantees low latency.
+  # provisioned_concurrency_config {
+  #   provisioned_concurrent_executions = 50
+  # }
+}
+
+resource "aws_lambda_provisioned_concurrency_config" "worker_concurrency" {
+  count = var.enable_provisioned_concurrency ? 1 : 0
+
+  function_name                     = aws_lambda_function.worker_lambda.function_name
+  provisioned_concurrent_executions = 50
+  qualifier                         = aws_lambda_function.worker_lambda.version
+}
+
+variable "enable_provisioned_concurrency" {
+  description = "Set to true to enable provisioned concurrency for the worker Lambda."
+  type        = bool
+  default     = false # Default to on-demand for cost savings
+}
+```
+
+### Appendix E: Production Readiness Gate Checklist
+
+This checklist must be completed and signed off by the CTO, Head of Engineering, and Finance Lead before public launch.
+
+| Category | Item | Status | Sign-off |
+| :--- | :--- | :--- | :--- |
+| **Architecture** | Final architecture diagram reflects implemented reality. | [ ] Done | CTO |
+| | All "Must-Have" tasks from the roadmap are complete. | [ ] Done | Eng Lead |
+| | Private beta has run and traffic assumptions are validated/updated. | [ ] Done | Product |
+| **Availability** | Multi-AZ and Multi-Region DR strategy is fully implemented and tested. | [ ] Done | SRE |
+| | All required SLOs, dashboards, and alerts are configured. | [ ] Done | SRE |
+| | A successful chaos engineering gameday has been completed in staging. | [ ] Done | SRE |
+| **Security** | All BLOCKER vulnerabilities from review are remediated. | [ ] Done | Security |
+| | WAF, per-user rate limiting, and least-privilege IAM are implemented. | [ ] Done | Security |
+| | A clean Snyk/dependency scan report is available for the release candidate. | [ ] Done | Eng Lead |
+| **Operations** | CI/CD pipeline is fully automated with all required gates. | [ ] Done | SRE |
+| | All required runbooks are created and accessible to on-call staff. | [ ] Done | SRE |
+| | On-call rotation is established and PagerDuty is configured. | [ ] Done | Eng Manager |
+| **Cost** | **Reconciled cost model is reviewed and accepted.** | [ ] Done | **Finance** |
+| | **Monthly budget is agreed upon and a budget owner is assigned.** | [ ] Done | **Finance** |
+| | Cost allocation tagging policy is implemented and enforced. | [ ] Done | SRE |
+| | Application-level cost optimizations (logging, hydration) are implemented. | [ ] Done | Eng Lead |
 
 ## 12. Glossary
 
