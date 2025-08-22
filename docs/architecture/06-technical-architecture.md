@@ -352,6 +352,8 @@ To reliably serve 1 million Daily Active Users, the architecture incorporates sp
 #### MVP: High Availability Strategy
 To meet the 99.9% availability SLO, the backend **must** be deployed with full Multi-AZ redundancy from day one. This includes deploying a Multi-AZ ElastiCache for Redis cluster. For Disaster Recovery, the `SyncWellMetadata` table **must** be configured as a DynamoDB Global Table with a replica in a DR region (e.g., `us-west-2`).
 
+(See Diagram 5 in the "Visual Diagrams" section below for a visual representation of this high-availability architecture.)
+
 #### Future: Multi-Region Architecture
 The architecture is designed with a future multi-region deployment in mind. Prioritization of this work will be triggered by **business expansion into new geographic markets (e.g., the EU) or reaching 500,000 DAU**. Key considerations for this evolution include:
 *   **Data Replication:** Migrating from a single-region DynamoDB table to a Global Table.
@@ -1222,6 +1224,71 @@ graph TD
         D -- "4. Fetch/Write data via" --> F[Network Firewall]
         F -- 5. --> E[Third-Party APIs]
         D -- 6. Publishes 'SyncSucceeded' event --> C[EventBridge]
+    end
+```
+
+### Diagram 5: Recommended Critical-Path Flow
+
+This diagram illustrates the recommended architecture for the critical "Hot Path" sync, incorporating the changes for Multi-AZ and Multi-Region deployments and showing failover boundaries.
+
+```mermaid
+---
+title: "Recommended Critical-Path Architecture (Multi-AZ & Multi-Region)"
+---
+graph TD
+    subgraph "User / DNS"
+        User[User]
+        Route53[Route 53]
+    end
+
+    subgraph "AWS Region 1: us-east-1 (Primary)"
+        style us-east-1 fill:#e6f3ff,stroke:#0073bb
+        subgraph "AZ 1: use1-az1"
+            style use1-az1 fill:#ffffff,stroke-dasharray: 5 5
+            Lambda_A[Hot Path Lambda]
+            Redis_A["ElastiCache Redis (Primary)"]
+        end
+        subgraph "AZ 2: use1-az2"
+            style use1-az2 fill:#ffffff,stroke-dasharray: 5 5
+            Lambda_B[Hot Path Lambda]
+            Redis_B["ElastiCache Redis (Replica)"]
+        end
+
+        CloudFront[CloudFront CDN]
+        WAF[AWS WAF]
+        ApiGateway[API Gateway]
+        SQS[SQS Standard Queue]
+        DynamoDB_Global["DynamoDB Global Table (Primary)"]
+    end
+
+    subgraph "AWS Region 2: us-west-2 (DR)"
+        style us-west-2 fill:#fff8e6,stroke:#ff9900
+        DynamoDB_DR["DynamoDB Global Table (Replica)"]
+    end
+
+    %% Connections
+    User --> Route53
+    Route53 -- "Latency-based Routing" --> CloudFront
+    CloudFront --> WAF --> ApiGateway
+    ApiGateway --> SQS
+
+    SQS -- "Triggers" --> Lambda_A & Lambda_B
+    Lambda_A & Lambda_B -- "Read/Write Cache" --> Redis_A
+    Redis_A <--> Redis_B
+
+    Lambda_A & Lambda_B -- "Read/Write State" --> DynamoDB_Global
+    DynamoDB_Global -- "Replicates to" --> DynamoDB_DR
+
+    %% Failover Boundaries
+    subgraph Failover Boundaries
+        subgraph "Multi-AZ Failover (Automatic)"
+            Redis_A
+            Redis_B
+        end
+        subgraph "Multi-Region Failover (Manual/Automated Runbook)"
+            DynamoDB_Global
+            DynamoDB_DR
+        end
     end
 ```
 
