@@ -59,6 +59,10 @@ This internal specification is a blueprint for the **engineering team** to imple
 *   **Usage:** Worker Lambdas are granted temporary, role-based access via dynamically-generated, single-use session policies, as defined in `06-technical-architecture.md`.
 *   **Re-authentication:** When a connection is marked `needs_reauth`, the client will prompt the user to reconnect via the `POST /v1/connections/{connectionId}/reauth` endpoint. This endpoint is defined in the Core API Contracts section of `06-technical-architecture.md`.
 *   **Deletion:** When a user de-authorizes an app, the backend makes a best-effort call to the provider's `revoke` endpoint (if supported). The primary security mechanism is the permanent deletion of the token from Secrets Manager.
+*   **Rotation:** A formal secrets rotation policy **must** be enforced.
+    *   **Automated Rotation:** For all secrets that support it, automated rotation **must** be enabled with a cadence of **90 days**.
+    *   **Manual Rotation:** For secrets that require manual rotation (e.g., third-party API keys), a quarterly manual rotation process **must** be documented and tracked via recurring tickets assigned to the SRE team.
+    *   **Emergency Rotation:** A detailed, step-by-step runbook for out-of-band, emergency secret rotation **must** be created and maintained at `../ops/runbook-emergency-secret-rotation.md`.
 
 ## 6. Backend and API Security
 
@@ -74,10 +78,18 @@ This internal specification is a blueprint for the **engineering team** to imple
     *   **Egress:** All egress traffic **must** be routed through AWS Network Firewall with a strict, domain-based allow-list to prevent data exfiltration. The hybrid model is deprecated in favor of a more secure posture.
 *   **Incident Response:** All security incidents will be handled according to the formal **[Incident Response Plan](./INCIDENT_RESPONSE_PLAN.md)**.
 
+*   **Security-Specific Logging & Alerting:** The observability plan, which is primarily focused on performance and availability, **must** be augmented with security-specific monitoring.
+    *   **Alerting:** High-severity alerts **must** be configured for security-centric events, including but not limited to:
+        *   A high number of AWS WAF `BLOCK` actions.
+        *   Suspicious IAM activity detected by AWS GuardDuty.
+        *   Unauthorized API calls that are denied by the Lambda Authorizer.
+        *   Critical security findings from AWS Inspector.
+    *   **Dashboard:** A dedicated "Security Operations" dashboard must be created in CloudWatch to visualize these metrics.
+
 ### 6.1. Secure Logging & "Break-Glass" Procedure
 
 #### Automated PII Detection
-To prevent accidental leakage of Personally Identifiable Information (PII) in logs, the system **must** use **CloudWatch Logs Data Protection**. Policies will be configured to automatically identify and mask PII data (e.g., email addresses, names, etc.) in all log groups in real-time. This automated, scalable solution replaces any manual audit process.
+To prevent accidental leakage of Personally Identifiable Information (PII) in logs, the system **must** use **CloudWatch Logs Data Protection**. Because the architecture's tiered logging strategy may log more verbose data for `PRO` tier users, this control is especially critical to ensure that sensitive information is not inadvertently exposed. Policies will be configured to automatically identify and mask PII data (e.g., email addresses, names, etc.) in all log groups in real-time. This automated, scalable solution replaces any manual audit process.
 
 #### "Break-Glass" for Debugging
 To balance user privacy with the need for debugging, `userId` is never logged. A secure "break-glass" procedure is used for user-specific debugging. The high friction of this workflow is a deliberate security trade-off. The detailed runbook is maintained in **[`../ops/RUNBOOK_BREAK_GLASS.md`](../ops/RUNBOOK_BREAK_GLASS.md)**.
