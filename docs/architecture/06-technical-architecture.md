@@ -1546,27 +1546,29 @@ This sequence diagram illustrates the DynamoDB-based distributed locking mechani
 title: "Diagram 9: Idempotency Check Flow (v1.6)"
 ---
 sequenceDiagram
-    actor Worker as Worker Lambda
-    participant DynamoDB as DynamoDB
+    participant WorkerLambda as "Worker Lambda"
+    participant DB as "DynamoDB"
 
-    Worker->>+DynamoDB: PutItem(IDEM##{key}, status=IN_PROGRESS) with ConditionExpression
+    WorkerLambda->>DB: "PutItem (IDEM#{key})\nstatus=IN_PROGRESS\nwith ConditionExpression"
 
-    alt Lock Acquired (PutItem Succeeded)
-        DynamoDB-->>-Worker: 200 OK
-        Worker->>Worker: Execute Business Logic
-        Worker->>+DynamoDB: UpdateItem(IDEM##{key}, status=COMPLETED, ttl=24h)
-        DynamoDB-->>-Worker: 200 OK
-    else Lock Not Acquired (ConditionalCheckFailedException)
-        DynamoDB-->>-Worker: 400 ConditionalCheckFailedException
-        Worker->>+DynamoDB: GetItem(IDEM##{key})
-        DynamoDB-->>-Worker: Return item with status
+    alt Lock Acquired
+        DB-->>WorkerLambda: 200 OK
+        WorkerLambda->>WorkerLambda: Execute business logic
+        WorkerLambda->>DB: "UpdateItem (IDEM#{key})\nstatus=COMPLETED ttl=24h"
+        DB-->>WorkerLambda: 200 OK
+    else Lock Not Acquired
+        DB-->>WorkerLambda: 400 ConditionalCheckFailedException
+        WorkerLambda->>DB: "GetItem (IDEM#{key})"
+        DB-->>WorkerLambda: Return item with status
 
         alt Item status is COMPLETED
-            Worker->>Worker: Discard current job, return success
+            WorkerLambda->>WorkerLambda: Discard current job, return success
         else Item status is IN_PROGRESS
-            Worker->>Worker: Retry job with exponential backoff
+            WorkerLambda->>WorkerLambda: Retry job with exponential backoff
         end
     end
+
+
 ```
 
 ### Diagram 10: Client-Side Offline Sync & Reconciliation
