@@ -1058,32 +1058,52 @@ A project-wide glossary of all business and technical terms is maintained in the
 
 ## 13. Visual Diagrams
 
-This section contains all the architectural diagrams referenced in this document. To improve clarity, the primary container diagram has been decoupled into a series of smaller, more focused diagrams that each illustrate a specific architectural flow or concern. All diagrams are versioned `v1.5` as of `2025-08-22`.
+This section contains all the architectural diagrams referenced in this document. To improve clarity, the primary container diagram has been decoupled into a series of smaller, more focused diagrams that each illustrate a specific architectural flow or concern. All diagrams are versioned `v1.6` as of `2025-08-22`.
 
+### Diagram Legend
+The following conventions are used across all diagrams to ensure a consistent and professional visual language. The icons are from the [Font Awesome](https://fontawesome.com/icons) library.
+
+| Category | Style (Fill / Stroke) | Icon | Services |
+| :--- | :--- | :--- | :--- |
+| **User / External** | `#f4f4f4` / `#525252` | `fa:fa-user`, `fa:fa-mobile-alt` | User, Mobile App, Third-Party APIs |
+| **Ingress & Routing** | `#e6f3ff` / `#0073bb` | `fa:fa-globe-americas`, `fa:fa-shield-alt` | CloudFront, WAF, API Gateway, Route 53 |
+| **Compute & Logic** | `#fff8e6` / `#ff9900` | `fa:fa-bolt` | AWS Lambda, Step Functions |
+| **Data Stores** | `#e6ffed` / `#2d9a41` | `fa:fa-database`, `fa:fa-memory` | DynamoDB, ElastiCache for Redis, S3 |
+| **Messaging** | `#f3e6ff` / `#8a3ffc` | `fa:fa-inbox`, `fa:fa-comments` | SQS, EventBridge |
+
+---
 ### Diagram 1: System Context
 This C4 Level 1 diagram shows the SyncWell system in its environment, illustrating its relationship with users and the major external systems it depends on.
 
 ```mermaid
 ---
-title: "Diagram 1: System Context (v1.5)"
+title: "Diagram 1: System Context (v1.6)"
 ---
 graph TD
+    %% Define Styles
+    classDef user fill:#f4f4f4,stroke:#525252;
+    classDef external fill:#f4f4f4,stroke:#525252;
+
     subgraph SyncWell Ecosystem
-        A[Mobile App]
-        B[Backend]
+        A["`fa:fa-mobile-alt Mobile App`"]
+        B["`fa:fa-cogs Backend`"]
     end
 
     subgraph Users
-        C[Health-Conscious User]
+        C["`fa:fa-user Health-Conscious User`"]
     end
 
     subgraph "External Systems & Services"
-        D["Third-Party Health Platforms<br>(e.g., Fitbit, Strava)"]
-        D2["On-Device Health Platforms<br>(e.g., Apple HealthKit)"]
-        E[Platform App Stores]
-        F[Platform Notification Services]
-        G["Identity Providers<br>(Firebase, Cognito)"]
+        D["`fa:fa-cogs Third-Party Health Platforms<br>(e.g., Fitbit, Strava)`"]
+        D2["`fa:fa-heartbeat On-Device Health Platforms<br>(e.g., Apple HealthKit)`"]
+        E["`fa:fa-store Platform App Stores`"]
+        F["`fa:fa-paper-plane Platform Notification Services`"]
+        G["`fa:fa-id-badge Identity Providers<br>(Firebase, Cognito)`"]
     end
+
+    %% Apply styles
+    class C user;
+    class D,D2,E,F,G external;
 
     C -- "Uses" --> A
     A -- "Authenticates with" --> G
@@ -1105,30 +1125,34 @@ This diagram shows how requests from both end-users and third-party webhooks ent
 
 ```mermaid
 ---
-title: "Diagram 2a: Ingress & Authentication Flow (v1.5)"
+title: "Diagram 2a: Ingress & Authentication Flow (v1.6)"
 ---
 graph TB
+    %% Define Styles
+    classDef ingress fill:#e6f3ff,stroke:#0073bb;
+    classDef compute fill:#fff8e6,stroke:#ff9900;
+    classDef external fill:#f4f4f4,stroke:#525252;
+    classDef messaging fill:#f3e6ff,stroke:#8a3ffc;
+
     subgraph "External"
-        MobileApp[Mobile App]
-        ThirdParty[Third-Party Service]
+        MobileApp("`fa:fa-mobile-alt Mobile App`")
+        ThirdParty("`fa:fa-cogs Third-Party Service`")
     end
 
-    subgraph "AWS Edge"
-        style "AWS Edge" fill:#e6f3ff
-        CloudFront[CloudFront CDN]
-        WAF[AWS WAF]
-    end
-
-    subgraph "AWS API Gateway"
-        style "AWS API Gateway" fill:#fffbe6
-        RestApi[REST API]
-        AuthorizerLambda["Authorizer Lambda<br><i>Validates JWT from<br>Firebase OR Cognito</i>"]
+    subgraph "AWS Edge & Gateway"
+        CloudFront("`fa:fa-globe-americas CloudFront CDN`")
+        WAF("`fa:fa-shield-alt AWS WAF`")
+        RestApi("`fa:fa-server REST API`")
+        AuthorizerLambda("`fa:fa-bolt Authorizer Lambda<br><i>Validates JWT from<br>Firebase OR Cognito</i>`")
     end
 
     subgraph "Identity Providers"
-        FirebaseAuth["Firebase Auth"]
-        Cognito["Amazon Cognito"]
+        FirebaseAuth("`fa:fa-id-badge Firebase Auth`")
+        Cognito("`fa:fa-id-badge Amazon Cognito`")
     end
+
+    HotPathSyncQueue("`fa:fa-inbox Hot Path SQS Queue`")
+    CoalescingBufferQueue("`fa:fa-inbox Coalescing SQS Queue`")
 
     %% Connections
     MobileApp -- "1. API Request" --> CloudFront
@@ -1140,8 +1164,14 @@ graph TB
     AuthorizerLambda -- "3a. Fetches JWKS from" --> FirebaseAuth
     AuthorizerLambda -- "3b. Fetches JWKS from" --> Cognito
 
-    RestApi -- "4. Forwards valid Mobile App<br>request to SQS" --> HotPathSyncQueue[Hot Path SQS Queue]
-    RestApi -- "4. Forwards valid Webhook<br>to SQS" --> CoalescingBufferQueue[Coalescing SQS Queue]
+    RestApi -- "4. Forwards valid Mobile App<br>request to SQS" --> HotPathSyncQueue
+    RestApi -- "4. Forwards valid Webhook<br>to SQS" --> CoalescingBufferQueue
+
+    %% Apply Styles
+    class MobileApp,ThirdParty,FirebaseAuth,Cognito external;
+    class CloudFront,WAF,RestApi ingress;
+    class AuthorizerLambda compute;
+    class HotPathSyncQueue,CoalescingBufferQueue messaging;
 ```
 ---
 #### Diagram 2b: Webhook Event Coalescing Flow
@@ -1149,13 +1179,30 @@ This diagram details the cost-optimization pattern used to handle "chatty" webho
 
 ```mermaid
 ---
-title: "Diagram 2b: Webhook Event Coalescing Flow (v1.5)"
+title: "Diagram 2b: Webhook Event Coalescing Flow (v1.6)"
 ---
 graph TB
-    RestApi[REST API Gateway] -- "1. Receives Webhook" --> CoalescingBufferQueue["SQS FIFO Queue<br><i>(with 60s delay)</i>"]
-    CoalescingBufferQueue -- "2. Triggers Lambda with batch of messages" --> CoalescingTriggerLambda["Coalescing Trigger<br>Lambda"]
-    CoalescingTriggerLambda -- "3. Extracts unique users and<br>sends one job per user to" --> HotPathSyncQueue[Hot Path SQS Queue]
-    HotPathSyncQueue -- "4. Triggers main worker" --> WorkerLambda["Hot Path Worker<br>Lambda"]
+    %% Define Styles
+    classDef ingress fill:#e6f3ff,stroke:#0073bb;
+    classDef compute fill:#fff8e6,stroke:#ff9900;
+    classDef messaging fill:#f3e6ff,stroke:#8a3ffc;
+
+    RestApi("`fa:fa-server REST API Gateway`")
+    CoalescingBufferQueue("`fa:fa-inbox SQS FIFO Queue<br><i>(with 60s delay)</i>`")
+    CoalescingTriggerLambda("`fa:fa-bolt Coalescing Trigger<br>Lambda`")
+    HotPathSyncQueue("`fa:fa-inbox Hot Path SQS Queue`")
+    WorkerLambda("`fa:fa-bolt Hot Path Worker<br>Lambda`")
+
+    %% Connections
+    RestApi -- "1. Receives Webhook" --> CoalescingBufferQueue
+    CoalescingBufferQueue -- "2. Triggers Lambda with batch" --> CoalescingTriggerLambda
+    CoalescingTriggerLambda -- "3. Sends one job per unique user to" --> HotPathSyncQueue
+    HotPathSyncQueue -- "4. Triggers main worker" --> WorkerLambda
+
+    %% Apply Styles
+    class RestApi ingress;
+    class CoalescingTriggerLambda,WorkerLambda compute;
+    class CoalescingBufferQueue,HotPathSyncQueue messaging;
 ```
 ---
 #### Diagram 2c: Core "Hot Path" Worker Flow
@@ -1163,43 +1210,56 @@ This diagram shows the main components involved in processing a standard, real-t
 
 ```mermaid
 ---
-title: "Diagram 2c: Core Hot Path Worker Flow (v1.5)"
+title: "Diagram 2c: Core Hot Path Worker Flow (v1.6)"
 ---
 graph TB
+    %% Define Styles
+    classDef compute fill:#fff8e6,stroke:#ff9900;
+    classDef messaging fill:#f3e6ff,stroke:#8a3ffc;
+    classDef datastore fill:#e6ffed,stroke:#2d9a41;
+    classDef external fill:#f4f4f4,stroke:#525252;
+    classDef ingress fill:#e6f3ff,stroke:#0073bb;
+
     subgraph "Trigger"
-        HotPathSyncQueue[Hot Path SQS Queue]
+        HotPathSyncQueue("`fa:fa-inbox Hot Path SQS Queue`")
     end
 
     subgraph "VPC"
-        style VPC fill:#f5f5f5
-        WorkerLambda["Hot Path Worker Lambda"]
+        style VPC fill:#f5f5f5,stroke:#333
+        WorkerLambda("`fa:fa-bolt Hot Path Worker Lambda`")
+
         subgraph "Dependencies"
-            ElastiCache[ElastiCache for Redis]
-            DynamoDB[DynamoDB Table]
-            SecretsManager[Secrets Manager]
-            AppConfig[AWS AppConfig]
-            Observability[CloudWatch Suite]
+            ElastiCache("`fa:fa-memory ElastiCache for Redis`")
+            DynamoDB("`fa:fa-database DynamoDB Table`")
+            SecretsManager("`fa:fa-key Secrets Manager`")
+            AppConfig("`fa:fa-cog AWS AppConfig`")
+            Observability("`fa:fa-chart-line CloudWatch Suite`")
         end
+
         subgraph "Egress"
             NatGateway[NAT Gateway]
             NetworkFirewall[AWS Network Firewall]
         end
     end
 
-    ThirdPartyAPIs["Third-Party APIs"]
+    ThirdPartyAPIs("`fa:fa-cogs Third-Party APIs`")
 
     %% Connections
     HotPathSyncQueue -- "1. Triggers" --> WorkerLambda
-    WorkerLambda -- "2. Reads/writes cache" --> ElastiCache
-    WorkerLambda -- "3. Reads/writes state" --> DynamoDB
-    WorkerLambda -- "4. Gets credentials" --> SecretsManager
-    WorkerLambda -- "5. Gets runtime config" --> AppConfig
-    WorkerLambda -- "6. Emits logs & metrics" --> Observability
+    WorkerLambda --> ElastiCache
+    WorkerLambda --> DynamoDB
+    WorkerLambda --> SecretsManager
+    WorkerLambda --> AppConfig
+    WorkerLambda --> Observability
+    WorkerLambda --> NatGateway & NetworkFirewall
+    NatGateway & NetworkFirewall --> ThirdPartyAPIs
 
-    WorkerLambda -- "7. Egress to trusted APIs via" --> NatGateway
-    WorkerLambda -- "7. Egress to untrusted APIs via" --> NetworkFirewall
-    NatGateway --> ThirdPartyAPIs
-    NetworkFirewall --> ThirdPartyAPIs
+    %% Apply Styles
+    class HotPathSyncQueue messaging;
+    class WorkerLambda compute;
+    class ElastiCache,DynamoDB,SecretsManager,AppConfig,Observability datastore;
+    class ThirdPartyAPIs external;
+    class NatGateway,NetworkFirewall ingress;
 ```
 ---
 #### Diagram 2d: Real-Time WebSocket Flow
@@ -1207,25 +1267,43 @@ This diagram shows the separate, low-latency path for users who are actively usi
 
 ```mermaid
 ---
-title: "Diagram 2d: Real-Time WebSocket Flow (v1.5)"
+title: "Diagram 2d: Real-Time WebSocket Flow (v1.6)"
 ---
 graph TB
-    MobileApp[Mobile App] -- "1. Establishes persistent connection" --> WebSocketApi[WebSocket API Gateway]
-    WebSocketApi -- "2. Routes sync request to" --> SyncOverSocketLambda["Sync-over-Socket<br>Lambda"]
-    SyncOverSocketLambda -- "3. Processes sync job" --> Dependencies["(DynamoDB, Redis, etc.)"]
+    %% Define Styles
+    classDef compute fill:#fff8e6,stroke:#ff9900;
+    classDef external fill:#f4f4f4,stroke:#525252;
+    classDef ingress fill:#e6f3ff,stroke:#0073bb;
+    classDef datastore fill:#e6ffed,stroke:#2d9a41;
+
+    MobileApp("`fa:fa-mobile-alt Mobile App`")
+    WebSocketApi("`fa:fa-server WebSocket API Gateway`")
+    SyncOverSocketLambda("`fa:fa-bolt Sync-over-Socket<br>Lambda`")
+    Dependencies("`fa:fa-database Dependencies<br>(DynamoDB, Redis, etc.)`")
+
+    %% Connections
+    MobileApp -- "1. Establishes persistent connection" --> WebSocketApi
+    WebSocketApi -- "2. Routes sync request to" --> SyncOverSocketLambda
+    SyncOverSocketLambda -- "3. Processes sync job" --> Dependencies
     SyncOverSocketLambda -- "4. Pushes result directly back to" --> MobileApp
+
+    %% Apply Styles
+    class MobileApp external;
+    class WebSocketApi ingress;
+    class SyncOverSocketLambda compute;
+    class Dependencies datastore;
 ```
 ---
 ### Diagram 3: ProviderManager Factory Pattern
 
 ```mermaid
 ---
-title: "Diagram 3: ProviderManager Factory Pattern (v1.5)"
+title: "Diagram 3: ProviderManager Factory Pattern (v1.6)"
 ---
 graph TD
-    A[SyncWorker]
-    B[ProviderManager]
-    C((Registry))
+    A["`fa:fa-bolt SyncWorker`"]
+    B["`fa:fa-cogs ProviderManager`"]
+    C("`fa:fa-book Registry`")
 
     subgraph Initialization
         direction LR
@@ -1244,17 +1322,35 @@ graph TD
 
 ```mermaid
 ---
-title: "Diagram 4: Hot Path Sync Flow (Simplified, v1.5)"
+title: "Diagram 4: Hot Path Sync Flow (Simplified, v1.6)"
 ---
 graph TD
-    subgraph "Hot Path Sync Flow"
-        A[Mobile App] -- "1. Initiate Sync Job" --> B[API Gateway]
-        B -- "2. Sends job to SQS" --> SQS[HotPathSyncQueue]
-        SQS -- "3. Triggers Worker" --> D[Worker Lambda]
-        D -- "4. Processes job and<br>communicates with" --> F[Network Firewall/NAT]
-        F -- "5. Fetches/Pushes data" --> E[Third-Party APIs]
-        D -- "6. Publishes 'SyncSucceeded' event" --> C[EventBridge]
-    end
+    %% Define Styles
+    classDef compute fill:#fff8e6,stroke:#ff9900;
+    classDef messaging fill:#f3e6ff,stroke:#8a3ffc;
+    classDef external fill:#f4f4f4,stroke:#525252;
+    classDef ingress fill:#e6f3ff,stroke:#0073bb;
+
+    A("`fa:fa-mobile-alt Mobile App`")
+    B("`fa:fa-server API Gateway`")
+    SQS("`fa:fa-inbox HotPathSyncQueue`")
+    D("`fa:fa-bolt Worker Lambda`")
+    F[Network/NAT]
+    E("`fa:fa-cogs Third-Party APIs`")
+    C("`fa:fa-comments EventBridge`")
+
+    A -- "1. Initiate Sync Job" --> B
+    B -- "2. Sends job to" --> SQS
+    SQS -- "3. Triggers" --> D
+    D -- "4. Communicates via" --> F
+    F -- "5. Fetches/Pushes data" --> E
+    D -- "6. Publishes 'SyncSucceeded' event" --> C
+
+    %% Apply Styles
+    class A,E external;
+    class B,F ingress;
+    class SQS,C messaging;
+    class D compute;
 ```
 
 ### Diagram 5: High Availability & Disaster Recovery Architecture
@@ -1263,12 +1359,12 @@ This diagram illustrates the architecture for the critical "Hot Path" sync, show
 
 ```mermaid
 ---
-title: "Diagram 5: High Availability & DR Architecture (v1.5)"
+title: "Diagram 5: High Availability & DR Architecture (v1.6)"
 ---
 graph LR
     subgraph "User / DNS"
         direction LR
-        User --> Route53
+        User("`fa:fa-user User`") --> Route53("`fa:fa-route Route 53`")
     end
 
     subgraph "AWS Region 1: us-east-1 (Primary)"
@@ -1277,20 +1373,20 @@ graph LR
 
         subgraph Ingress
             direction LR
-            CloudFront[CloudFront CDN] --> WAF[AWS WAF] --> ApiGateway[API Gateway]
+            CloudFront("`fa:fa-globe-americas<br>CloudFront`") --> WAF("`fa:fa-shield-alt<br>WAF`") --> ApiGateway("`fa:fa-server<br>API Gateway`")
         end
 
-        ApiGateway -- "Enqueues job in" --> SQS[SQS Standard Queue]
+        ApiGateway -- "Enqueues job in" --> SQS("`fa:fa-inbox SQS`")
 
         subgraph "Compute & Cache (Multi-AZ)"
             direction TB
             subgraph "AZ 1: use1-az1"
                 style use1-az1 fill:#ffffff,stroke-dasharray: 5 5
-                Lambda_A[Hot Path Lambda] --> Redis_A["ElastiCache Redis (Primary)"]
+                Lambda_A("`fa:fa-bolt Lambda`") --> Redis_A("`fa:fa-memory Redis<br>(Primary)`")
             end
             subgraph "AZ 2: use1-az2"
                 style use1-az2 fill:#ffffff,stroke-dasharray: 5 5
-                Lambda_B[Hot Path Lambda] --> Redis_B["ElastiCache Redis (Replica)"]
+                Lambda_B("`fa:fa-bolt Lambda`") --> Redis_B("`fa:fa-memory Redis<br>(Replica)`")
             end
         end
 
@@ -1299,7 +1395,7 @@ graph LR
 
         subgraph "Database (Multi-Region)"
             direction LR
-            DynamoDB_Global["DynamoDB Global Table (Primary)"] -- "Replicates to" --> DynamoDB_DR["(in us-west-2)<br>DynamoDB Global Table (Replica)"]
+            DynamoDB_Global("`fa:fa-database DynamoDB<br>(Primary)`") -- "Replicates to" --> DynamoDB_DR["`fa:fa-database DynamoDB<br>(Replica in us-west-2)`"]
         end
 
         Lambda_A & Lambda_B -- "Read/Write State" --> DynamoDB_Global
@@ -1312,60 +1408,70 @@ graph LR
 
 ```mermaid
 ---
-title: "Diagram 6: Tiered Fan-Out Scheduling Infrastructure (v1.5)"
+title: "Diagram 6: Tiered Fan-Out Scheduling Infrastructure (v1.6)"
 ---
 graph TB
+    %% Define Styles
+    classDef compute fill:#fff8e6,stroke:#ff9900;
+    classDef messaging fill:#f3e6ff,stroke:#8a3ffc;
+    classDef datastore fill:#e6ffed,stroke:#2d9a41;
+
     subgraph "1. Scheduling Triggers"
         direction LR
-        A["EventBridge Rule<br>cron(0/15 * * * ? *)"] -- "PRO tier" --> B{"Scheduler State Machine"};
-        A2["EventBridge Rule<br>cron(0 12 * * ? *)"] -- "FREE tier" --> B;
+        A["`fa:fa-clock EventBridge Rule<br>cron(0/15 * * * ? *)`"] -- "PRO tier" --> B{"`fa:fa-sitemap Scheduler<br>State Machine`"};
+        A2["`fa:fa-clock EventBridge Rule<br>cron(0 12 * * ? *)`"] -- "FREE tier" --> B;
     end
 
     subgraph "2. Fan-Out Orchestration"
         direction TB
-        B --> C[Fan-Out Lambda<br>Calculates N shards];
-        C --> D{Map State<br>Processes N shards in parallel};
+        B --> C["`fa:fa-bolt Fan-Out Lambda<br>Calculates N shards`"];
+        C --> D{"`fa:fa-random Map State<br>Processes N shards in parallel`"};
     end
 
     subgraph "3. Parallel Shard Processing"
         direction TB
-        D -- "For Each Shard..." --> E1[Shard Processor Lambda];
-        E1 -- "a. Queries GSI for eligible users" --> DynamoDB[DynamoDB GSI];
-        E1 -- "b. Publishes 'SyncRequested' events" --> F["Main Event Bus<br>(EventBridge)"];
+        D -- "For Each Shard..." --> E1["`fa:fa-bolt Shard Processor<br>Lambda`"];
+        E1 -- "a. Queries for eligible users" --> DynamoDB["`fa:fa-database DynamoDB GSI`"];
+        E1 -- "b. Publishes 'SyncRequested' events" --> F["`fa:fa-comments Main Event Bus`"];
     end
 
     subgraph "4. Job Execution"
         direction TB
-        F -- "Routes events to" --> G[SQS Queue];
-        G -- "Triggers" --> H["Worker Fleet<br>(AWS Lambda)"];
+        F -- "Routes events to" --> G["`fa:fa-inbox SQS Queue`"];
+        G -- "Triggers" --> H["`fa:fa-bolt Worker Fleet<br>(AWS Lambda)`"];
     end
+
+    %% Apply Styles
+    class B,C,D,E1,H compute;
+    class A,A2,F,G messaging;
+    class DynamoDB datastore;
 ```
 
 ### Diagram 7: Device-to-Cloud Sync Flow
 
 ```mermaid
 ---
-title: "Diagram 7: Device-to-Cloud Sync Flow (v1.5)"
+title: "Diagram 7: Device-to-Cloud Sync Flow (v1.6)"
 ---
 sequenceDiagram
-    participant MobileApp as "Mobile App"
-    participant Backend as "SyncWell Backend"
-    participant DestinationAPI as "Destination Cloud API"
-    participant DeviceDB as "On-Device DB"
+    actor MobileApp as Mobile App
+    participant Backend as SyncWell Backend
+    participant DestinationAPI as Destination Cloud API
+    participant DeviceDB as On-Device DB
 
     activate MobileApp
     MobileApp->>DeviceDB: Get lastSyncTime
     DeviceDB-->>MobileApp: Return timestamp
-    MobileApp->>MobileApp: Fetch new data from HealthKit/Health Connect
-    MobileApp->>MobileApp: Transform data to CanonicalWorkout
+    MobileApp->>MobileApp: Fetch new data from HealthKit
+    MobileApp->>MobileApp: Transform to CanonicalData
     deactivate MobileApp
 
-    MobileApp->>+Backend: POST /v1/device-upload (sends canonical data)
+    MobileApp->>+Backend: POST /v1/device-upload
     activate Backend
-    Backend->>+DestinationAPI: Fetch overlapping data for conflict resolution
+    Backend->>+DestinationAPI: Fetch overlapping data
     DestinationAPI-->>-Backend: Return destination data
-    Backend->>Backend: Run conflict resolution engine
-    Backend->>+DestinationAPI: POST /v1/data (write final data)
+    Backend->>Backend: Run conflict resolution
+    Backend->>+DestinationAPI: Write final data
     DestinationAPI-->>-Backend: Success
     Backend-->>-MobileApp: 200 OK
     deactivate Backend
@@ -1379,14 +1485,14 @@ sequenceDiagram
 
 ```mermaid
 ---
-title: "Diagram 8: Cloud-to-Device Sync Flow (v1.5)"
+title: "Diagram 8: Cloud-to-Device Sync Flow (v1.6)"
 ---
 sequenceDiagram
-    participant SourceAPI as "Source Cloud API"
-    participant Backend as "SyncWell Backend"
-    participant PushService as "APNs/FCM"
-    participant MobileApp as "Mobile App (Background)"
-    participant DeviceHealth as "HealthKit/Health Connect"
+    participant SourceAPI as Source Cloud API
+    participant Backend as SyncWell Backend
+    participant PushService as APNs/FCM
+    actor MobileApp as Mobile App (Background)
+    participant DeviceHealth as HealthKit
 
     %% --- Part 1: Backend fetches data and requests destination data ---
     activate Backend
@@ -1400,17 +1506,17 @@ sequenceDiagram
     activate MobileApp
     MobileApp->>+DeviceHealth: Fetch overlapping data
     DeviceHealth-->>-MobileApp: Return local health data
-    MobileApp->>+Backend: POST /v1/device-read-response (sends data)
+    MobileApp->>+Backend: POST /v1/device-read-response
     deactivate MobileApp
 
     %% --- Part 3: Backend processes and stages data for write ---
     activate Backend
     Backend->>Backend: Run conflict resolution
-    Backend->>Backend: Stage final data in S3/DynamoDB
-    Backend-->>-MobileApp: 200 OK (ack for read response)
+    Backend->>Backend: Stage final data
+    Backend-->>-MobileApp: 200 OK (ack)
 
     %% --- Part 4: Backend signals mobile app to write data ---
-    Backend->>+PushService: Send 'write request' silent push with jobId
+    Backend->>+PushService: Send 'write request' silent push
     PushService-->>MobileApp: Silent Push Notification
     deactivate Backend
 
