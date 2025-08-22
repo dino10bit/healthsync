@@ -236,8 +236,8 @@ For the MVP, cloud-to-cloud syncs are handled by a single, reliable architectura
 *   **Use Case:** Handling frequent, automatic, and user-initiated manual syncs for recent data.
 *   **Flow:**
     1.  The Mobile App sends a request to API Gateway to start a sync.
-    2.  **API Gateway** uses a direct AWS service integration to validate the request and send the `HotPathSyncRequested` message directly to the **Amazon SQS FIFO queue** (`HotPathSyncQueue`). This is a critical cost optimization that bypasses the more expensive EventBridge service for this specific high-volume ingestion path.
-    3.  The SQS FIFO queue, which now receives messages directly from API Gateway, acts as a buffer to protect the system from load spikes.
+    2.  **API Gateway** uses a direct AWS service integration to validate the request and send the `HotPathSyncRequested` message directly to the **Amazon SQS Standard queue** (`HotPathSyncQueue`). This is a critical cost optimization that bypasses the more expensive EventBridge service for this specific high-volume ingestion path.
+    3.  The SQS Standard queue, which now receives messages directly from API Gateway, acts as a buffer to protect the system from load spikes.
     4.  The SQS queue is configured as a trigger for the `WorkerLambda`, which processes the job.
     5.  **Failure Handling:** The primary SQS queue is configured with a **Dead-Letter Queue (DLQ)**. On a **non-transient processing error** (e.g., an invalid credentials error `401`, a permanent API change `404`, or an internal code bug), the worker throws an exception. After a configured number of retries (`maxReceiveCount` on the Lambda event source mapping), SQS automatically moves the failed message to the DLQ for out-of-band analysis.
         *   **`maxReceiveCount` Rationale:** This will be set to **5**. This value is chosen based on the number of attempts, not time. It balances allowing recovery from intermittent, transient errors against not waiting too long to detect a persistent failure.
@@ -1020,7 +1020,6 @@ This section documents known limitations of the architecture and explicit trade-
         *   **VPC Endpoints:** Deployed for all internal AWS service communication to ensure security and reduce NAT Gateway data transfer costs from day one.
         *   **Core Security Features:** Foundational security measures like AWS WAF, granular IAM roles, and encryption at rest/in-transit are non-negotiable for the MVP.
     *   **Fast-follow Post-Launch (Production Hardening):**
-        *   **Multi-AZ ElastiCache:** While the MVP will launch with a single-node ElastiCache cluster to manage costs, it will be scaled to a Multi-AZ deployment shortly after launch to improve resilience.
         *   **Comprehensive Chaos Engineering:** The full suite of chaos engineering experiments will be built out and automated post-launch.
         *   **Multi-Region Architecture:** Expansion to a multi-region architecture is a post-MVP consideration, to be prioritized based on user growth or geographic expansion.
 
