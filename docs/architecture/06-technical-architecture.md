@@ -1064,7 +1064,7 @@ This section contains all the architectural diagrams referenced in this document
 
 ```mermaid
 ---
-title: "System Context Diagram for SyncWell (v1.3 as of 2025-08-22)"
+title: "System Context Diagram for SyncWell (v1.4 as of 2025-08-22)"
 ---
 graph TD
     subgraph SyncWell Ecosystem
@@ -1081,7 +1081,7 @@ graph TD
         D2["On-Device Health Platforms<br>(Apple Health, Google Health Connect)"]
         E[Platform App Stores]
         F[Platform Notification Services]
-        G[Firebase Authentication]
+        G["Identity Providers<br>(Firebase, Cognito)"]
     end
 
     C -- "Views, configures, and<br>initiates syncs via" --> A
@@ -1091,22 +1091,22 @@ graph TD
     A -- "Is distributed through" --> E
     B -- "Fetches and pushes data to" --> D
     B -- "Sends push notifications via" --> F
-    B -- "Validates user tokens using" --> G
+    B -- "Validates JWTs with public keys from" --> G
 ```
 
 ### Diagram 2: Container Diagram (MVP)
 
 ```mermaid
 ---
-title: "Container Diagram for SyncWell (MVP, v1.3 as of 2025-08-22)<br>Note: This diagram is aligned with the architecture defined in the text."
+title: "Container Diagram for SyncWell (MVP, v1.4 as of 2025-08-22)<br>Note: This diagram includes the Cognito fallback for authentication."
 ---
 graph TD
     subgraph "User's Device"
         MobileApp[Mobile Application w/ KMP Module]
     end
 
-    subgraph "Google Cloud"
-        FirebaseAuth["Firebase Authentication<br>(provides Google Public Keys)"]
+    subgraph "Third-Party Identity"
+        FirebaseAuth["Firebase Authentication<br>(Primary IdP)"]
     end
 
     subgraph "External Services"
@@ -1114,19 +1114,30 @@ graph TD
     end
 
     subgraph "AWS Cloud"
-        S3Assets[S3 Bucket for Static Assets]
-        CloudFront[CloudFront CDN]
-        WAF[AWS WAF]
-        RestApi[REST API Gateway]
-        WebSocketApi[WebSocket API Gateway]
-        SyncOverSocketLambda[Sync-over-Socket Lambda]
-        AuthorizerLambda[Authorizer Lambda]
-        HotPathEventBus[EventBridge Event Bus]
-        DynamoDB[DynamoDB Table]
-        SecretsManager[Secrets Manager]
-        Observability["CloudWatch Suite"]
-        AppConfig[AWS AppConfig]
-        GlueRegistry[AWS Glue Schema Registry]
+        subgraph "Authentication & Ingress"
+            style "Authentication & Ingress" fill:#e6f3ff,stroke:#0073bb
+            CloudFront[CloudFront CDN]
+            WAF[AWS WAF]
+            RestApi[REST API Gateway]
+            WebSocketApi[WebSocket API Gateway]
+            AuthorizerLambda["Authorizer Lambda<br><i>Validates JWT from<br>Firebase OR Cognito</i>"]
+            Cognito["Amazon Cognito<br>(Fallback IdP)"]
+        end
+
+        subgraph "Core Backend"
+            style "Core Backend" fill:#fff8e6,stroke:#ff9900
+            S3Assets[S3 Bucket for Static Assets]
+            SyncOverSocketLambda[Sync-over-Socket Lambda]
+            DynamoDB[DynamoDB Table]
+            SecretsManager[Secrets Manager]
+            Observability["CloudWatch Suite"]
+            AppConfig[AWS AppConfig]
+            GlueRegistry[AWS Glue Schema Registry]
+            CoalescingBufferQueue[SQS: CoalescingBufferQueue]
+            CoalescingTriggerLambda[CoalescingTriggerLambda]
+            HotPathSyncQueue[SQS: HotPathSyncQueue]
+            HotPathSyncDLQ[SQS: HotPathSyncDLQ]
+        end
 
         subgraph "VPC"
             style VPC fill:#f5f5f5,stroke:#333
@@ -1137,22 +1148,20 @@ graph TD
                 ElastiCache[ElastiCache for Redis]
             end
         end
-
-        subgraph "SQS Queues"
-            CoalescingBufferQueue[SQS: CoalescingBufferQueue]
-            CoalescingTriggerLambda[CoalescingTriggerLambda]
-            HotPathSyncQueue[SQS: HotPathSyncQueue]
-            HotPathSyncDLQ[SQS: HotPathSyncDLQ]
-        end
     end
 
-    %% --- Ingress and Static Content ---
-    MobileApp -- "Signs up / signs in with" --> FirebaseAuth
-    MobileApp -- "API & WebSocket Requests" --> CloudFront
-    CloudFront -- "Protected by" --> WAF
+    %% --- Ingress and Authentication Flow ---
+    MobileApp -- "1. Signs up / signs in with" --> FirebaseAuth
+    MobileApp -- "2. API & WebSocket Requests" --> CloudFront
+    CloudFront -- "3. Protected by" --> WAF
+    WAF -- "4. Routes REST traffic to" --> RestApi
+    WAF -- "4. Routes WebSocket traffic to" --> WebSocketApi
+    RestApi -- "5. Validates JWT via" --> AuthorizerLambda
+    AuthorizerLambda -- "6a. Fetches public keys from" --> FirebaseAuth
+    AuthorizerLambda -- "6b. Fetches public keys from" --> Cognito
+    AuthorizerLambda -- "7. Caches public keys in" --> ElastiCache
     CloudFront -- "Serves static assets from" --> S3Assets
-    CloudFront -- "Routes REST traffic to" --> RestApi
-    CloudFront -- "Routes WebSocket traffic to" --> WebSocketApi
+
 
     %% --- WebSocket Flow ---
     WebSocketApi -- "Routes sync requests to" --> SyncOverSocketLambda
@@ -1161,12 +1170,9 @@ graph TD
     SyncOverSocketLambda -- "Gets credentials" --> SecretsManager
 
     %% --- REST API Ingress Flows ---
-    RestApi -- "Validates JWT with" --> AuthorizerLambda
-    AuthorizerLambda -- "Fetches public keys from" --> FirebaseAuth
-    AuthorizerLambda -- "Caches public keys in" --> ElastiCache
-    RestApi -- "<b>Direct Integration (Hot Path)</b>" --> HotPathSyncQueue
     ThirdPartyAPIs -- "Sends Webhook -->" --> RestApi
     RestApi -- "Routes Webhook to" --> CoalescingBufferQueue
+    RestApi -- "<b>Direct Integration (Hot Path)</b><br>Sends sync message to" --> HotPathSyncQueue
 
     %% --- Event Coalescing Flow ---
     CoalescingBufferQueue -- "Triggers" --> CoalescingTriggerLambda
@@ -1195,6 +1201,9 @@ graph TD
 ### Diagram 3: ProviderManager Factory Pattern
 
 ```mermaid
+---
+title: "Diagram 3: ProviderManager Factory Pattern (v1.4 as of 2025-08-22)"
+---
 graph TD
     A[SyncWorker]
     B[ProviderManager]
@@ -1206,24 +1215,27 @@ graph TD
     end
 
     subgraph "Runtime"
-        A -- "Requests provider for 'fitbit'" --> B
-        B -- "Looks up 'fitbit' in registry" --> C
-        C -- "Returns FitbitProvider class" --> B
-        B -- "Instantiates and returns instance" --> A
+        A -- "1. Requests provider for 'fitbit'" --> B
+        B -- "2. Looks up 'fitbit' in registry" --> C
+        C -- "3. Returns FitbitProvider class" --> B
+        B -- "4. Instantiates and returns instance" --> A
     end
 ```
 
 ### Diagram 4: Hot Path Sync Flow
 
 ```mermaid
+---
+title: "Diagram 4: Hot Path Sync Flow (v1.4 as of 2025-08-22)"
+---
 graph TD
     subgraph "Hot Path Sync Flow"
-        A[Mobile App] -- 1. Initiate --> B[API Gateway]
-        B -- 2. Publishes to --> SQS[HotPathSyncQueue]
-        SQS -- 3. Triggers --> D[Worker Lambda]
-        D -- "4. Fetch/Write data via" --> F[Network Firewall]
-        F -- 5. --> E[Third-Party APIs]
-        D -- 6. Publishes 'SyncSucceeded' event --> C[EventBridge]
+        A[Mobile App] -- "1. Initiate Sync Job" --> B[API Gateway]
+        B -- "2. Sends job to SQS" --> SQS[HotPathSyncQueue]
+        SQS -- "3. Triggers Worker" --> D[Worker Lambda]
+        D -- "4. Processes job and<br>communicates with" --> F[Network Firewall/NAT]
+        F -- "5. Fetches/Pushes data" --> E[Third-Party APIs]
+        D -- "6. Publishes 'SyncSucceeded' event" --> C[EventBridge]
     end
 ```
 
@@ -1233,91 +1245,82 @@ This diagram illustrates the recommended architecture for the critical "Hot Path
 
 ```mermaid
 ---
-title: "Recommended Critical-Path Architecture (Multi-AZ & Multi-Region)"
+title: "Diagram 5: Recommended Critical-Path Architecture (v1.4 as of 2025-08-22)"
 ---
-graph TD
+graph LR
     subgraph "User / DNS"
-        User[User]
-        Route53[Route 53]
+        direction LR
+        User --> Route53
     end
 
     subgraph "AWS Region 1: us-east-1 (Primary)"
+        direction TB
         style us-east-1 fill:#e6f3ff,stroke:#0073bb
-        subgraph "AZ 1: use1-az1"
-            style use1-az1 fill:#ffffff,stroke-dasharray: 5 5
-            Lambda_A[Hot Path Lambda]
-            Redis_A["ElastiCache Redis (Primary)"]
-        end
-        subgraph "AZ 2: use1-az2"
-            style use1-az2 fill:#ffffff,stroke-dasharray: 5 5
-            Lambda_B[Hot Path Lambda]
-            Redis_B["ElastiCache Redis (Replica)"]
+
+        subgraph Ingress
+            direction LR
+            CloudFront[CloudFront CDN] --> WAF[AWS WAF] --> ApiGateway[API Gateway]
         end
 
-        CloudFront[CloudFront CDN]
-        WAF[AWS WAF]
-        ApiGateway[API Gateway]
-        SQS[SQS Standard Queue]
-        DynamoDB_Global["DynamoDB Global Table (Primary)"]
+        ApiGateway -- "Enqueues job in" --> SQS[SQS Standard Queue]
+
+        subgraph "Compute & Cache (Multi-AZ)"
+            direction TB
+            subgraph "AZ 1: use1-az1"
+                style use1-az1 fill:#ffffff,stroke-dasharray: 5 5
+                Lambda_A[Hot Path Lambda] --> Redis_A["ElastiCache Redis (Primary)"]
+            end
+            subgraph "AZ 2: use1-az2"
+                style use1-az2 fill:#ffffff,stroke-dasharray: 5 5
+                Lambda_B[Hot Path Lambda] --> Redis_B["ElastiCache Redis (Replica)"]
+            end
+        end
+
+        SQS -- Triggers --> Lambda_A & Lambda_B
+        Redis_A -- "Replicates to" <--> Redis_B
+
+        subgraph "Database (Multi-Region)"
+            direction LR
+            DynamoDB_Global["DynamoDB Global Table (Primary)"] -- "Replicates to" --> DynamoDB_DR["(in us-west-2)<br>DynamoDB Global Table (Replica)"]
+        end
+
+        Lambda_A & Lambda_B -- "Read/Write State" --> DynamoDB_Global
     end
 
-    subgraph "AWS Region 2: us-west-2 (DR)"
-        style us-west-2 fill:#fff8e6,stroke:#ff9900
-        DynamoDB_DR["DynamoDB Global Table (Replica)"]
-    end
-
-    %% Connections
-    User --> Route53
     Route53 -- "Latency-based Routing" --> CloudFront
-    CloudFront --> WAF --> ApiGateway
-    ApiGateway --> SQS
-
-    SQS -- "Triggers" --> Lambda_A & Lambda_B
-    Lambda_A & Lambda_B -- "Read/Write Cache" --> Redis_A
-    Redis_A <--> Redis_B
-
-    Lambda_A & Lambda_B -- "Read/Write State" --> DynamoDB_Global
-    DynamoDB_Global -- "Replicates to" --> DynamoDB_DR
-
-    %% Failover Boundaries
-    subgraph Failover Boundaries
-        subgraph "Multi-AZ Failover (Automatic)"
-            Redis_A
-            Redis_B
-        end
-        subgraph "Multi-Region Failover (Manual/Automated Runbook)"
-            DynamoDB_Global
-            DynamoDB_DR
-        end
-    end
 ```
 
 ### Diagram 6: Scheduling Infrastructure
 
 ```mermaid
-graph TD
-    subgraph "Scheduling Infrastructure"
-        A["EventBridge Rule<br>cron(0/15 * * * ? *)"] --> B{"Scheduler State Machine"};
+---
+title: "Diagram 6: Tiered Fan-Out Scheduling Infrastructure (v1.4 as of 2025-08-22)"
+---
+graph TB
+    subgraph "1. Scheduling Triggers"
+        direction LR
+        A["EventBridge Rule<br>cron(0/15 * * * ? *)"] -- "PRO tier" --> B{"Scheduler State Machine"};
+        A2["EventBridge Rule<br>cron(0 12 * * ? *)"] -- "FREE tier" --> B;
+    end
+
+    subgraph "2. Fan-Out Orchestration"
+        direction TB
         B --> C[Fan-Out Lambda<br>Calculates N shards];
         C --> D{Map State<br>Processes N shards in parallel};
     end
 
-    subgraph "Shard Processing (Parallel)"
-        style E1 fill:#f5f5f5,stroke:#333
-        D -- "Shard #1" --> E1[Shard Processor Lambda];
+    subgraph "3. Parallel Shard Processing"
+        direction TB
+        D -- "For Each Shard..." --> E1[Shard Processor Lambda];
+        E1 -- "a. Queries GSI for eligible users" --> DynamoDB[DynamoDB GSI];
+        E1 -- "b. Publishes 'SyncRequested' events" --> F["Main Event Bus<br>(EventBridge)"];
     end
 
-    subgraph "Data & Execution"
-        DynamoDB[DynamoDB GSI]
-        F["Main Event Bus<br>(EventBridge)"];
-        G[SQS Queue];
-        H["Worker Fleet<br>(AWS Lambda)"];
+    subgraph "4. Job Execution"
+        direction TB
+        F -- "Routes events to" --> G[SQS Queue];
+        G -- "Triggers" --> H["Worker Fleet<br>(AWS Lambda)"];
     end
-
-    E1 -- "1. Queries for users to sync" --> DynamoDB;
-    E1 -- "2. Publishes 'SyncRequested' events" --> F;
-    F -- "3. Routes events to" --> G;
-    G -- "4. Triggers" --> H;
 ```
 
 ### Diagram 7: Device-to-Cloud Sync Flow
