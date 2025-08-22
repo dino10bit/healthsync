@@ -26,62 +26,58 @@ The following table highlights the critical mismatches between the original cost
 | **Database DR** | Not explicitly costed. | **DynamoDB Global Tables** are recommended, which doubles write costs. | **[DONE]** |
 | **Total Monthly Cost**| **~$1,130 / month** | The estimate was based on fundamentally incorrect inputs. | **[DONE]** |
 
-## 3. Reconciled Production Monthly Cost Estimate (Nominal Scenario)
+## 3. Reconciled, Production-Ready Monthly Cost Table
 
-This table presents the re-calculated, bottom-up cost estimate based on the **recommended production architecture** and the **Nominal traffic model** (1M DAU, 7.6M syncs/day).
+This table presents a more realistic, bottom-up cost estimate based on the **recommended production architecture** and the **Nominal traffic model** (1M DAU, 10M syncs/day, ~16.4TB egress).
 
-| Component | Service | Unit Cost | Units (Monthly) | Reconciled Cost |
-| :--- | :--- | :--- | :--- | :--- |
-| **Compute** | AWS Lambda (Graviton) | `$0.00001333/GB-s` | 228M invocations, 1024MB, 1.5s avg duration | **$4,561** |
-| | | `$0.20/M invokes` | 228M invocations | **$46** |
-| **Database** | DynamoDB (On-Demand) | `$1.25/M WCU` | 456M WCUs (Global Table x2) | **$570** |
-| | | `$0.25/M RCU` | 456M RCUs | **$114** |
-| **Caching** | ElastiCache for Redis | `$0.266/hr` | 2x `cache.m6g.large` nodes | **$383** |
-| **Network/Egress**| NAT Gateway | `$0.045/GB` | 9,100 GB processed | **$410** |
-| | | `$0.045/hr` | 2x NAT Gateways (Multi-AZ) | **$65** |
-| **Messaging** | Amazon SQS (Standard) | `$0.40/M requests` | ~500M requests | **$200** |
-| | API Gateway | `$1.00/M requests` | 228M requests | **$228** |
-| **Observability**| CloudWatch | (Logs, Metrics, Alarms) | Based on Lambda/API volume | **$1,250** |
-| **Security** | AWS WAF | `$0.60/M requests` | 228M requests | **$137** |
-| **Other** | (S3, Secrets Manager, etc.) | - | - | **$50** |
-| **TOTAL** | | | | **~$7,914 / month** |
+| Component | Service | Unit Cost | Units (Monthly) | **Reconciled Cost** | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Compute** | AWS Lambda (Graviton) | `$0.00001333/GB-s` | 300M invocations, 1024MB, 1.5s duration | **$6,120** | Higher invocation count based on 10 syncs/day. |
+| | | `$0.20/M invokes` | 300M invocations | **$60** | |
+| **Database** | DynamoDB (On-Demand) | `$1.25/M WCU` | 300M syncs * 2 (Global Table) = 600M WCUs | **$750** | |
+| | | `$0.25/M RCU` | 300M syncs * 1 = 300M RCUs | **$75** | |
+| | **AWS Backup** | `$0.17/GB-month`| Est. 1 TB table size | **$170** | For managing snapshots. |
+| **Caching** | ElastiCache for Redis | `$0.266/hr` | 2x `cache.m6g.large` nodes | **$383** | Aligned with architecture doc. |
+| **Network/Egress**| **NAT Gateway** | `$0.045/GB` | **16,400 GB** processed | **$738** | **Critical:** Based on the revised 16.4TB egress model. |
+| | **Network Firewall** | `$0.065/GB` | Est. 10% of traffic (1.64TB) | **$107** | Cost for traffic to untrusted endpoints. |
+| **Messaging** | API Gateway | `$1.00/M requests` | 300M requests | **$300** | |
+| | Amazon SQS (Standard) | `$0.40/M requests` | ~600M requests | **$240** | |
+| **Observability**| **CloudWatch Logs** | `$0.50/GB` | Est. 5 TB ingested | **$2,500** | **Critical:** Assumes tiered logging is NOT implemented. |
+| | **CloudWatch Metrics**| (Varies) | - | **$750** | High volume of custom metrics. |
+| | **CloudWatch Alarms** | (Varies) | - | **$250** | |
+| **Security** | AWS WAF | `$0.60/M requests` | 300M requests | **$180** | |
+| | AWS Inspector | `$1.25/instance` | Est. 50 Fargate tasks, etc. | **$63** | |
+| **Other** | (Secrets Manager, Cognito, etc.) | - | - | **$250** | Includes DR identity provider. |
+| **TOTAL** | | | | **~$12,936 / month** | *(On-Demand)* |
 
-**Analysis:** The reconciled monthly cost is **~$7,914**. The primary drivers of this increase are using the correct compute service (Lambda) for the event-driven workload and using a more realistic network egress data volume based on validated traffic models.
+## 4. Reconciled Cost Metrics & Sensitivity Analysis
 
-## 4. Cost Metrics & Sensitivity Analysis
+*   **Reconciled Cost-per-DAU (Monthly):** `$12,936 / 1,000,000 =` **$0.013 per user per month**.
+*   **Reconciled Cost-per-1M-DAU (Annualized):** `$12,936 * 12 =` **$155,232 per year**.
 
-### Reconciled Cost Metrics
-*   **Cost-per-DAU (Monthly):** `$7,914 / 1,000,000 =` **$0.0079 per user per month**.
-*   **Cost-per-1M-DAU (Annualized):** `$7,914 * 12 =` **$94,968 per year**.
+The table below shows how this reconciled cost shifts under different traffic scenarios and with the application of a **3-year, all-upfront Compute Savings Plan (~40% discount)**.
 
-### T-Shirt Cost Estimate (Reconciled)
-Based on the detailed analysis, the estimated monthly on-demand costs for the recommended production configuration at 1M DAU are:
-*   **Low (Conservative Traffic):** **~$4,500 / month**
-*   **Mid (Nominal Traffic):** **~$7,900 / month**
-*   **High (Aggressive Traffic):** **~$15,500 / month**
-
-### Sensitivity Analysis
-This analysis shows how the reconciled monthly cost shifts based on traffic and commercial levers. The platform's costs are highly sensitive to user activity.
-
-| Scenario | Monthly Cost (On-Demand) | Monthly Cost (3-Yr Savings Plan, 40% off compute) |
+| Traffic Scenario | Reconciled Monthly Cost (On-Demand) | Reconciled Monthly Cost (with 3-Yr Savings Plan) |
 | :--- | :--- | :--- |
-| **Conservative Traffic** | **~$4,500** | **~$2,700** |
-| **Nominal Traffic** | **~$7,914** | **~$6,090** |
-| **Aggressive Traffic** | **~$15,500**| **~$12,400**|
+| **Conservative** | **~$7,000** | **~$4,800** |
+| **Nominal** | **~$12,936** | **~$10,200** |
+| **Aggressive** | **~$25,000** | **~$21,500** |
 
-**Conclusion:** A 3-year Compute Savings Plan is the most effective lever for reducing costs, offering a **~23% reduction** in the nominal scenario by committing to a baseline of Lambda usage.
+**Conclusion:** The platform's costs are extremely sensitive to user activity, particularly payload size and sync frequency. A Savings Plan is a powerful lever, but it cannot fix a fundamentally expensive architecture. The **only** way to control costs is to aggressively implement the application-level optimizations.
 
 ## 5. Cost Optimization Levers & Governance
 
-### Recommended Cost-Optimization Levers
+### Recommended Cost-Optimization Levers (Prioritized)
 
-| Lever | Impact | Implementation Effort | Description |
+| Lever | Impact | Est. Savings | Description |
 | :--- | :--- | :--- | :--- |
-| **Purchase Savings Plans** | **High** | Low | Commit to a 1 or 3-year Compute Savings Plan to receive a significant discount (up to 66%) on Lambda and Fargate usage. |
-| **Implement Tiered Logging** | **High** | Medium | Implement logic in the application to sample logs from `FREE` tier users at a much lower rate than `PRO` users. This directly attacks the largest cost center (CloudWatch). |
-| **Optimize Data Hydration**| **Medium**| Medium | Fully implement the "metadata-first" data fetching pattern to reduce network egress, which is a significant variable cost. Every 10% reduction in payload size saves over **$40/month**. |
-| **Adopt ARM/Graviton** | **Medium**| Low | Ensure all applicable services (Lambda, Fargate, ElastiCache) are using the `arm64` architecture for a baseline ~20% price-performance improvement. |
-| **S3 Intelligent-Tiering** | **Low** | Low | Use S3 Intelligent-Tiering for log archives to automatically move them to cheaper storage classes. |
+| **Implement Tiered/Sampled Logging** | **High** | $2,000+/month | **MANDATORY.** Failing to implement the tiered logging strategy will result in CloudWatch costs exceeding $5,000/month. This is the highest-impact lever. |
+| **Implement Metadata-First Hydration** | **High** | $500+/month | **MANDATORY.** This directly attacks the largest variable cost driver: network egress. Every 10% reduction in egress saves ~$75/month. |
+| **Purchase Savings Plans** | **High** | $2,500+/month | Once traffic patterns are predictable (post-beta), purchase a 3-year Compute Savings Plan covering at least 50% of baseline Lambda usage. |
+| **Enforce VPC Endpoints** | **Medium** | $200+/month | A simple, high-impact change that reduces NAT gateway data processing charges by keeping traffic on the AWS private network. |
+| **Right-size Lambda Memory** | **Medium** | $100-500/month| Use AWS Lambda Power Tuning to find the optimal memory configuration for the worker Lambda. Over-provisioning can cost hundreds per month at scale. |
+| **Adopt ARM/Graviton** | **Medium**| Varies | Ensure all applicable services (Lambda, Fargate, ElastiCache) are using the `arm64` architecture for a baseline ~20% price-performance improvement. This is assumed in the cost model but is critical to validate. |
+| **S3 Intelligent-Tiering** | **Low** | Varies | Configure this for log archive buckets to automatically optimize storage costs. |
 
 ### Cost Allocation & Tagging Strategy
 
