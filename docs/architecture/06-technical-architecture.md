@@ -843,8 +843,9 @@ graph TD
         Route53("`fa:fa-route Route 53`")
     end
 
-    subgraph "AWS Region: us-east-1 (Primary)"
-        style `AWS Region: us-east-1 (Primary)` fill:#e6f3ff,stroke:#0073bb
+    %% Assign a simple ID 'R1' to the subgraph
+    subgraph R1 ["AWS Region: us-east-1 (Primary)"]
+        style R1 fill:#0073bb,stroke:#0073bb
 
         subgraph "Edge"
             CloudFront("`fa:fa-globe-americas CloudFront`")
@@ -857,14 +858,16 @@ graph TD
             UsagePlan("`fa:fa-tachometer-alt Usage Plan<br>(Per-User Rate Limit)`")
         end
 
-        subgraph "Availability Zone 1"
-            style `Availability Zone 1` fill:#ffffff,stroke-dasharray: 5 5
+        %% Assign a simple ID 'AZ1' to the subgraph
+        subgraph AZ1 ["Availability Zone 1"]
+            style AZ1 fill:#ffa500,stroke-dasharray: 5 5
             Lambda_A("`fa:fa-bolt Worker Lambda`")
             Redis_A("`fa:fa-memory Redis Primary`")
         end
 
-        subgraph "Availability Zone 2"
-            style `Availability Zone 2` fill:#ffffff,stroke-dasharray: 5 5
+        %% Assign a simple ID 'AZ2' to the subgraph
+        subgraph AZ2 ["Availability Zone 2"]
+            style AZ2 fill:#ffa500,stroke-dasharray: 5 5
             Lambda_B("`fa:fa-bolt Worker Lambda`")
             Redis_B("`fa:fa-memory Redis Replica`")
         end
@@ -873,8 +876,9 @@ graph TD
         Dynamo_P["`fa:fa-database DynamoDB<br>(Primary)`"]
     end
 
-    subgraph "AWS Region: us-west-2 (DR)"
-        style `AWS Region: us-west-2 (DR)` fill:#fde4d8,stroke:#d95300
+    %% Assign a simple ID 'R2' to the subgraph
+    subgraph R2 ["AWS Region: us-west-2 (DR)"]
+        style R2 fill:#fde4d8,stroke:#d95300
         Dynamo_DR["`fa:fa-database DynamoDB<br>(Replica)`"]
     end
 
@@ -892,6 +896,7 @@ graph TD
     Redis_A -- "Replicates to" --> Redis_B
     Lambda_A & Lambda_B -- "Read/Write State" --> Dynamo_P
     Dynamo_P -- "Global Table Replication" --> Dynamo_DR
+
 ```
 
 </details>
