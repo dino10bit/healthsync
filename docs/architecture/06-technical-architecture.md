@@ -817,7 +817,7 @@ To provide a responsive user experience and basic functionality when the user's 
     5.  Once the backend confirms the action was successful, the command is removed from the local "actions" table.
     6.  After all queued actions are processed, the client will fetch the latest state from the backend to ensure it is fully in sync with the source of truth.
 
-This strategy ensures that the app remains responsive and that user actions are not lost during periods of no connectivity.
+This strategy ensures that the app remains responsive and that user actions are not lost during periods of no connectivity. The full reconciliation flow is visualized in **Diagram 10**.
 
 ## 4. Technology Stack & Rationale
 
@@ -1567,4 +1567,46 @@ sequenceDiagram
             Worker->>Worker: Retry job with exponential backoff
         end
     end
+```
+
+### Diagram 10: Client-Side Offline Sync & Reconciliation
+
+This sequence diagram shows how the mobile client handles user actions while offline and reconciles them once connectivity is restored.
+
+```mermaid
+---
+title: "Diagram 10: Client-Side Offline Sync & Reconciliation (v1.6)"
+---
+sequenceDiagram
+    actor User
+    participant MobileApp as Mobile App
+    participant LocalDB as "Local DB (SQLDelight)"
+    participant Backend as Backend API
+
+    note over User, Backend: User is currently offline
+    User->>MobileApp: Create new sync config
+    activate MobileApp
+    MobileApp->>MobileApp: Update UI immediately
+    MobileApp->>+LocalDB: Enqueue action in 'OfflineAction' table
+    LocalDB-->>-MobileApp: Action saved
+    deactivate MobileApp
+
+    note over User, Backend: Time passes, user reconnects to network...
+
+    MobileApp->>MobileApp: Detects network connectivity
+    activate MobileApp
+    MobileApp->>+LocalDB: Read queued actions
+    LocalDB-->>-MobileApp: Return [action1, action2]
+
+    loop For each action
+        MobileApp->>+Backend: POST /v1/sync-configs (payload, idempotencyKey)
+        Backend-->>-MobileApp: 200 OK
+        MobileApp->>+LocalDB: Delete processed action
+        LocalDB-->>-MobileApp: Action deleted
+    end
+
+    MobileApp->>+Backend: GET /v1/users/me/settings
+    Backend-->>-MobileApp: Return latest source-of-truth state
+    MobileApp->>MobileApp: Refresh UI with latest state
+    deactivate MobileApp
 ```
